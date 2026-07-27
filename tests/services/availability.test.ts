@@ -14,6 +14,8 @@ const MANAGED_PREFIXES = [
   "SUPABASE_",
   "STRIPE_",
   "NEXT_PUBLIC_STRIPE_",
+  "POSTGRES_",
+  "RESEND_",
 ];
 
 async function loadAvailability() {
@@ -95,6 +97,17 @@ describe("服务可用性", () => {
       "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY 或 NEXT_PUBLIC_SUPABASE_ANON_KEY",
       "SUPABASE_SECRET_KEY 或 SUPABASE_SERVICE_ROLE_KEY",
     ]);
+  });
+
+  it("迁移连接串必须用非连接池地址", async () => {
+    process.env["POSTGRES_URL"] = "postgres://pooled.example/db";
+
+    const { getServiceAvailability } = await loadAvailability();
+    const database = getServiceAvailability().find((s) => s.key === "database");
+
+    // 只给了连接池地址不算配置完成 —— 迁移需要会话级状态,不能走 pgbouncer
+    expect(database?.status).toBe("unconfigured");
+    expect(database?.missing).toEqual(["POSTGRES_URL_NON_POOLING"]);
   });
 
   it("空字符串视作未配置,不得当成已填写", async () => {

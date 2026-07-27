@@ -5,14 +5,15 @@ import { z } from "zod";
 /**
  * 服务端环境变量。
  *
+ * 变量名全部核实自 Vercel 集成实际生成的清单(`vercel env ls`),不臆造、不占位。
+ *
  * 设计原则:
- *   1. 只声明真实存在的变量。不写占位密钥,不臆造变量名。
- *   2. 全部字段可选。缺失配置不得让构建或启动失败 —— 而应让对应能力显式变为
+ *   1. 全部字段可选。缺失配置不得让构建或启动失败 —— 而应让对应能力显式变为
  *      「未配置 / 不可用」。这直接落实产品规则:未接通的第三方服务必须如实展示,
  *      不得伪装为已接通,也不得回退到假数据。
- *   3. 校验的是「格式是否合法」,不是「是否存在」。填了但格式错误属于配置错误,
+ *   2. 校验的是「格式是否合法」,不是「是否存在」。填了但格式错误属于配置错误,
  *      必须暴露;没填属于未配置,是合法状态。
- *   4. 本模块被 server-only 标记,任何客户端组件误引用会在构建期报错,
+ *   3. 本模块被 server-only 标记,任何客户端组件误引用会在构建期报错,
  *      从而保证密钥不可能进入浏览器产物。
  *
  * AI Provider 的 API 密钥不在这里 —— 它们由用户在产品内添加,加密存于数据库,
@@ -27,31 +28,50 @@ const optionalUrl = z.string().trim().url().optional().catch(undefined);
 const serverEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 
-  // --- Supabase ---------------------------------------------------------
+  // --- Supabase(由 Vercel Supabase 集成生成)-----------------------------
   NEXT_PUBLIC_SUPABASE_URL: optionalUrl,
+  SUPABASE_URL: optionalUrl,
 
-  // 可公开的客户端密钥。Supabase 现行文档用 PUBLISHABLE_KEY,
-  // Vercel 集成历史上生成 ANON_KEY。两者都是真实命名,兼容读取。
+  // 可公开的客户端密钥。集成同时生成了新旧两套命名,任填其一即可。
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: optionalString,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: optionalString,
+  SUPABASE_PUBLISHABLE_KEY: optionalString,
+  SUPABASE_ANON_KEY: optionalString,
 
-  // 服务端密钥,绕过 RLS。同样兼容新旧两套命名。
+  // 服务端密钥,绕过 RLS,严禁下发到浏览器。同样两套命名并存。
   SUPABASE_SECRET_KEY: optionalString,
   SUPABASE_SERVICE_ROLE_KEY: optionalString,
 
-  SUPABASE_DB_URL: optionalString,
+  SUPABASE_JWT_SECRET: optionalString,
+
+  // --- Postgres 直连(由同一集成生成)------------------------------------
+  /** 连接池地址,用于常规查询 */
+  POSTGRES_URL: optionalString,
+  /** 非连接池地址,跑迁移必须用这个 —— 迁移需要会话级状态,不能走 pgbouncer */
+  POSTGRES_URL_NON_POOLING: optionalString,
+  POSTGRES_PRISMA_URL: optionalString,
+  POSTGRES_HOST: optionalString,
+  POSTGRES_USER: optionalString,
+  POSTGRES_PASSWORD: optionalString,
+  POSTGRES_DATABASE: optionalString,
 
   // --- 应用加密密钥 ------------------------------------------------------
   /** 用于加密存库的第三方 API Key。32 字节 base64。 */
   ENCRYPTION_KEY: optionalString,
 
-  // --- Stripe -----------------------------------------------------------
+  // --- Stripe ------------------------------------------------------------
   STRIPE_SECRET_KEY: optionalString,
-  STRIPE_WEBHOOK_SECRET: optionalString,
+  STRIPE_PUBLISHABLE_KEY: optionalString,
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: optionalString,
+  STRIPE_WEBHOOK_SECRET: optionalString,
 
-  // --- 站点 -------------------------------------------------------------
+  // --- Resend(事务邮件)-------------------------------------------------
+  RESEND_API_KEY: optionalString,
+
+  // --- 站点 --------------------------------------------------------------
   NEXT_PUBLIC_SITE_URL: optionalUrl,
+  /** Vercel 自动注入的部署域名,本地为空 */
+  VERCEL_URL: optionalString,
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
@@ -81,12 +101,30 @@ export interface SupabaseCredentials {
 export function getSupabaseCredentials(): SupabaseCredentials {
   const env = getServerEnv();
   return {
-    url: env.NEXT_PUBLIC_SUPABASE_URL,
+    url: env.NEXT_PUBLIC_SUPABASE_URL ?? env.SUPABASE_URL,
     publishableKey:
       env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
-      env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+      env.SUPABASE_PUBLISHABLE_KEY ??
+      env.SUPABASE_ANON_KEY,
     secretKey: env.SUPABASE_SECRET_KEY ?? env.SUPABASE_SERVICE_ROLE_KEY,
   };
+}
+
+/** 跑迁移用的连接串 —— 必须是非连接池地址 */
+export function getMigrationDatabaseUrl(): string | undefined {
+  return getServerEnv().POSTGRES_URL_NON_POOLING;
+}
+
+/**
+ * 站点绝对地址。用于邮件回调、OAuth 重定向、Stripe 回跳。
+ * 优先显式配置,其次 Vercel 注入的部署域名,最后本地开发地址。
+ */
+export function getSiteUrl(): string {
+  const env = getServerEnv();
+  if (env.NEXT_PUBLIC_SITE_URL) return env.NEXT_PUBLIC_SITE_URL;
+  if (env.VERCEL_URL) return `https://${env.VERCEL_URL}`;
+  return "http://localhost:3000";
 }
 
 /**

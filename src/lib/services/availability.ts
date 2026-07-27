@@ -1,6 +1,10 @@
 import "server-only";
 
-import { getServerEnv, getSupabaseCredentials } from "@/lib/env/server";
+import {
+  getMigrationDatabaseUrl,
+  getServerEnv,
+  getSupabaseCredentials,
+} from "@/lib/env/server";
 
 /**
  * 服务可用性注册表。
@@ -64,9 +68,12 @@ export function getServiceAvailability(): readonly ServiceAvailability[] {
   return [
     evaluate(
       "supabase",
-      "Supabase(数据库与认证)",
+      "Supabase(认证与数据)",
       [
-        { names: ["NEXT_PUBLIC_SUPABASE_URL"], value: supabase.url },
+        {
+          names: ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_URL"],
+          value: supabase.url,
+        },
         {
           names: [
             "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
@@ -83,6 +90,18 @@ export function getServiceAvailability(): readonly ServiceAvailability[] {
     ),
 
     evaluate(
+      "database",
+      "PostgreSQL 直连(迁移)",
+      [
+        {
+          names: ["POSTGRES_URL_NON_POOLING"],
+          value: getMigrationDatabaseUrl(),
+        },
+      ],
+      ["执行数据库迁移", "建立 RLS 策略"],
+    ),
+
+    evaluate(
       "encryption",
       "密钥加密",
       [{ names: ["ENCRYPTION_KEY"], value: env.ENCRYPTION_KEY }],
@@ -95,12 +114,23 @@ export function getServiceAvailability(): readonly ServiceAvailability[] {
       [
         { names: ["STRIPE_SECRET_KEY"], value: env.STRIPE_SECRET_KEY },
         {
-          names: ["NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"],
-          value: env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
+          names: [
+            "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+            "STRIPE_PUBLISHABLE_KEY",
+          ],
+          value:
+            env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? env.STRIPE_PUBLISHABLE_KEY,
         },
         { names: ["STRIPE_WEBHOOK_SECRET"], value: env.STRIPE_WEBHOOK_SECRET },
       ],
       ["订阅升级", "账单门户", "套餐权益变更"],
+    ),
+
+    evaluate(
+      "email",
+      "Resend(事务邮件)",
+      [{ names: ["RESEND_API_KEY"], value: env.RESEND_API_KEY }],
+      ["自定义邮件模板"],
     ),
   ];
 }
