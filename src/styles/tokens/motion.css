@@ -1,0 +1,7 @@
+:root{
+--ease-standard:cubic-bezier(0.4,0,0.2,1); /* @kind other */
+--duration-hover:120ms; /* @kind other */
+--duration-transition:160ms; /* @kind other */
+--duration-panel:200ms; /* @kind other */
+--duration-enter:220ms; /* @kind other */
+}

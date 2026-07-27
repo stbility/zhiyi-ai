@@ -1,26 +1,182 @@
+/* ---------------------------------------------------------------------------
+ * 智一 AI™ — 全局样式入口
+ *
+ * 设计系统继承规则(不可违反):
+ *   1. src/styles/tokens/*.css 与 src/styles/base.css 是从设计系统逐字节复制的,
+ *      为 token 的唯一真值源。禁止在本文件或任何位置修改它们的值。
+ *   2. 本文件只做一件事:把已有的 CSS 变量映射为 Tailwind v4 的 theme,
+ *      使 Tailwind 工具类解析到与设计系统完全相同的值。不新增、不覆盖任何设计值。
+ *
+ * 关于 --ds-* 别名层:
+ *   设计系统的 --radius-* / --shadow-* / --font-* / --ease-* 与 Tailwind v4 的
+ *   theme namespace 同名,而工具类名(rounded-card、font-zh)又由 key 决定,
+ *   因此同名无法回避。
+ *
+ *   最终取值的保证来自 CSS cascade layer 优先级:Tailwind 把 theme 变量输出在
+ *   `@layer theme` 内,而 tokens/*.css 的 :root 是无层级声明;同源同特异性下,
+ *   无层级声明始终优先于任何 @layer 声明。故 --radius-card 等一律解析为设计系统
+ *   的字面值。这是规范定义的确定行为,已用浏览器 getComputedStyle 实测验证,
+ *   并由 tests/design-system/computed-tokens.test.ts 守护。
+ *
+ *   别名层的作用是消除「单条声明自引用」(--radius-card: var(--radius-card)),
+ *   这种形态会被部分 CSS 压缩器与静态分析工具误判。改为经 --ds-* 中转后,
+ *   每一条声明都指向不同名称,产物更稳健、可读性也更好。
+ *
+ * 字体加载顺序说明:
+ *   tokens/fonts.css 内含指向 Google Fonts 的远程 @import。CSS 规范要求 @import
+ *   必须位于所有规则之前,故它必须排在 `@import "tailwindcss"` 之前,
+ *   否则内联后位置非法、浏览器会静默丢弃该声明。
+ *   已知风险:该 CDN 在中国大陆不稳定,届时字体栈按 DESIGN.md 预期回退,
+ *   不阻塞渲染。自托管子集化方案列入 Phase 8。
+ * ------------------------------------------------------------------------- */
+
+@import "../styles/tokens/fonts.css";
+
 @import "tailwindcss";
 
+@import "../styles/tokens/colors.css";
+@import "../styles/tokens/typography.css";
+@import "../styles/tokens/spacing.css";
+@import "../styles/tokens/radius.css";
+@import "../styles/tokens/shadows.css";
+@import "../styles/tokens/motion.css";
+@import "../styles/base.css";
+
+/* --- 别名层:仅镜像,不改值 ------------------------------------------------ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ds-font-zh: var(--font-zh);
+  --ds-font-latin: var(--font-latin);
+  --ds-font-mono: var(--font-mono);
+  --ds-font-sans: var(--font-sans);
+
+  --ds-radius-tag: var(--radius-tag);
+  --ds-radius-control: var(--radius-control);
+  --ds-radius-card: var(--radius-card);
+  --ds-radius-panel: var(--radius-panel);
+  --ds-radius-bubble: var(--radius-bubble);
+  --ds-radius-modal: var(--radius-modal);
+
+  --ds-shadow-dropdown: var(--shadow-dropdown);
+  --ds-shadow-modal: var(--shadow-modal);
+  --ds-shadow-flyout: var(--shadow-flyout);
+  --ds-shadow-sheet: var(--shadow-sheet);
+
+  --ds-ease-standard: var(--ease-standard);
+
+  --ds-sidebar-width: var(--sidebar-width);
+  --ds-assistant-width: var(--assistant-width);
 }
 
+/* ---------------------------------------------------------------------------
+ * 组件级派生值
+ *
+ * 以下两个色值不在设计系统的 token 文件中,而是写在设计系统 Button 组件源码里
+ * (components/primitives/Button.jsx 第 18–19 行)的危险态 hover / active 色。
+ * 移植时原样继承,不是新增的设计决策。集中放在这里,是为了让组件代码里不出现
+ * 裸十六进制色值 —— 该约束由 tests/design-system/no-hardcoded-values.test.ts 守护。
+ *
+ * 若设计系统后续把它们收编为正式 token,这里应改为引用 token 并删除字面值。
+ * ------------------------------------------------------------------------- */
+:root {
+  --ds-error-hover: #e37070;
+  --ds-error-active: #c14b4b;
+}
+
+/* --- Tailwind theme 映射 --------------------------------------------------- */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  /* 表面 */
+  --color-canvas: var(--bg-canvas);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+  /* 描边 */
+  --color-border-default: var(--border-default);
+  --color-border-strong: var(--border-strong);
+  --color-border-focus: var(--border-focus);
+  --color-divider: var(--divider);
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* 品牌 */
+  --color-brand: var(--brand-primary);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-active: var(--brand-active);
+  --color-brand-tint: var(--brand-tint);
+  --color-brand-ring: var(--brand-focus-ring);
+
+  /* 文字 */
+  --color-fg: var(--text-primary);
+  --color-fg-secondary: var(--text-secondary);
+  --color-fg-tertiary: var(--text-tertiary);
+  --color-fg-disabled: var(--text-disabled);
+  --color-on-brand: var(--text-on-brand);
+
+  /* 语义状态 */
+  --color-success: var(--success);
+  --color-success-tint: var(--success-tint);
+  --color-warning: var(--warning);
+  --color-warning-tint: var(--warning-tint);
+  --color-error: var(--error);
+  --color-error-tint: var(--error-tint);
+  --color-error-hover: var(--ds-error-hover);
+  --color-error-active: var(--ds-error-active);
+  --color-info: var(--info);
+  --color-info-tint: var(--info-tint);
+
+  /* 浅色纸张画布(仅用于嵌套在深色框架内的文档阅读/编辑面) */
+  --color-paper-bg: var(--paper-bg);
+  --color-paper-surface: var(--paper-surface);
+  --color-paper-border: var(--paper-border);
+  --color-paper-fg: var(--paper-text-primary);
+  --color-paper-fg-secondary: var(--paper-text-secondary);
+
+  /* 字体族 */
+  --font-zh: var(--ds-font-zh);
+  --font-latin: var(--ds-font-latin);
+  --font-mono: var(--ds-font-mono);
+  --font-sans: var(--ds-font-sans);
+
+  /* 字号 + 行高 */
+  --text-display: var(--text-display-size);
+  --text-display--line-height: var(--text-display-line);
+  --text-h1: var(--text-h1-size);
+  --text-h1--line-height: var(--text-h1-line);
+  --text-h2: var(--text-h2-size);
+  --text-h2--line-height: var(--text-h2-line);
+  --text-h3: var(--text-h3-size);
+  --text-h3--line-height: var(--text-h3-line);
+  --text-body-lg: var(--text-body-lg-size);
+  --text-body-lg--line-height: var(--text-body-lg-line);
+  --text-body: var(--text-body-size);
+  --text-body--line-height: var(--text-body-line);
+  --text-caption: var(--text-caption-size);
+  --text-caption--line-height: var(--text-caption-line);
+  --text-label: var(--text-label-size);
+  --text-label--line-height: var(--text-label-line);
+  --text-button: var(--text-button-size);
+  --text-button--line-height: var(--text-button-line);
+
+  /* 圆角 */
+  --radius-tag: var(--ds-radius-tag);
+  --radius-control: var(--ds-radius-control);
+  --radius-card: var(--ds-radius-card);
+  --radius-panel: var(--ds-radius-panel);
+  --radius-bubble: var(--ds-radius-bubble);
+  --radius-modal: var(--ds-radius-modal);
+
+  /* 阴影 — 仅限五个浮层场景:modal / dropdown / 命令面板 / AI 助手浮层 / 移动端底部抽屉 */
+  --shadow-dropdown: var(--ds-shadow-dropdown);
+  --shadow-modal: var(--ds-shadow-modal);
+  --shadow-flyout: var(--ds-shadow-flyout);
+  --shadow-sheet: var(--ds-shadow-sheet);
+
+  /* 动效 */
+  --ease-standard: var(--ds-ease-standard);
+
+  /* 固定布局宽度 */
+  --spacing-sidebar: var(--ds-sidebar-width);
+  --spacing-assistant: var(--ds-assistant-width);
+
+  /* 阅读测量宽度 */
+  --container-reading: var(--reading-measure);
 }

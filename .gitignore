@@ -30,8 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files —— 一律不提交,唯独放行不含任何真实值的模板
 .env*
+!.env.example
 
 # vercel
 .vercel

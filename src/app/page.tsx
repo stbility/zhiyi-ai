@@ -1,65 +1,91 @@
-import Image from "next/image";
+import {
+  getServiceAvailability,
+  type ServiceStatus,
+} from "@/lib/services/availability";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+const STATUS_LABEL: Record<ServiceStatus, string> = {
+  configured: "已配置",
+  unconfigured: "未配置",
+  incomplete: "配置不完整",
+};
+
+const STATUS_CLASS: Record<ServiceStatus, string> = {
+  configured: "bg-success-tint text-success",
+  unconfigured: "bg-surface-3 text-fg-tertiary",
+  incomplete: "bg-warning-tint text-warning",
+};
+
+function StatusChip({ status }: { status: ServiceStatus }) {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <span
+      className={`rounded-tag text-label inline-flex items-center gap-1.5 px-2 py-0.5 font-medium ${STATUS_CLASS[status]}`}
+    >
+      <span className="size-1.5 rounded-full bg-current" />
+      {STATUS_LABEL[status]}
+    </span>
+  );
+}
+
+export default function Page() {
+  const services = getServiceAvailability();
+  const configured = services.filter((s) => s.status === "configured").length;
+
+  return (
+    <main className="max-w-reading mx-auto w-full px-6 py-16">
+      <header className="mb-10">
+        <div className="mb-6 flex items-center gap-2.5">
+          <span className="bg-brand text-on-brand rounded-control flex size-7 items-center justify-center text-sm font-semibold">
+            智
+          </span>
+          <span className="text-fg text-body font-semibold">智一 AI</span>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+        <h1 className="text-h2 text-fg font-semibold">系统配置状态</h1>
+        <p className="text-body text-fg-secondary mt-3">
+          当前处于 Phase 0.5(工程地基)。产品能力尚未实现,本页如实展示各外部服务的接入状态,不展示任何模拟数据。已配置{" "}
+          {configured} / {services.length} 项。
+        </p>
+      </header>
+
+      <ul className="flex flex-col gap-2">
+        {services.map((service) => (
+          <li
+            key={service.key}
+            className="rounded-card border-border-default bg-surface-2 border p-5"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-fg text-body">{service.label}</span>
+              <StatusChip status={service.status} />
+            </div>
+
+            {service.missing.length > 0 && (
+              <div className="mt-3 flex flex-col gap-1.5">
+                <p className="text-caption text-fg-tertiary">缺少环境变量</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {service.missing.map((name) => (
+                    <code
+                      key={name}
+                      className="rounded-tag bg-surface-3 text-fg-secondary text-label px-1.5 py-0.5 font-mono"
+                    >
+                      {name}
+                    </code>
+                  ))}
+                </div>
+                <p className="text-caption text-fg-tertiary mt-1">
+                  未配置时不可用:{service.blocks.join("、")}
+                </p>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      <p className="text-caption text-fg-tertiary mt-8">
+        填写方式:复制 <code className="font-mono">.env.example</code> 为{" "}
+        <code className="font-mono">.env.local</code>{" "}
+        并填入真实值。密钥仅在服务端读取,不会进入浏览器产物。
+      </p>
+    </main>
   );
 }
