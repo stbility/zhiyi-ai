@@ -4,14 +4,30 @@ import Link from "next/link";
 import { AuthForm } from "@/components/auth/AuthForm";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { getSiteUrl } from "@/lib/env/server";
+import { getAuthCapabilities } from "@/lib/supabase/auth-settings";
 
 export const metadata: Metadata = { title: "登录 · 智一 AI" };
 
-export default function LoginPage() {
+const PROVIDER_NAME: Record<string, string> = {
+  github: "GitHub",
+  google: "Google",
+};
+
+export default async function LoginPage() {
+  const capabilities = await getAuthCapabilities();
+
+  // 文案必须跟随真实能力 —— 承诺一个未启用的登录方式,与放一个空按钮性质相同
+  const providerNames = capabilities.oauthProviders
+    .map((p) => PROVIDER_NAME[p] ?? p)
+    .join(" 或 ");
+  const description = providerNames
+    ? `使用邮箱与密码登录,或通过 ${providerNames} 继续。`
+    : "使用邮箱与密码登录。";
+
   return (
     <AuthShell
       title="登录"
-      description="使用邮箱与密码登录,或通过 GitHub 继续。"
+      description={description}
       footer={
         <>
           还没有账户?{" "}
@@ -21,7 +37,13 @@ export default function LoginPage() {
         </>
       }
     >
-      <AuthForm mode="login" siteUrl={getSiteUrl()} />
+      <AuthForm
+        mode="login"
+        siteUrl={getSiteUrl()}
+        oauthProviders={capabilities.oauthProviders}
+        emailEnabled={capabilities.emailEnabled}
+        signupEnabled={capabilities.signupEnabled}
+      />
     </AuthShell>
   );
 }

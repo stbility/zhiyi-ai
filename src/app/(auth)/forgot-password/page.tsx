@@ -4,10 +4,13 @@ import Link from "next/link";
 import { AuthForm } from "@/components/auth/AuthForm";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { getSiteUrl } from "@/lib/env/server";
+import { getAuthCapabilities } from "@/lib/supabase/auth-settings";
 
 export const metadata: Metadata = { title: "找回密码 · 智一 AI" };
 
-export default function ForgotPasswordPage() {
+export default async function ForgotPasswordPage() {
+  const capabilities = await getAuthCapabilities();
+
   return (
     <AuthShell
       title="找回密码"
@@ -18,7 +21,13 @@ export default function ForgotPasswordPage() {
         </Link>
       }
     >
-      <AuthForm mode="forgot" siteUrl={getSiteUrl()} />
+      <AuthForm
+        mode="forgot"
+        siteUrl={getSiteUrl()}
+        oauthProviders={capabilities.oauthProviders}
+        emailEnabled={capabilities.emailEnabled}
+        signupEnabled={capabilities.signupEnabled}
+      />
     </AuthShell>
   );
 }
