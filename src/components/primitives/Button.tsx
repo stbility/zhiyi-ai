@@ -34,6 +34,35 @@ const SIZE: Record<ButtonSize, string> = {
   lg: "min-h-11 px-4.5 py-3",
 };
 
+/**
+ * 按钮样式类。
+ *
+ * 导出以便 `next/link` 等非 button 元素复用同一套外观 —— 需要跳转的场景应该渲染
+ * 真正的 <a>,而不是给 button 挂 onClick 做导航(那会丢失新标签页打开、
+ * 右键菜单与爬虫可见性)。
+ */
+export function buttonClasses({
+  variant = "primary",
+  size = "md",
+  disabled = false,
+  className,
+}: {
+  variant?: ButtonVariant | undefined;
+  size?: ButtonSize | undefined;
+  disabled?: boolean | undefined;
+  className?: string | undefined;
+} = {}): string {
+  return cn(
+    "font-zh text-button rounded-control inline-flex items-center justify-center gap-2 border font-medium whitespace-nowrap",
+    "transition-colors duration-[var(--duration-hover)] ease-standard",
+    "focus-visible:outline-border-focus focus-visible:outline-2 focus-visible:outline-offset-2",
+    disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer",
+    VARIANT[variant],
+    SIZE[size],
+    className,
+  );
+}
+
 export function Button({
   variant = "primary",
   size = "md",
@@ -47,15 +76,7 @@ export function Button({
     <button
       // 设计系统原行为:loading 时同样不可点击,但只有 disabled 才降低不透明度
       disabled={disabled || loading}
-      className={cn(
-        "font-zh text-button rounded-control inline-flex items-center justify-center gap-2 border font-medium whitespace-nowrap",
-        "transition-colors duration-[var(--duration-hover)] ease-standard",
-        "focus-visible:outline-border-focus focus-visible:outline-2 focus-visible:outline-offset-2",
-        disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer",
-        VARIANT[variant],
-        SIZE[size],
-        className,
-      )}
+      className={buttonClasses({ variant, size, disabled, className })}
       {...rest}
     >
       {loading ? "···" : children}

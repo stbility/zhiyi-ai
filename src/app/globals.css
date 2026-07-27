@@ -40,7 +40,19 @@
 @import "../styles/tokens/radius.css";
 @import "../styles/tokens/shadows.css";
 @import "../styles/tokens/motion.css";
-@import "../styles/base.css";
+/*
+ * base.css 必须导入到 @layer base 内。
+ *
+ * 它含有全局元素样式(尤其是 `a { color: var(--brand-primary) }`)。若保持无层级,
+ * 依据 CSS cascade layer 规则,无层级声明会压过 @layer utilities 里的 Tailwind
+ * 工具类 —— 结果是任何 <a> 上的 text-* 都失效。实测后果:主按钮做成链接时
+ * 文字色被强制为品牌色,与品牌色背景重合,按钮文字直接看不见。
+ *
+ * 放进 base 层后,层级顺序为 theme < base < components < utilities,
+ * 工具类正常覆盖全局元素样式,而 tokens/*.css 仍保持无层级、优先级最高,
+ * 设计 token 不受影响。
+ */
+@import "../styles/base.css" layer(base);
 
 /* --- 别名层:仅镜像,不改值 ------------------------------------------------ */
 :root {
@@ -80,6 +92,18 @@
 :root {
   --ds-error-hover: #e37070;
   --ds-error-active: #c14b4b;
+
+  /*
+   * 营销首屏品牌辉光。设计规范允许的唯一背景渐变例外(见设计系统 readme
+   * Visual foundations),透明度刻意压得很低,不得读成「紫色渐变团块」。
+   * 由 --brand-primary 经 color-mix 派生,不重复写死色值 —— 品牌色若调整,
+   * 辉光自动跟随。
+   */
+  --ds-hero-glow: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--brand-primary) 16%, transparent),
+    transparent 70%
+  );
 }
 
 /* --- Tailwind theme 映射 --------------------------------------------------- */
@@ -179,6 +203,9 @@
 
   /* 阅读测量宽度 */
   --container-reading: var(--reading-measure);
+
+  /* 营销首屏辉光 —— 生成 bg-hero-glow 工具类,避免在组件里写内联渐变 */
+  --background-image-hero-glow: var(--ds-hero-glow);
 }
 
 /* ---------------------------------------------------------------------------
