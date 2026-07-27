@@ -3,12 +3,12 @@
 import { cn } from "@/lib/cn";
 
 export interface SwitchProps {
-  checked?: boolean;
-  onChange?: (checked: boolean) => void;
-  disabled?: boolean;
+  checked?: boolean | undefined;
+  onChange?: ((checked: boolean) => void) | undefined;
+  disabled?: boolean | undefined;
   /** 无障碍标签 */
-  label?: string;
-  className?: string;
+  label?: string | undefined;
+  className?: string | undefined;
 }
 
 /**

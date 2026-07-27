@@ -8,10 +8,10 @@ export interface TabItem {
 }
 
 export interface TabsProps {
-  items?: readonly TabItem[];
-  value?: string;
-  onChange?: (value: string) => void;
-  className?: string;
+  items?: readonly TabItem[] | undefined;
+  value?: string | undefined;
+  onChange?: ((value: string) => void) | undefined;
+  className?: string | undefined;
 }
 
 export function Tabs({ items = [], value, onChange, className }: TabsProps) {

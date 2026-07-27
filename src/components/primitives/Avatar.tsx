@@ -2,11 +2,11 @@
 import { cn } from "@/lib/cn";
 
 export interface AvatarProps {
-  name?: string;
+  name?: string | undefined;
   /** 边长,单位 px。设计系统默认 32。 */
-  size?: number;
-  src?: string;
-  className?: string;
+  size?: number | undefined;
+  src?: string | undefined;
+  className?: string | undefined;
 }
 
 export function Avatar({ name = "", size = 32, src, className }: AvatarProps) {

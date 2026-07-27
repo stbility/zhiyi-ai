@@ -3,10 +3,10 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 export interface TagProps {
-  children?: ReactNode;
-  active?: boolean;
-  onClick?: () => void;
-  className?: string;
+  children?: ReactNode | undefined;
+  active?: boolean | undefined;
+  onClick?: (() => void) | undefined;
+  className?: string | undefined;
 }
 
 export function Tag({ children, active = false, onClick, className }: TagProps) {

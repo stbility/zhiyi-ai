@@ -4,10 +4,10 @@ import { cn } from "@/lib/cn";
 
 export interface IconButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
-  active?: boolean;
+  active?: boolean | undefined;
   /** 边长,单位 px。设计系统默认 36。 */
-  size?: number;
-  children?: ReactNode;
+  size?: number | undefined;
+  children?: ReactNode | undefined;
 }
 
 export function IconButton({

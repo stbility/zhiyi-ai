@@ -5,11 +5,11 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 export interface CheckboxProps {
-  checked?: boolean;
-  onChange?: (checked: boolean) => void;
-  label?: ReactNode;
-  disabled?: boolean;
-  className?: string;
+  checked?: boolean | undefined;
+  onChange?: ((checked: boolean) => void) | undefined;
+  label?: ReactNode | undefined;
+  disabled?: boolean | undefined;
+  className?: string | undefined;
 }
 
 /**

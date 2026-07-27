@@ -11,9 +11,9 @@ export type BadgeTone =
   | "info";
 
 export interface BadgeProps {
-  tone?: BadgeTone;
-  children?: ReactNode;
-  className?: string;
+  tone?: BadgeTone | undefined;
+  children?: ReactNode | undefined;
+  className?: string | undefined;
 }
 
 const TONE: Record<BadgeTone, string> = {

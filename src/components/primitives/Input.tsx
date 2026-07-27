@@ -6,14 +6,14 @@ import { cn } from "@/lib/cn";
 
 export interface InputProps
   extends Omit<InputHTMLAttributes<HTMLInputElement>, "onChange" | "value"> {
-  value?: string;
-  onChange?: (value: string) => void;
-  error?: boolean;
+  value?: string | undefined;
+  onChange?: ((value: string) => void) | undefined;
+  error?: boolean | undefined;
   /** 前置图标,渲染在输入框内左侧 */
-  icon?: ReactNode;
+  icon?: ReactNode | undefined;
   /** 无障碍标签。视觉上隐藏,但屏幕阅读器可读。 */
-  label?: string;
-  className?: string;
+  label?: string | undefined;
+  className?: string | undefined;
 }
 
 export function Input({

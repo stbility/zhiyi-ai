@@ -11,10 +11,10 @@ export interface SelectOption {
 
 export interface SelectProps
   extends Omit<SelectHTMLAttributes<HTMLSelectElement>, "onChange" | "value"> {
-  value?: string;
-  options?: readonly SelectOption[];
-  onChange?: (value: string) => void;
-  className?: string;
+  value?: string | undefined;
+  options?: readonly SelectOption[] | undefined;
+  onChange?: ((value: string) => void) | undefined;
+  className?: string | undefined;
 }
 
 export function Select({

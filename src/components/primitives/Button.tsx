@@ -7,10 +7,10 @@ export type ButtonSize = "sm" | "md" | "lg";
 
 export interface ButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
-  variant?: ButtonVariant;
-  size?: ButtonSize;
-  loading?: boolean;
-  children?: ReactNode;
+  variant?: ButtonVariant | undefined;
+  size?: ButtonSize | undefined;
+  loading?: boolean | undefined;
+  children?: ReactNode | undefined;
 }
 
 /**

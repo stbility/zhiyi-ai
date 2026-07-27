@@ -180,3 +180,31 @@
   /* 阅读测量宽度 */
   --container-reading: var(--reading-measure);
 }
+
+/* ---------------------------------------------------------------------------
+ * 组件级动效
+ *
+ * 这两个关键帧原本内联写在设计系统组件里(WorkflowStatusBadge 的状态点呼吸、
+ * LoadingState 的转圈)。移植时保留原时长与曲线 —— Tailwind 内置的 animate-pulse
+ * (2s)与 animate-spin(1s)时长不同,直接替换会改变设计系统既定的动效节奏。
+ * ------------------------------------------------------------------------- */
+@theme {
+  --animate-status-pulse: status-pulse 1.6s ease-in-out infinite;
+  --animate-ds-spin: ds-spin 0.8s linear infinite;
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes ds-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
