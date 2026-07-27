@@ -218,6 +218,9 @@
 @theme {
   --animate-status-pulse: status-pulse 1.6s ease-in-out infinite;
   --animate-ds-spin: ds-spin 0.8s linear infinite;
+  /* 界面切换淡入 —— 只用透明度,时长取设计系统的页面进场 220ms */
+  --animate-screen-enter: screen-enter var(--duration-enter)
+    var(--ease-standard) both;
 }
 
 @keyframes status-pulse {
@@ -233,5 +236,29 @@
 @keyframes ds-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes screen-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/*
+ * 尊重系统的「减少动效」偏好。
+ * 前庭功能障碍者会因位移与视差产生眩晕,这不是可选的润色项。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

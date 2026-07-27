@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { ProductShowcase } from "@/components/marketing/ProductShowcase";
+import { ScrollReveal } from "@/components/marketing/ScrollReveal";
 import { Icon, type IconName } from "@/components/icons/Icon";
 import { MemoryCard } from "@/components/memory/MemoryCard";
 import { Badge } from "@/components/primitives/Badge";
@@ -53,8 +54,8 @@ function Section({
   className?: string | undefined;
 }) {
   return (
-    <section id={id} className={`mx-auto max-w-280 px-6 py-24 ${className ?? ""}`}>
-      {children}
+    <section id={id} className="mx-auto max-w-280 px-6 py-24">
+      <ScrollReveal className={className}>{children}</ScrollReveal>
     </section>
   );
 }

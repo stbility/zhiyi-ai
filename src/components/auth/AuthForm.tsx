@@ -6,6 +6,7 @@ import { useMemo, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/primitives/Button";
 import { Input } from "@/components/primitives/Input";
+import { translateAuthError, type AuthErrorMessage } from "@/lib/auth/errors";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { OAuthProvider } from "@/lib/supabase/auth-settings";
 
@@ -54,7 +55,7 @@ export function AuthForm({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AuthErrorMessage | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   // 客户端只建一次,避免每次渲染都新建实例
@@ -99,7 +100,7 @@ export function AuthForm({
           password,
         });
         if (error) {
-          setError(error.message);
+          setError(translateAuthError(error.message));
           return;
         }
         router.push("/today");
@@ -114,7 +115,7 @@ export function AuthForm({
           options: { emailRedirectTo: `${siteUrl}/auth/callback` },
         });
         if (error) {
-          setError(error.message);
+          setError(translateAuthError(error.message));
           return;
         }
         // 不回显账号是否已存在 —— 无论新老账号都给同一句提示
@@ -126,7 +127,7 @@ export function AuthForm({
         redirectTo: `${siteUrl}/reset-password`,
       });
       if (error) {
-        setError(error.message);
+        setError(translateAuthError(error.message));
         return;
       }
       setNotice("如果该邮箱已注册,重置链接已发送。");
@@ -142,7 +143,7 @@ export function AuthForm({
       provider,
       options: { redirectTo: `${siteUrl}/auth/callback` },
     });
-    if (error) setError(error.message);
+    if (error) setError(translateAuthError(error.message));
   }
 
   const showOAuth = mode !== "forgot" && oauthProviders.length > 0;
@@ -177,9 +178,14 @@ export function AuthForm({
           )}
 
           {error && (
-            <p role="alert" className="text-error font-zh text-caption">
-              {error}
-            </p>
+            <div role="alert" className="border-error-tint bg-error-tint rounded-control p-3">
+              <p className="text-error font-zh text-caption">{error.message}</p>
+              {error.hint && (
+                <p className="text-fg-tertiary font-zh text-label mt-1">
+                  {error.hint}
+                </p>
+              )}
+            </div>
           )}
           {notice && (
             <p role="status" className="text-success font-zh text-caption">
