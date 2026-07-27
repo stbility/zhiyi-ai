@@ -1,3 +1,4 @@
+import { CURRENT_PHASE } from "@/lib/phase";
 import {
   getServiceAvailability,
   type ServiceStatus,
@@ -43,8 +44,11 @@ export default function Page() {
         </div>
         <h1 className="text-h2 text-fg font-semibold">系统配置状态</h1>
         <p className="text-body text-fg-secondary mt-3">
-          当前处于 Phase 0.5(工程地基)。产品能力尚未实现,本页如实展示各外部服务的接入状态,不展示任何模拟数据。已配置{" "}
-          {configured} / {services.length} 项。
+          当前处于 {CURRENT_PHASE.label}。
+          {!CURRENT_PHASE.productCapabilitiesShipped &&
+            "产品能力尚未实现,"}
+          本页如实展示各外部服务的接入状态,不展示任何模拟数据。已配置 {configured}{" "}
+          / {services.length} 项。
         </p>
       </header>
 
