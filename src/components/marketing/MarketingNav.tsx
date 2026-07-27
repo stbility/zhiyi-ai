@@ -15,7 +15,7 @@ export function MarketingNav() {
       <nav className="font-zh mx-auto flex max-w-280 items-center justify-between gap-6 px-6 py-4">
         <Link
           href="/"
-          className="text-fg flex items-center gap-2 text-[15px] font-semibold"
+          className="text-fg -my-2 flex min-h-11 items-center gap-2 py-2 text-[15px] font-semibold"
         >
           <span
             aria-hidden
@@ -39,13 +39,24 @@ export function MarketingNav() {
         </div>
 
         <div className="flex gap-2.5">
+          {/* 窄屏用 md(40px)保证触摸目标够大,桌面回到设计系统的 sm */}
           <Link
             href="/login"
-            className={buttonClasses({ variant: "ghost", size: "sm" })}
+            className={buttonClasses({
+              variant: "ghost",
+              size: "sm",
+              className: "min-h-11 md:min-h-8",
+            })}
           >
             登录
           </Link>
-          <Link href="/register" className={buttonClasses({ size: "sm" })}>
+          <Link
+            href="/register"
+            className={buttonClasses({
+              size: "sm",
+              className: "min-h-11 md:min-h-8",
+            })}
+          >
             免费开始
           </Link>
         </div>

@@ -150,7 +150,8 @@ export function ProductShowcase() {
                 aria-current={isActive ? "true" : undefined}
                 onClick={() => setActive(item.key)}
                 className={cn(
-                  "rounded-control font-zh flex cursor-pointer items-center gap-2 px-2.5 py-2 text-[13px] whitespace-nowrap",
+                  // 窄屏放大到 44px,满足移动端可靠点击;桌面回到紧凑的 36px
+                  "rounded-control font-zh flex min-h-11 cursor-pointer items-center gap-2 px-3 py-2 text-[13px] whitespace-nowrap md:min-h-9 md:px-2.5",
                   "transition-colors duration-[var(--duration-hover)] ease-standard",
                   "focus-visible:outline-border-focus focus-visible:outline-2 focus-visible:outline-offset-2",
                   isActive
