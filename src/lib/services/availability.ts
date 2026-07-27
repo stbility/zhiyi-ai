@@ -5,6 +5,13 @@ import {
   getServerEnv,
   getSupabaseCredentials,
 } from "@/lib/env/server";
+import {
+  validateEncryptionKey,
+  validateStripeSecretKey,
+  validateStripeWebhookSecret,
+  validateSupabaseUrl,
+  type CredentialIssue,
+} from "@/lib/env/validate";
 
 /**
  * 服务可用性注册表。
@@ -22,7 +29,11 @@ import {
  * 需要查数据库,见 src/lib/providers/(Phase 3)。
  */
 
-export type ServiceStatus = "configured" | "unconfigured" | "incomplete";
+export type ServiceStatus =
+  | "configured"
+  | "unconfigured"
+  | "incomplete"
+  | "invalid";
 
 export interface ServiceAvailability {
   readonly key: string;
@@ -31,6 +42,8 @@ export interface ServiceAvailability {
   readonly status: ServiceStatus;
   /** 缺失的环境变量名。仅列变量名,绝不含变量值。 */
   readonly missing: readonly string[];
+  /** 格式错误。填了但填错时给出,内容绝不含变量值。 */
+  readonly issues: readonly CredentialIssue[];
   /** 该服务未配置时,被连带禁用的产品能力,用于 UI 如实说明影响范围 */
   readonly blocks: readonly string[];
 }
@@ -46,19 +59,25 @@ function evaluate(
   label: string,
   required: readonly Requirement[],
   blocks: readonly string[],
+  issues: readonly (CredentialIssue | null)[] = [],
 ): ServiceAvailability {
   const missing = required
     .filter((r) => !r.value)
     .map((r) => r.names.join(" 或 "));
 
-  const status: ServiceStatus =
-    missing.length === 0
-      ? "configured"
-      : missing.length === required.length
-        ? "unconfigured"
-        : "incomplete";
+  const realIssues = issues.filter((i): i is CredentialIssue => i !== null);
 
-  return { key, label, status, missing, blocks };
+  // 格式错误优先级最高:填了但填错比没填更危险 —— 它会让人误以为已经接通
+  const status: ServiceStatus =
+    realIssues.length > 0
+      ? "invalid"
+      : missing.length === 0
+        ? "configured"
+        : missing.length === required.length
+          ? "unconfigured"
+          : "incomplete";
+
+  return { key, label, status, missing, issues: realIssues, blocks };
 }
 
 export function getServiceAvailability(): readonly ServiceAvailability[] {
@@ -87,6 +106,7 @@ export function getServiceAvailability(): readonly ServiceAvailability[] {
         },
       ],
       ["注册登录", "组织与成员", "知识库", "长期记忆", "工作流执行历史"],
+      [validateSupabaseUrl(supabase.url)],
     ),
 
     evaluate(
@@ -106,6 +126,7 @@ export function getServiceAvailability(): readonly ServiceAvailability[] {
       "密钥加密",
       [{ names: ["ENCRYPTION_KEY"], value: env.ENCRYPTION_KEY }],
       ["在产品内添加模型服务密钥"],
+      [validateEncryptionKey(env.ENCRYPTION_KEY)],
     ),
 
     evaluate(
@@ -124,6 +145,10 @@ export function getServiceAvailability(): readonly ServiceAvailability[] {
         { names: ["STRIPE_WEBHOOK_SECRET"], value: env.STRIPE_WEBHOOK_SECRET },
       ],
       ["订阅升级", "账单门户", "套餐权益变更"],
+      [
+        validateStripeSecretKey(env.STRIPE_SECRET_KEY),
+        validateStripeWebhookSecret(env.STRIPE_WEBHOOK_SECRET),
+      ],
     ),
 
     evaluate(

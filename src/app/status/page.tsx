@@ -10,12 +10,15 @@ const STATUS_LABEL: Record<ServiceStatus, string> = {
   configured: "已配置",
   unconfigured: "未配置",
   incomplete: "配置不完整",
+  invalid: "配置错误",
 };
 
 const STATUS_CLASS: Record<ServiceStatus, string> = {
   configured: "bg-success-tint text-success",
   unconfigured: "bg-surface-3 text-fg-tertiary",
   incomplete: "bg-warning-tint text-warning",
+  // 填了但填错比没填更危险 —— 它会让人误以为已经接通,因此用错误色而非警告色
+  invalid: "bg-error-tint text-error",
 };
 
 function StatusChip({ status }: { status: ServiceStatus }) {
@@ -62,6 +65,19 @@ export default function Page() {
               <span className="text-fg text-body">{service.label}</span>
               <StatusChip status={service.status} />
             </div>
+
+            {service.issues.length > 0 && (
+              <ul className="border-error-tint bg-error-tint rounded-control mt-3 flex flex-col gap-2 p-3">
+                {service.issues.map((issue) => (
+                  <li key={issue.message}>
+                    <p className="text-error text-caption">{issue.message}</p>
+                    <p className="text-fg-tertiary text-label mt-1">
+                      修正方式:{issue.fix}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
 
             {service.missing.length > 0 && (
               <div className="mt-3 flex flex-col gap-1.5">
