@@ -182,7 +182,7 @@ export async function testProvider(
 
   const { data: provider, error: loadError } = await supabase
     .from("ai_providers")
-    .select("id, kind, base_url, api_key_cipher")
+    .select("id, kind, base_url, api_key_cipher, organization_id")
     .eq("id", parsed.data.id)
     .single();
 
@@ -198,6 +198,7 @@ export async function testProvider(
 
   let ok = false;
   let failure: string | null = null;
+  let discoveredModels: string[] = [];
 
   try {
     const { decryptSecret } = await import("@/lib/crypto/secret-box");
@@ -222,6 +223,28 @@ export async function testProvider(
     });
 
     ok = response.ok;
+
+    if (ok) {
+      // 各家返回结构不同,取到哪种算哪种;取不到不影响测试结果
+      try {
+        const payload = (await response.json()) as {
+          data?: { id?: string }[];
+          models?: { name?: string; id?: string }[];
+        };
+        const fromOpenAi = (payload.data ?? [])
+          .map((m) => m.id)
+          .filter((id): id is string => typeof id === "string");
+        const fromGoogle = (payload.models ?? [])
+          .map((m) => m.name ?? m.id)
+          .filter((id): id is string => typeof id === "string")
+          // Google 返回 models/gemini-x 形式,去掉前缀便于调用
+          .map((id) => id.replace(/^models\//, ""));
+        discoveredModels = [...fromOpenAi, ...fromGoogle].slice(0, 100);
+      } catch {
+        // 响应不是预期结构,不影响「连接成功」这一事实
+      }
+    }
+
     if (!ok) {
       // 只记录状态码与简短原因,绝不把响应体原样落库 —— 里面可能回显密钥
       failure = `接口返回 HTTP ${response.status}`;
@@ -245,8 +268,32 @@ export async function testProvider(
     })
     .eq("id", parsed.data.id);
 
+  // 连接正常时顺带把可用模型导进来 —— 否则用户得自己去文档里抄模型名,
+  // 抄错了又只能在对话时才发现。
+  let importedCount = 0;
+  if (ok && discoveredModels.length > 0) {
+    const rows = discoveredModels.map((id) => ({
+      provider_id: parsed.data.id,
+      organization_id: provider.organization_id as string,
+      model_id: id,
+      display_name: id.length > 60 ? id.slice(0, 60) : id,
+    }));
+
+    const { error: upsertError } = await supabase
+      .from("ai_models")
+      .upsert(rows, { onConflict: "provider_id,model_id", ignoreDuplicates: true });
+
+    if (!upsertError) importedCount = rows.length;
+  }
+
   revalidatePath("/settings/models");
-  return ok
-    ? { ok: "连接成功,密钥可用。" }
-    : { error: `连接失败:${failure ?? "未知原因"}` };
+  revalidatePath("/assistant");
+
+  if (!ok) return { error: `连接失败:${failure ?? "未知原因"}` };
+  return {
+    ok:
+      importedCount > 0
+        ? `连接成功,已导入 ${importedCount} 个可用模型。`
+        : "连接成功,密钥可用。",
+  };
 }
