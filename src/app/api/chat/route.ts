@@ -136,6 +136,25 @@ export async function POST(request: NextRequest) {
     const message =
       e instanceof ProviderCallError ? e.message : "调用模型服务失败。";
 
+    // 如果失败原因是「这个模型压根不提供对话端点」,就把它从可选列表里摘掉。
+    // 导入时的用途过滤只是启发式,总有漏网的;这里依据的是一次真实调用的结果,
+    // 所以是可靠的一道 —— 同一个坑不该让用户踩第二次。
+    const { indicatesModelUnusable } = await import(
+      "@/lib/providers/model-filter"
+    );
+    if (
+      indicatesModelUnusable(
+        e instanceof ProviderCallError ? e.status : undefined,
+        message,
+      )
+    ) {
+      await supabase
+        .from("ai_models")
+        .update({ chat_unavailable_reason: message })
+        .eq("provider_id", providerId)
+        .eq("model_id", model);
+    }
+
     // 失败也留痕
     await supabase.from("messages").insert({
       conversation_id: conversationId,
@@ -158,21 +177,29 @@ export async function POST(request: NextRequest) {
     async start(streamController) {
       let full = "";
 
+      // 客户端一旦断开(关页面、切走、网络掉线),enqueue/close 会抛
+      // 「Invalid state」。这个抛出发生在 start() 里,会让整个函数以未处理异常
+      // 收场 —— 服务端记成一次崩溃,后续的留痕代码也不再执行。
+      // 客户端走掉是正常情况,不是服务端错误,所以这里全部吞掉。
+      let clientGone = false;
+      const send = (event: string, data: unknown) => {
+        if (clientGone) return;
+        try {
+          streamController.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+          );
+        } catch {
+          clientGone = true;
+        }
+      };
+
       // 先把对话 id 告知客户端,便于后续消息挂到同一对话
-      streamController.enqueue(
-        encoder.encode(
-          `event: meta\ndata: ${JSON.stringify({ conversationId: convId })}\n\n`,
-        ),
-      );
+      send("meta", { conversationId: convId });
 
       try {
         for await (const delta of result.stream) {
           full += delta;
-          streamController.enqueue(
-            encoder.encode(
-              `event: delta\ndata: ${JSON.stringify({ text: delta })}\n\n`,
-            ),
-          );
+          send("delta", { text: delta });
         }
 
         // 上游返回 200 却一个字都没产出 —— 这是失败,不是「成功但内容为空」。
@@ -191,11 +218,7 @@ export async function POST(request: NextRequest) {
             error_message: reason,
           });
 
-          streamController.enqueue(
-            encoder.encode(
-              `event: error\ndata: ${JSON.stringify({ message: reason })}\n\n`,
-            ),
-          );
+          send("error", { message: reason });
           return;
         }
 
@@ -211,40 +234,42 @@ export async function POST(request: NextRequest) {
           latency_ms: Date.now() - startedAt,
         });
 
-        streamController.enqueue(
-          encoder.encode(
-            `event: done\ndata: ${JSON.stringify({
-              inputTokens: result.usage.inputTokens,
-              outputTokens: result.usage.outputTokens,
-              latencyMs: Date.now() - startedAt,
-            })}\n\n`,
-          ),
-        );
+        send("done", {
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          latencyMs: Date.now() - startedAt,
+        });
       } catch (e) {
         const message =
           e instanceof ProviderCallError
             ? e.message
             : "生成过程中断,请重试。";
 
-        // 中断时把已生成的部分连同错误一起留痕,不丢用户已看到的内容
-        await supabase.from("messages").insert({
-          conversation_id: convId,
-          organization_id: organizationId,
-          role: "assistant",
-          content: full,
-          provider_id: providerId,
-          model_id: model,
-          latency_ms: Date.now() - startedAt,
-          error_message: message,
-        });
+        // 中断时把已生成的部分连同错误一起留痕,不丢用户已看到的内容。
+        // 留痕失败(比如连不上数据库)不能再把兜底路径本身炸掉 ——
+        // 否则用户连错误提示都收不到,只会看到连接莫名断开。
+        try {
+          await supabase.from("messages").insert({
+            conversation_id: convId,
+            organization_id: organizationId,
+            role: "assistant",
+            content: full,
+            provider_id: providerId,
+            model_id: model,
+            latency_ms: Date.now() - startedAt,
+            error_message: message,
+          });
+        } catch {
+          // 忽略:告知用户比留痕更要紧
+        }
 
-        streamController.enqueue(
-          encoder.encode(
-            `event: error\ndata: ${JSON.stringify({ message })}\n\n`,
-          ),
-        );
+        send("error", { message });
       } finally {
-        streamController.close();
+        try {
+          streamController.close();
+        } catch {
+          // 客户端已断开时 close 会抛,同样不算服务端错误
+        }
       }
     },
   });

@@ -17,6 +17,8 @@ async function loadModels(organizationId: string): Promise<ModelOption[]> {
     .select("model_id, provider_id, ai_providers (display_name, enabled)")
     .eq("organization_id", organizationId)
     .eq("enabled", true)
+    // 实际调用过、确认不能对话的模型不再出现在选择列表里
+    .is("chat_unavailable_reason", null)
     .order("model_id");
 
   return (data ?? []).flatMap((row) => {

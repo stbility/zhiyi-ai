@@ -199,6 +199,8 @@ export async function testProvider(
   let ok = false;
   let failure: string | null = null;
   let discoveredModels: string[] = [];
+  /** 服务商返回但用途不是对话、已被剔除的数量 —— 要如实告诉用户,否则数字对不上 */
+  let skippedCount = 0;
 
   try {
     const { decryptSecret } = await import("@/lib/crypto/secret-box");
@@ -239,7 +241,15 @@ export async function testProvider(
           .filter((id): id is string => typeof id === "string")
           // Google 返回 models/gemini-x 形式,去掉前缀便于调用
           .map((id) => id.replace(/^models\//, ""));
-        discoveredModels = [...fromOpenAi, ...fromGoogle].slice(0, 100);
+
+        // 服务商返回的是「账号能访问的全部模型」,里面混着向量嵌入、图像理解、
+        // 安全分类、文档解析等根本没有对话端点的模型。之前不加区分全导进来,
+        // 用户选中就是 404,却完全看不出为什么。
+        const { filterChatModels } = await import("@/lib/providers/model-filter");
+        const all = [...fromOpenAi, ...fromGoogle];
+        const chatOnly = filterChatModels(all);
+        skippedCount = all.length - chatOnly.length;
+        discoveredModels = [...chatOnly].slice(0, 100);
       } catch {
         // 响应不是预期结构,不影响「连接成功」这一事实
       }
@@ -290,10 +300,11 @@ export async function testProvider(
   revalidatePath("/assistant");
 
   if (!ok) return { error: `连接失败:${failure ?? "未知原因"}` };
+  if (importedCount === 0) return { ok: "连接成功,密钥可用。" };
   return {
     ok:
-      importedCount > 0
-        ? `连接成功,已导入 ${importedCount} 个可用模型。`
-        : "连接成功,密钥可用。",
+      skippedCount > 0
+        ? `连接成功,已导入 ${importedCount} 个可对话的模型;另有 ${skippedCount} 个是嵌入、安全分类、解析等非对话模型,已跳过。`
+        : `连接成功,已导入 ${importedCount} 个可用模型。`,
   };
 }
