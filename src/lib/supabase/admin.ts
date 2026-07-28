@@ -2,7 +2,7 @@ import "server-only";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import { getSupabaseCredentials, getServerEnv } from "@/lib/env/server";
+import { getSupabaseCredentials } from "@/lib/env/server";
 
 /**
  * 服务端管理客户端(service role)。
@@ -28,7 +28,3 @@ export function hasAdminAccess(): boolean {
   return getSupabaseCredentials().secretKey !== undefined;
 }
 
-/** 事务邮件通道是否可用。不可用时,依赖发信的流程必须换路或如实说明。 */
-export function hasEmailChannel(): boolean {
-  return getServerEnv().RESEND_API_KEY !== undefined;
-}
