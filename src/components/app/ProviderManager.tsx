@@ -176,14 +176,6 @@ export function ProviderManager({
               <p className="text-fg-tertiary text-label">{spec.description}</p>
             </div>
 
-            <Input
-              name="displayName"
-              label="给这个连接起个名字"
-              description="仅用于在列表中辨认,可随意填写,与服务商无关。"
-              placeholder="例如:我的 DeepSeek"
-              required
-              maxLength={60}
-            />
 
             <div className="flex flex-col gap-1.5">
               <Input

@@ -17,11 +17,6 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 const addSchema = z.object({
   organizationId: z.string().uuid("组织标识无效"),
   kind: z.enum(["openai", "anthropic", "google", "openai_compatible"]),
-  displayName: z
-    .string()
-    .trim()
-    .min(1, "请填写名称")
-    .max(60, "名称不能超过 60 个字符"),
   baseUrl: z
     .string()
     .trim()
@@ -51,7 +46,6 @@ export async function addProvider(
   const parsed = addSchema.safeParse({
     organizationId: formData.get("organizationId"),
     kind: formData.get("kind"),
-    displayName: formData.get("displayName"),
     baseUrl: formData.get("baseUrl") ?? "",
     apiKey: formData.get("apiKey"),
   });
@@ -60,7 +54,7 @@ export async function addProvider(
     return { error: parsed.error.issues[0]?.message ?? "输入不合法" };
   }
 
-  const { organizationId, kind, displayName, baseUrl, apiKey } = parsed.data;
+  const { organizationId, kind, baseUrl, apiKey } = parsed.data;
   const spec = getProviderSpec(kind as ProviderKind);
 
   if (spec.requiresBaseUrl && !baseUrl) {
@@ -75,6 +69,15 @@ export async function addProvider(
   } = await supabase.auth.getUser();
   if (!user) return { error: "登录状态已失效,请重新登录。" };
 
+  // 名称由系统生成,不让用户填 —— 多一个必填字段就多一道卡住人的门槛,
+  // 而这个名字对功能没有任何影响,只是列表里的一个标签。
+  const displayName = await generateDisplayName(
+    supabase,
+    organizationId,
+    baseUrl ?? spec.defaultBaseUrl ?? spec.label,
+    spec.label,
+  );
+
   const { error } = await supabase.from("ai_providers").insert({
     organization_id: organizationId,
     kind,
@@ -86,7 +89,7 @@ export async function addProvider(
   });
 
   if (error) {
-    if (error.code === "23505") return { error: "该名称已被占用,请换一个。" };
+    if (error.code === "23505") return { error: "该服务已添加过,请勿重复添加。" };
     if (error.code === "42501") {
       return {
         error: "没有权限添加模型服务。",
@@ -98,6 +101,44 @@ export async function addProvider(
 
   revalidatePath("/settings/models");
   return { ok: "已添加。建议立即测试连接,确认密钥可用。" };
+}
+
+/**
+ * 生成便于辨认的名称。
+ *
+ * 优先用接口地址的域名(如 api.deepseek.com -> deepseek),
+ * 取不到就退回服务商类型名。同组织内重名时追加序号。
+ */
+async function generateDisplayName(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  organizationId: string,
+  source: string,
+  fallback: string,
+): Promise<string> {
+  let base = fallback;
+  try {
+    const host = new URL(source).hostname;
+    const parts = host.split(".").filter((p) => p !== "www" && p !== "api");
+    if (parts.length > 0) base = parts[0] as string;
+  } catch {
+    // source 不是合法 URL,直接用服务商类型名
+  }
+
+  if (!supabase) return base;
+
+  const { data } = await supabase
+    .from("ai_providers")
+    .select("display_name")
+    .eq("organization_id", organizationId);
+
+  const taken = new Set((data ?? []).map((r) => r.display_name as string));
+  if (!taken.has(base)) return base;
+
+  for (let i = 2; i < 100; i += 1) {
+    const candidate = `${base} ${i}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${base} ${Date.now()}`;
 }
 
 const idSchema = z.object({ id: z.string().uuid() });
