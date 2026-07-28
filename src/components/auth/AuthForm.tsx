@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, type FormEvent } from "react";
 
+import { OAuthButtons } from "@/components/auth/OAuthButtons";
 import { Button } from "@/components/primitives/Button";
 import { Input } from "@/components/primitives/Input";
 import { translateAuthError, type AuthErrorMessage } from "@/lib/auth/errors";
@@ -19,11 +20,6 @@ const COPY: Record<
   login: { submit: "登录", pending: "登录中…", emailLabel: "邮箱" },
   register: { submit: "创建账户", pending: "创建中…", emailLabel: "邮箱" },
   forgot: { submit: "发送重置邮件", pending: "发送中…", emailLabel: "邮箱" },
-};
-
-const PROVIDER_LABEL: Record<OAuthProvider, string> = {
-  github: "使用 GitHub 继续",
-  google: "使用 Google 继续",
 };
 
 /**
@@ -136,18 +132,6 @@ export function AuthForm({
     }
   }
 
-  async function signInWith(provider: OAuthProvider) {
-    if (!supabase) return;
-    setError(null);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo: `${siteUrl}/auth/callback` },
-    });
-    if (error) setError(translateAuthError(error.message));
-  }
-
-  const showOAuth = mode !== "forgot" && oauthProviders.length > 0;
-
   return (
     <div className="flex flex-col gap-4">
       {emailEnabled ? (
@@ -203,28 +187,12 @@ export function AuthForm({
         </p>
       )}
 
-      {showOAuth && (
-        <>
-          {emailEnabled && (
-            <div className="flex items-center gap-3">
-              <span className="bg-divider h-px flex-1" />
-              <span className="text-fg-tertiary font-zh text-label">或</span>
-              <span className="bg-divider h-px flex-1" />
-            </div>
-          )}
-
-          {oauthProviders.map((provider) => (
-            <Button
-              key={provider}
-              type="button"
-              variant="secondary"
-              onClick={() => void signInWith(provider)}
-              className="w-full"
-            >
-              {PROVIDER_LABEL[provider]}
-            </Button>
-          ))}
-        </>
+      {mode !== "forgot" && (
+        <OAuthButtons
+          siteUrl={siteUrl}
+          enabled={oauthProviders}
+          showDivider={emailEnabled}
+        />
       )}
 
       {mode === "login" && (

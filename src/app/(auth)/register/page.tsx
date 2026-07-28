@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { AuthForm } from "@/components/auth/AuthForm";
 import { AuthShell } from "@/components/auth/AuthShell";
+import { RegisterForm } from "@/components/auth/RegisterForm";
 import { getSiteUrl } from "@/lib/env/server";
 import { getAuthCapabilities } from "@/lib/supabase/auth-settings";
 
@@ -14,7 +14,7 @@ export default async function RegisterPage() {
   return (
     <AuthShell
       title="创建账户"
-      description="注册后需完成邮箱验证才能登录。"
+      description="使用邮箱注册,或通过第三方账号继续。"
       footer={
         <>
           已有账户?{" "}
@@ -24,12 +24,9 @@ export default async function RegisterPage() {
         </>
       }
     >
-      <AuthForm
-        mode="register"
+      <RegisterForm
         siteUrl={getSiteUrl()}
         oauthProviders={capabilities.oauthProviders}
-        emailEnabled={capabilities.emailEnabled}
-        signupEnabled={capabilities.signupEnabled}
       />
     </AuthShell>
   );

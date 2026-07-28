@@ -14,11 +14,20 @@ import { describe, expect, it } from "vitest";
 const SRC = resolve(__dirname, "../../src");
 const TOKENS_DIR = resolve(SRC, "styles");
 
+/**
+ * 唯一的写死颜色豁免:第三方品牌标识。
+ *
+ * Google 品牌规范要求其标识必须使用官方四色,不得改色 —— 换成设计系统的颜色
+ * 反而违反对方准则。豁免范围严格限定为这一个文件,不扩大到任何组件。
+ */
+const BRAND_MARKS = resolve(SRC, "components/auth/BrandMarks.tsx");
+
 function collectFiles(dir: string, exts: readonly string[]): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (full.startsWith(TOKENS_DIR)) continue;
+    if (full === BRAND_MARKS) continue;
     if (statSync(full).isDirectory()) {
       out.push(...collectFiles(full, exts));
     } else if (exts.some((e) => full.endsWith(e))) {
