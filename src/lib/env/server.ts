@@ -80,7 +80,13 @@ const serverEnvSchema = z.object({
 
   // --- 站点 --------------------------------------------------------------
   NEXT_PUBLIC_SITE_URL: optionalUrl,
-  /** Vercel 自动注入的部署域名,本地为空 */
+  /**
+   * Vercel 稳定的生产域名。据官方文档,即使在预览部署中也始终有值,
+   * 专门用于「可靠地生成指向生产环境的链接」。
+   * https://vercel.com/docs/environment-variables/system-environment-variables
+   */
+  VERCEL_PROJECT_PRODUCTION_URL: optionalString,
+  /** 每次部署各不相同的临时域名。不可用于 OAuth 回调。 */
   VERCEL_URL: optionalString,
 });
 
@@ -136,11 +142,22 @@ export function getMigrationDatabaseUrl(): string | undefined {
 
 /**
  * 站点绝对地址。用于邮件回调、OAuth 重定向、Stripe 回跳。
- * 优先显式配置,其次 Vercel 注入的部署域名,最后本地开发地址。
+ *
+ * 顺序有讲究,踩过坑:
+ *   1. NEXT_PUBLIC_SITE_URL —— 显式配置优先
+ *   2. VERCEL_PROJECT_PRODUCTION_URL —— 稳定的生产域名。官方文档明确说明
+ *      它「即使在预览部署中也始终有值」,专门用于可靠地生成指向生产的链接
+ *   3. VERCEL_URL —— 兜底。它是每次部署各不相同的临时域名,
+ *      曾误用它导致 OAuth 授权后跳回预览域名(而该域名并不在
+ *      第三方 Provider 的回调白名单里,登录必然失败)
+ *   4. 本地开发地址
  */
 export function getSiteUrl(): string {
   const env = getServerEnv();
   if (env.NEXT_PUBLIC_SITE_URL) return env.NEXT_PUBLIC_SITE_URL;
+  if (env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  }
   if (env.VERCEL_URL) return `https://${env.VERCEL_URL}`;
   return "http://localhost:3000";
 }
