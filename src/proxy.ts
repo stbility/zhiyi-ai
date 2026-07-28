@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 /**
- * 会话刷新中间件。
+ * 会话刷新代理(Next.js 16 起该文件由 middleware.ts 更名为 proxy.ts)。
  *
  * Supabase 的会话令牌有有效期,必须在每次请求时尝试刷新并把新 Cookie 写回响应。
  * Server Component 无法写 Cookie,所以这件事只能在 middleware 里做 —— 否则用户
@@ -30,7 +30,7 @@ const PROTECTED_PREFIXES = [
 /** 已登录用户不应再看到的页面 */
 const AUTH_ONLY_PATHS = ["/login", "/register", "/forgot-password"];
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const url = process.env["NEXT_PUBLIC_SUPABASE_URL"];

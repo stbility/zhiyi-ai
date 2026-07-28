@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 
-import { getSiteUrl } from "@/lib/env/server";
+import { allowUnverifiedSignup, getSiteUrl } from "@/lib/env/server";
 import { createSupabaseAdminClient, hasEmailChannel } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -17,13 +17,14 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
  *
  * 因此这里分两条路:
  *   A. 邮件通道可用 —— 走标准注册,发验证邮件,用户验证后才能登录。这是正路。
- *   B. 邮件通道不可用 —— 用 service role 直接建号并标记邮箱已确认,不发任何邮件,
- *      因而不受限流影响。注册立刻可用。
+ *   B. 邮件通道不可用,且运维显式设置了 ALLOW_UNVERIFIED_SIGNUP=true ——
+ *      用 service role 直接建号并标记邮箱已确认,不发任何邮件,不受限流影响。
  *
- * B 路的代价必须讲清楚:它跳过了「邮箱归属权验证」,意味着有人可以用不属于自己的
- * 邮箱注册。这是在「产品完全不可用」与「暂时放宽一项验证」之间的权衡,不是默认选择。
- * 返回值会带上 emailVerificationSkipped 标记,由界面如实告知用户与运维,
- * 且邮件通道一旦接通,代码自动走回 A 路,无需改动。
+ * B 路默认关闭。它跳过了「邮箱归属权验证」,意味着任何人都能用不属于自己的邮箱
+ * 注册并进入系统 —— 这个代价必须由运维显式承担,不能由代码静默降级。
+ * 开关关闭时,邮件不可用就如实报错,不偷偷放行。
+ *
+ * 邮件通道一旦接通,代码自动走回 A 路,无需改动。
  */
 
 const schema = z.object({
@@ -88,7 +89,17 @@ export async function register(
     // 邮件发送失败 —— 落到 B 路,总比让用户注册不了强
   }
 
-  // --- B 路:不依赖邮件,用 service role 直接建号 ---------------------------
+  // --- B 路:跳过邮箱验证直接建号 ------------------------------------------
+  //
+  // 默认不走这条路。跳过邮箱验证意味着任何人都能用不属于自己的邮箱注册并进入系统,
+  // 这个代价必须由运维显式承担,不能由代码替他决定。
+  if (!allowUnverifiedSignup()) {
+    return {
+      error: "邮件服务暂时不可用,当前无法完成注册。",
+      hint: "请稍后重试。若持续失败,请联系管理员为 Supabase 配置自有 SMTP。",
+    };
+  }
+
   const admin = createSupabaseAdminClient();
   if (!admin) {
     return {

@@ -68,6 +68,16 @@ const serverEnvSchema = z.object({
   // --- Resend(事务邮件)-------------------------------------------------
   RESEND_API_KEY: optionalString,
 
+  // --- 安全开关 -----------------------------------------------------------
+  /**
+   * 是否允许在邮件通道不可用时,跳过邮箱验证直接建号。
+   *
+   * 默认关闭。开启意味着任何人都能用不属于自己的邮箱注册并进入系统 ——
+   * 这是「产品完全不可用」与「暂时放宽一项验证」之间的权衡,必须由运维显式决定,
+   * 不能由代码静默降级。邮件通道接通后应立即关闭。
+   */
+  ALLOW_UNVERIFIED_SIGNUP: optionalString,
+
   // --- 站点 --------------------------------------------------------------
   NEXT_PUBLIC_SITE_URL: optionalUrl,
   /** Vercel 自动注入的部署域名,本地为空 */
@@ -109,6 +119,14 @@ export function getSupabaseCredentials(): SupabaseCredentials {
       env.SUPABASE_ANON_KEY,
     secretKey: env.SUPABASE_SECRET_KEY ?? env.SUPABASE_SERVICE_ROLE_KEY,
   };
+}
+
+/**
+ * 是否允许跳过邮箱验证注册。默认关闭,只有显式设为 "true" 才生效。
+ * 任何其它取值(包括未设置、"1"、"yes")一律视为关闭 —— 安全开关不做宽松解析。
+ */
+export function allowUnverifiedSignup(): boolean {
+  return getServerEnv().ALLOW_UNVERIFIED_SIGNUP === "true";
 }
 
 /** 跑迁移用的连接串 —— 必须是非连接池地址 */
