@@ -95,9 +95,28 @@ const RULES: readonly Rule[] = [
   },
 ];
 
-export function translateAuthError(raw: string): AuthErrorMessage {
+export function translateAuthError(raw: unknown): AuthErrorMessage {
+  // 上游未必给字符串:可能是空对象、undefined,或整个 Error 实例。
+  // 直接渲染会得到 "{}" 或 "[object Object]" —— 对用户毫无意义。
+  const text =
+    typeof raw === "string"
+      ? raw
+      : raw instanceof Error
+        ? raw.message
+        : typeof raw === "object" && raw !== null && "message" in raw
+          ? String((raw as { message: unknown }).message)
+          : "";
+
+  if (text.trim() === "" || text === "{}" || text === "[object Object]") {
+    return {
+      message: "操作未能完成,服务端没有返回具体原因。",
+      hint: "请稍后重试;若反复出现,请把这一情况告知管理员。",
+      isServerConfig: false,
+    };
+  }
+
   for (const rule of RULES) {
-    if (rule.match.test(raw)) {
+    if (rule.match.test(text)) {
       return {
         message: rule.message,
         ...(rule.hint === undefined ? {} : { hint: rule.hint }),
@@ -108,7 +127,7 @@ export function translateAuthError(raw: string): AuthErrorMessage {
 
   // 未收录:保留原文,不粉饰、不吞掉
   return {
-    message: raw,
+    message: text,
     hint: "如果反复出现,请把这条提示提供给管理员。",
     isServerConfig: false,
   };
