@@ -1,7 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { ProviderCallError, streamChat, type ChatMessage } from "@/lib/ai/gateway";
+import {
+  explainEmptyResponse,
+  ProviderCallError,
+  streamChat,
+  type ChatMessage,
+} from "@/lib/ai/gateway";
 import type { ProviderKind } from "@/lib/providers/registry";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -87,11 +92,18 @@ export async function POST(request: NextRequest) {
     .order("created_at", { ascending: true })
     .limit(50);
 
+  // 过滤掉内容为空的历史消息。
+  //
+  // 失败的调用会留下一条 content 为空的 assistant 记录(用于留痕),
+  // 但 OpenAI 兼容接口不接受空内容的消息 —— 把它带进上下文会让之后
+  // 每一轮都失败,故障自我传染。留痕归留痕,不能污染上下文。
   const messages: ChatMessage[] = [
-    ...(history ?? []).map((m) => ({
-      role: m.role as ChatMessage["role"],
-      content: m.content as string,
-    })),
+    ...(history ?? [])
+      .filter((m) => typeof m.content === "string" && m.content.trim() !== "")
+      .map((m) => ({
+        role: m.role as ChatMessage["role"],
+        content: m.content as string,
+      })),
     { role: "user" as const, content },
   ];
 
@@ -161,6 +173,30 @@ export async function POST(request: NextRequest) {
               `event: delta\ndata: ${JSON.stringify({ text: delta })}\n\n`,
             ),
           );
+        }
+
+        // 上游返回 200 却一个字都没产出 —— 这是失败,不是「成功但内容为空」。
+        // 以前这里静默存成空消息,用户看到空气泡,数据库里也查不出原因。
+        if (full === "") {
+          const reason = explainEmptyResponse(result.diagnostics);
+
+          await supabase.from("messages").insert({
+            conversation_id: convId,
+            organization_id: organizationId,
+            role: "assistant",
+            content: "",
+            provider_id: providerId,
+            model_id: model,
+            latency_ms: Date.now() - startedAt,
+            error_message: reason,
+          });
+
+          streamController.enqueue(
+            encoder.encode(
+              `event: error\ndata: ${JSON.stringify({ message: reason })}\n\n`,
+            ),
+          );
+          return;
         }
 
         await supabase.from("messages").insert({

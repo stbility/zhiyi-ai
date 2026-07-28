@@ -33,11 +33,30 @@ export interface ChatUsage {
   outputTokens: number | null;
 }
 
+/**
+ * 一次调用的诊断信息。
+ *
+ * 上游返回 HTTP 200 却不产出任何内容时,光说「空回复」没有任何排查价值。
+ * 这里记下它到底说了什么 —— finish_reason、流内错误、出现过哪些字段。
+ */
+export interface ChatDiagnostics {
+  /** 上游给出的结束原因,如 stop / length / content_filter */
+  finishReason: string | null;
+  /** 流内返回的错误(HTTP 200 但载荷是错误时) */
+  streamError: string | null;
+  /** 分片中出现过的 delta 字段名,用于识别 reasoning_content 这类非标准字段 */
+  seenDeltaKeys: string[];
+  /** 收到的分片总数 */
+  chunkCount: number;
+}
+
 export interface ChatStreamResult {
   /** 逐段产出的文本增量 */
   readonly stream: AsyncGenerator<string, void, unknown>;
   /** 流结束后才有值 —— 用量通常在最后一个事件里 */
   readonly usage: ChatUsage;
+  /** 流结束后才有值 —— 用于解释「为什么没有内容」 */
+  readonly diagnostics: ChatDiagnostics;
 }
 
 export class ProviderCallError extends Error {
@@ -124,6 +143,7 @@ async function callOpenAICompatible(
   model: string,
   messages: readonly ChatMessage[],
   usage: ChatUsage,
+  diagnostics: ChatDiagnostics,
   signal: AbortSignal,
 ): Promise<AsyncGenerator<string, void, unknown>> {
   const apiKey = decryptSecret(creds.apiKeyCipher);
@@ -150,27 +170,66 @@ async function callOpenAICompatible(
   const body = response.body;
 
   return (async function* () {
+    const keys = new Set<string>();
+
     for await (const line of readSseLines(body)) {
       if (!line.startsWith("data:")) continue;
       const data = line.slice(5).trim();
       if (data === "[DONE]") break;
 
+      let chunk: {
+        choices?: {
+          delta?: Record<string, unknown>;
+          finish_reason?: string | null;
+        }[];
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+        error?: { message?: string } | string;
+        message?: string;
+        detail?: string;
+      };
+
       try {
-        const chunk = JSON.parse(data) as {
-          choices?: { delta?: { content?: string } }[];
-          usage?: { prompt_tokens?: number; completion_tokens?: number };
-        };
-
-        if (chunk.usage) {
-          usage.inputTokens = chunk.usage.prompt_tokens ?? usage.inputTokens;
-          usage.outputTokens =
-            chunk.usage.completion_tokens ?? usage.outputTokens;
-        }
-
-        const delta = chunk.choices?.[0]?.delta?.content;
-        if (delta) yield delta;
+        chunk = JSON.parse(data);
       } catch {
-        // 单个分片解析失败不应中断整个流 —— 上游偶尔会发送心跳或注释行
+        // 心跳或注释行,跳过
+        continue;
+      }
+
+      diagnostics.chunkCount += 1;
+
+      // 上游可能以 HTTP 200 返回,把错误塞在流里。以前这里被静默吞掉,
+      // 表现就是「空回复且无错误」—— 排查时毫无线索。现在直接中断并报出。
+      const streamError =
+        typeof chunk.error === "string"
+          ? chunk.error
+          : (chunk.error?.message ?? chunk.detail ?? null);
+      if (streamError) {
+        diagnostics.streamError = streamError;
+        throw new ProviderCallError(
+          streamError.length > 200 ? streamError.slice(0, 200) : streamError,
+        );
+      }
+
+      if (chunk.usage) {
+        usage.inputTokens = chunk.usage.prompt_tokens ?? usage.inputTokens;
+        usage.outputTokens =
+          chunk.usage.completion_tokens ?? usage.outputTokens;
+      }
+
+      const choice = chunk.choices?.[0];
+      if (choice?.finish_reason) {
+        diagnostics.finishReason = choice.finish_reason;
+      }
+
+      const delta = choice?.delta;
+      if (delta) {
+        for (const k of Object.keys(delta)) keys.add(k);
+        diagnostics.seenDeltaKeys = [...keys];
+
+        // 推理类模型把思考过程放在 reasoning_content,最终答案仍在 content。
+        // 只产出 content —— 思考过程不应混进给用户看的回答里。
+        const text = delta["content"];
+        if (typeof text === "string" && text !== "") yield text;
       }
     }
   })();
@@ -182,6 +241,7 @@ async function callAnthropic(
   model: string,
   messages: readonly ChatMessage[],
   usage: ChatUsage,
+  diagnostics: ChatDiagnostics,
   signal: AbortSignal,
 ): Promise<AsyncGenerator<string, void, unknown>> {
   const apiKey = decryptSecret(creds.apiKeyCipher);
@@ -228,8 +288,15 @@ async function callAnthropic(
           usage?: { output_tokens?: number };
         };
 
+        diagnostics.chunkCount += 1;
+
         if (event.type === "message_start") {
           usage.inputTokens = event.message?.usage?.input_tokens ?? null;
+        }
+        if (event.type === "error") {
+          const detail = "Anthropic 返回流内错误";
+          diagnostics.streamError = detail;
+          throw new ProviderCallError(detail);
         }
         if (event.type === "message_delta") {
           usage.outputTokens = event.usage?.output_tokens ?? usage.outputTokens;
@@ -250,6 +317,7 @@ async function callGoogle(
   model: string,
   messages: readonly ChatMessage[],
   usage: ChatUsage,
+  diagnostics: ChatDiagnostics,
   signal: AbortSignal,
 ): Promise<AsyncGenerator<string, void, unknown>> {
   const apiKey = decryptSecret(creds.apiKeyCipher);
@@ -302,6 +370,8 @@ async function callGoogle(
           };
         };
 
+        diagnostics.chunkCount += 1;
+
         if (chunk.usageMetadata) {
           usage.inputTokens =
             chunk.usageMetadata.promptTokenCount ?? usage.inputTokens;
@@ -336,12 +406,60 @@ export async function streamChat({
   signal: AbortSignal;
 }): Promise<ChatStreamResult> {
   const usage: ChatUsage = { inputTokens: null, outputTokens: null };
+  const diagnostics: ChatDiagnostics = {
+    finishReason: null,
+    streamError: null,
+    seenDeltaKeys: [],
+    chunkCount: 0,
+  };
 
   const stream = await (credentials.kind === "anthropic"
-    ? callAnthropic(credentials, model, messages, usage, signal)
+    ? callAnthropic(credentials, model, messages, usage, diagnostics, signal)
     : credentials.kind === "google"
-      ? callGoogle(credentials, model, messages, usage, signal)
-      : callOpenAICompatible(credentials, model, messages, usage, signal));
+      ? callGoogle(credentials, model, messages, usage, diagnostics, signal)
+      : callOpenAICompatible(
+          credentials,
+          model,
+          messages,
+          usage,
+          diagnostics,
+          signal,
+        ));
 
-  return { stream, usage };
+  return { stream, usage, diagnostics };
+}
+
+
+/**
+ * 把「上游返回了 200 却没有任何内容」翻译成可排查的说明。
+ *
+ * 这种情况以前被当成「成功但内容为空」存了下来,用户看到一个空气泡,
+ * 数据库里也没有任何线索。现在必须给出原因。
+ */
+export function explainEmptyResponse(d: ChatDiagnostics): string {
+  if (d.streamError) return `模型返回错误:${d.streamError}`;
+
+  if (d.chunkCount === 0) {
+    return "模型没有返回任何数据。可能是该模型当前不可用,或不支持流式输出。";
+  }
+
+  switch (d.finishReason) {
+    case "length":
+      return "输出长度达到上限,模型未能给出内容。请缩短输入后重试。";
+    case "content_filter":
+      return "内容被模型的安全策略拦截,未产生回复。";
+    default:
+      break;
+  }
+
+  // 推理类模型只吐了思考过程、没有最终答案时,字段名是关键线索
+  if (
+    d.seenDeltaKeys.includes("reasoning_content") &&
+    !d.seenDeltaKeys.includes("content")
+  ) {
+    return "该模型本次只输出了推理过程、没有给出最终回答。换一个模型或重试通常可解决。";
+  }
+
+  const keys = d.seenDeltaKeys.length > 0 ? d.seenDeltaKeys.join("、") : "无";
+  return `模型返回了 ${d.chunkCount} 个数据分片,但其中没有正文内容(出现的字段:${keys})。`;
 }
