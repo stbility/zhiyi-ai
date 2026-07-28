@@ -7,6 +7,7 @@ import {
   streamChat,
   type ChatMessage,
 } from "@/lib/ai/gateway";
+import { createStallWatchdog } from "@/lib/ai/stall-watchdog";
 import type { ProviderKind } from "@/lib/providers/registry";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -137,28 +138,15 @@ export async function POST(request: NextRequest) {
   });
 
   const startedAt = Date.now();
-  const controller = new AbortController();
-  // 客户端断开时同步中止上游请求,避免白白消耗配额
-  request.signal.addEventListener("abort", () => controller.abort());
 
-  // 看门狗:上游长时间不出内容就主动掐断。
-  // 记录掐断原因,好和「客户端自己走了」区分开 —— 两者都表现为 abort,
-  // 但一个要告诉用户模型没响应,另一个什么都不用做。
-  let timedOutReason: string | null = null;
-  let watchdog: ReturnType<typeof setTimeout> | undefined;
-  const armWatchdog = (ms: number, reason: string) => {
-    clearTimeout(watchdog);
-    watchdog = setTimeout(() => {
-      timedOutReason = reason;
-      controller.abort();
-    }, ms);
-  };
-  const totalBudget = setTimeout(() => {
-    timedOutReason = `本次调用已超过 ${Math.round(TOTAL_BUDGET_MS / 1000)} 秒仍未完成,已中止。请换一个更快的模型,或稍后重试。`;
-    controller.abort();
-  }, TOTAL_BUDGET_MS);
-
-  armWatchdog(
+  // 看门狗同时承担两件事:客户端断开时中止上游(避免白白消耗配额),
+  // 以及上游长时间不出内容时主动掐断(避免函数被平台强杀)。
+  const watchdog = createStallWatchdog(
+    TOTAL_BUDGET_MS,
+    `本次调用已超过 ${Math.round(TOTAL_BUDGET_MS / 1000)} 秒仍未完成,已中止。请换一个更快的模型,或稍后重试。`,
+    request.signal,
+  );
+  watchdog.arm(
     FIRST_CHUNK_TIMEOUT_MS,
     `模型在 ${Math.round(FIRST_CHUNK_TIMEOUT_MS / 1000)} 秒内没有返回任何内容,通常是该模型正在排队。请换一个模型,或稍后重试。`,
   );
@@ -173,14 +161,14 @@ export async function POST(request: NextRequest) {
       },
       model,
       messages,
-      signal: controller.signal,
+      signal: watchdog.signal,
     });
   } catch (e) {
-    clearTimeout(watchdog);
-    clearTimeout(totalBudget);
+    watchdog.clear();
 
     // 看门狗掐断的,原因比上游抛出的 AbortError 有用得多
-    if (timedOutReason !== null) {
+    const timedOut = watchdog.reason;
+    if (timedOut !== null) {
       await supabase.from("messages").insert({
         conversation_id: conversationId,
         organization_id: organizationId,
@@ -189,9 +177,9 @@ export async function POST(request: NextRequest) {
         provider_id: providerId,
         model_id: model,
         latency_ms: Date.now() - startedAt,
-        error_message: timedOutReason,
+        error_message: timedOut,
       });
-      return errorResponse(timedOutReason, 504);
+      return errorResponse(timedOut, 504);
     }
 
     // 客户端自己断开了,没人在等回复,不必再做什么
@@ -265,13 +253,12 @@ export async function POST(request: NextRequest) {
           full += delta;
           send("delta", { text: delta });
           // 有内容进来就重新计时 —— 只有「卡住不动」才该被掐断
-          armWatchdog(
+          watchdog.arm(
             STALL_TIMEOUT_MS,
             `模型输出中途停滞超过 ${Math.round(STALL_TIMEOUT_MS / 1000)} 秒,已中止。上面是已生成的部分。`,
           );
         }
-        clearTimeout(watchdog);
-        clearTimeout(totalBudget);
+        watchdog.clear();
 
         // 上游返回 200 却一个字都没产出 —— 这是失败,不是「成功但内容为空」。
         // 以前这里静默存成空消息,用户看到空气泡,数据库里也查不出原因。
@@ -313,7 +300,7 @@ export async function POST(request: NextRequest) {
       } catch (e) {
         // 看门狗掐断的,原因比 AbortError 有用得多
         const message =
-          timedOutReason ??
+          watchdog.reason ??
           (e instanceof ProviderCallError
             ? e.message
             : "生成过程中断,请重试。");
@@ -338,8 +325,7 @@ export async function POST(request: NextRequest) {
 
         send("error", { message });
       } finally {
-        clearTimeout(watchdog);
-        clearTimeout(totalBudget);
+        watchdog.clear();
         try {
           streamController.close();
         } catch {
