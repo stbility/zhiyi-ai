@@ -141,11 +141,19 @@ export function ChatPanel({ models }: { models: readonly ModelOption[] }) {
           if (!dataLine) continue;
 
           const event = eventLine?.slice(6).trim() ?? "delta";
-          const payload = JSON.parse(dataLine.slice(5).trim()) as
+
+          // 单条事件解析失败不能炸掉整个流 —— 之前一处 JSON.parse 抛错就会被
+          // 外层 catch 接住,统一报成「网络中断」,把真实原因彻底盖住。
+          let payload:
             | { conversationId: string }
             | { text: string }
             | { inputTokens: number | null; outputTokens: number | null; latencyMs: number }
             | { message: string };
+          try {
+            payload = JSON.parse(dataLine.slice(5).trim());
+          } catch {
+            continue;
+          }
 
           if (event === "meta" && "conversationId" in payload) {
             setConversationId(payload.conversationId);
@@ -166,9 +174,16 @@ export function ChatPanel({ models }: { models: readonly ModelOption[] }) {
         }
       }
     } catch (e) {
-      if (!(e instanceof DOMException && e.name === "AbortError")) {
-        patchAssistant({ error: "网络中断,请重试。" });
-      }
+      // 用户主动中止不算错误
+      if (e instanceof DOMException && e.name === "AbortError") return;
+
+      // 说出真实原因。之前一律显示「网络中断」,而它可能根本不是网络问题 ——
+      // 笼统的错误文案等于把线索丢掉,排查时只能靠猜。
+      const detail =
+        e instanceof Error && e.message ? e.message : String(e);
+      patchAssistant({
+        error: `连接中断:${detail}。若反复出现,请把这句提示提供给管理员。`,
+      });
     } finally {
       setStreaming(false);
       abortRef.current = null;

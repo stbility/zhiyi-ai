@@ -205,9 +205,7 @@ async function callOpenAICompatible(
           : (chunk.error?.message ?? chunk.detail ?? null);
       if (streamError) {
         diagnostics.streamError = streamError;
-        throw new ProviderCallError(
-          streamError.length > 200 ? streamError.slice(0, 200) : streamError,
-        );
+        throw new ProviderCallError(translateUpstreamError(streamError));
       }
 
       if (chunk.usage) {
@@ -437,7 +435,7 @@ export async function streamChat({
  * 数据库里也没有任何线索。现在必须给出原因。
  */
 export function explainEmptyResponse(d: ChatDiagnostics): string {
-  if (d.streamError) return `模型返回错误:${d.streamError}`;
+  if (d.streamError) return translateUpstreamError(d.streamError);
 
   if (d.chunkCount === 0) {
     return "模型没有返回任何数据。可能是该模型当前不可用,或不支持流式输出。";
@@ -462,4 +460,41 @@ export function explainEmptyResponse(d: ChatDiagnostics): string {
 
   const keys = d.seenDeltaKeys.length > 0 ? d.seenDeltaKeys.join("、") : "无";
   return `模型返回了 ${d.chunkCount} 个数据分片,但其中没有正文内容(出现的字段:${keys})。`;
+}
+
+
+/**
+ * 把服务商的英文技术错误翻译成用户能据以行动的中文。
+ *
+ * 例如 NVIDIA 的
+ *   ResourceExhausted: Worker local total request limit reached (3228/48)
+ * 直接抛给用户毫无意义 —— 它的实际含义是「这个模型此刻排队爆满」,
+ * 用户该做的是换个模型或稍后再试。
+ *
+ * 无法识别的错误保留原文,不粉饰、不吞掉。
+ */
+export function translateUpstreamError(raw: string): string {
+  const text = raw.trim();
+
+  if (/resourceexhausted|request limit reached|out of capacity/i.test(text)) {
+    return "该模型当前排队已满,服务商暂时无法接收新请求。请换一个模型,或稍后再试。";
+  }
+  if (/rate.?limit|too many requests|429/i.test(text)) {
+    return "调用过于频繁,已被服务商限流。请稍等片刻再试。";
+  }
+  if (/context length|maximum context|token limit|too long/i.test(text)) {
+    return "对话内容超出该模型的上下文长度上限。请新开一个对话,或缩短输入。";
+  }
+  if (/model.*(not found|does not exist|unavailable)/i.test(text)) {
+    return "该模型不存在或已下线。请到「模型服务」重新测试连接以刷新模型列表。";
+  }
+  if (/unauthorized|invalid.*api.?key|authentication/i.test(text)) {
+    return "密钥被拒绝。请到「模型服务」检查密钥是否正确或已过期。";
+  }
+  if (/insufficient|quota|billing|credit/i.test(text)) {
+    return "服务商账户额度不足。请检查该账户的余额或配额。";
+  }
+
+  // 未收录:保留原文,让用户能据此去服务商侧排查
+  return `模型返回错误:${text}`;
 }
