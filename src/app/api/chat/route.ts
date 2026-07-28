@@ -23,6 +23,27 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 export const runtime = "nodejs";
 // 流式响应不能被缓存
 export const dynamic = "force-dynamic";
+// 显式声明,避免依赖平台默认值。Vercel 官方文档:Hobby 计划默认 300 秒、
+// 上限同样是 300 秒,调不高。
+// https://vercel.com/docs/functions/configuring-functions/duration
+export const maxDuration = 300;
+
+/**
+ * 超时预算。
+ *
+ * 真实故障:三次失败落库的耗时分别是 296234 / 298105 / 296548 毫秒 ——
+ * 全部贴着 300 秒。原因是网关对上游 fetch 没有任何超时,服务商排队不回应时
+ * 就一直挂着,直到 Vercel 把函数强杀。函数被杀 = 连接被掐断,浏览器只能报
+ * 「Failed to fetch」,用户完全不知道发生了什么。
+ *
+ * 所以必须在撞上限之前主动失败,把原因说清楚。
+ */
+/** 首个分片的等待上限 —— 超过说明服务商在排队或根本没响应 */
+const FIRST_CHUNK_TIMEOUT_MS = 45_000;
+/** 流中途卡住的上限 —— 已经在输出了,给宽一些 */
+const STALL_TIMEOUT_MS = 60_000;
+/** 总预算,留足余量给落库和收尾,绝不让平台来强杀 */
+const TOTAL_BUDGET_MS = 240_000;
 
 const bodySchema = z.object({
   conversationId: z.string().uuid().optional(),
@@ -120,6 +141,28 @@ export async function POST(request: NextRequest) {
   // 客户端断开时同步中止上游请求,避免白白消耗配额
   request.signal.addEventListener("abort", () => controller.abort());
 
+  // 看门狗:上游长时间不出内容就主动掐断。
+  // 记录掐断原因,好和「客户端自己走了」区分开 —— 两者都表现为 abort,
+  // 但一个要告诉用户模型没响应,另一个什么都不用做。
+  let timedOutReason: string | null = null;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  const armWatchdog = (ms: number, reason: string) => {
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => {
+      timedOutReason = reason;
+      controller.abort();
+    }, ms);
+  };
+  const totalBudget = setTimeout(() => {
+    timedOutReason = `本次调用已超过 ${Math.round(TOTAL_BUDGET_MS / 1000)} 秒仍未完成,已中止。请换一个更快的模型,或稍后重试。`;
+    controller.abort();
+  }, TOTAL_BUDGET_MS);
+
+  armWatchdog(
+    FIRST_CHUNK_TIMEOUT_MS,
+    `模型在 ${Math.round(FIRST_CHUNK_TIMEOUT_MS / 1000)} 秒内没有返回任何内容,通常是该模型正在排队。请换一个模型,或稍后重试。`,
+  );
+
   let result;
   try {
     result = await streamChat({
@@ -133,6 +176,27 @@ export async function POST(request: NextRequest) {
       signal: controller.signal,
     });
   } catch (e) {
+    clearTimeout(watchdog);
+    clearTimeout(totalBudget);
+
+    // 看门狗掐断的,原因比上游抛出的 AbortError 有用得多
+    if (timedOutReason !== null) {
+      await supabase.from("messages").insert({
+        conversation_id: conversationId,
+        organization_id: organizationId,
+        role: "assistant",
+        content: "",
+        provider_id: providerId,
+        model_id: model,
+        latency_ms: Date.now() - startedAt,
+        error_message: timedOutReason,
+      });
+      return errorResponse(timedOutReason, 504);
+    }
+
+    // 客户端自己断开了,没人在等回复,不必再做什么
+    if (request.signal.aborted) return errorResponse("请求已取消。", 499);
+
     const message =
       e instanceof ProviderCallError ? e.message : "调用模型服务失败。";
 
@@ -200,7 +264,14 @@ export async function POST(request: NextRequest) {
         for await (const delta of result.stream) {
           full += delta;
           send("delta", { text: delta });
+          // 有内容进来就重新计时 —— 只有「卡住不动」才该被掐断
+          armWatchdog(
+            STALL_TIMEOUT_MS,
+            `模型输出中途停滞超过 ${Math.round(STALL_TIMEOUT_MS / 1000)} 秒,已中止。上面是已生成的部分。`,
+          );
         }
+        clearTimeout(watchdog);
+        clearTimeout(totalBudget);
 
         // 上游返回 200 却一个字都没产出 —— 这是失败,不是「成功但内容为空」。
         // 以前这里静默存成空消息,用户看到空气泡,数据库里也查不出原因。
@@ -240,10 +311,12 @@ export async function POST(request: NextRequest) {
           latencyMs: Date.now() - startedAt,
         });
       } catch (e) {
+        // 看门狗掐断的,原因比 AbortError 有用得多
         const message =
-          e instanceof ProviderCallError
+          timedOutReason ??
+          (e instanceof ProviderCallError
             ? e.message
-            : "生成过程中断,请重试。";
+            : "生成过程中断,请重试。");
 
         // 中断时把已生成的部分连同错误一起留痕,不丢用户已看到的内容。
         // 留痕失败(比如连不上数据库)不能再把兜底路径本身炸掉 ——
@@ -265,6 +338,8 @@ export async function POST(request: NextRequest) {
 
         send("error", { message });
       } finally {
+        clearTimeout(watchdog);
+        clearTimeout(totalBudget);
         try {
           streamController.close();
         } catch {
