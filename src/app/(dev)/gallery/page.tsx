@@ -130,6 +130,7 @@ export default function GalleryPage() {
       <Row title="表单元件">
         <Input
           label="搜索"
+          hideLabel
           placeholder="搜索知识库"
           value={text}
           onChange={setText}

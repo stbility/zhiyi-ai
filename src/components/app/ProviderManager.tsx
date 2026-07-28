@@ -160,7 +160,9 @@ export function ProviderManager({
             <input type="hidden" name="organizationId" value={organizationId} />
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-fg-secondary text-label">接入方式</label>
+              <label className="font-zh text-label text-fg-secondary">
+                服务商类型
+              </label>
               <Select
                 name="kind"
                 value={kind}
@@ -176,8 +178,9 @@ export function ProviderManager({
 
             <Input
               name="displayName"
-              label="名称"
-              placeholder="例如:DeepSeek 生产密钥"
+              label="给这个连接起个名字"
+              description="仅用于在列表中辨认,可随意填写,与服务商无关。"
+              placeholder="例如:我的 DeepSeek"
               required
               maxLength={60}
             />
@@ -185,7 +188,12 @@ export function ProviderManager({
             <div className="flex flex-col gap-1.5">
               <Input
                 name="baseUrl"
-                label="Base URL"
+                label="接口地址(Base URL)"
+                description={
+                  spec.requiresBaseUrl
+                    ? "服务商文档里的 API 地址。可点下方预设一键填入。"
+                    : "留空则使用官方默认地址。"
+                }
                 placeholder={spec.defaultBaseUrl ?? "https://api.example.com/v1"}
                 required={spec.requiresBaseUrl}
                 value={baseUrl}
@@ -204,18 +212,15 @@ export function ProviderManager({
                     </button>
                   ))}
                 </div>
-              ) : (
-                <p className="text-fg-tertiary text-label">
-                  留空则使用官方默认地址。
-                </p>
-              )}
+              ) : null}
             </div>
 
             <Input
               name="apiKey"
               label="API 密钥"
+              description={`在服务商控制台生成的密钥(${spec.keyHint})。提交后立即加密,数据库不存明文。`}
               type="password"
-              placeholder={spec.keyHint}
+              placeholder="粘贴密钥"
               required
               autoComplete="off"
             />
