@@ -89,13 +89,8 @@ export async function createOrganization(
     return { error: "建立成员关系失败,已撤销本次创建。" };
   }
 
-  await supabase.from("audit_logs").insert({
-    organization_id: orgId,
-    actor_id: user.id,
-    action: "organization.create",
-    resource_type: "organization",
-    resource_id: orgId,
-  });
+  // 审计记录由数据库触发器 organizations_audit_create 写入,应用层不参与:
+  // 客户端若能自由写审计表就能伪造轨迹,因此 audit_logs 没有面向用户的 INSERT 策略。
 
   revalidatePath("/today");
   return {};
