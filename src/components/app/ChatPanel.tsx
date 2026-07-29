@@ -60,6 +60,8 @@ interface Turn {
   fallback?: string;
   /** 本轮附带的文件数,让回看时知道当时给了模型什么 */
   attachedFiles?: number;
+  /** 上下文被裁剪的说明 */
+  trimming?: string;
 }
 
 /**
@@ -104,7 +106,7 @@ function CopyButton({ text }: { text: string }) {
 
 /** 「添加文件夹」的取用规则,按钮提示与表单说明共用同一份文案 */
 const FOLDER_HINT =
-  "添加文件夹:只读取代码与文本类文件(ts/js/py/go/java/md/json/yaml 等),自动跳过 node_modules、.git、dist 等目录及图片压缩包等二进制文件;不限文件个数,合计上限 120 万字符(约 30–40 万 token);仅对下一条消息生效。";
+  "添加文件夹:只读取代码与文本类文件(ts/js/py/go/java/md/json/yaml 等),自动跳过 node_modules、.git、dist 等目录及图片压缩包等二进制文件;不限文件个数,合计上限 120 万字符;文件会保留在本对话,后续每轮提问模型都能看到。";
 
 function toTurn(t: InitialTurn): Turn {
   const turn: Turn = { id: t.id, role: t.role, content: t.content };
@@ -132,11 +134,14 @@ export function ChatPanel({
   conversations,
   activeConversationId,
   initialTurns,
+  initialFileCount,
 }: {
   models: readonly ModelOption[];
   conversations: readonly ConversationSummary[];
   activeConversationId: string | null;
   initialTurns: readonly InitialTurn[];
+  /** 本对话已关联的项目文件数 */
+  initialFileCount: number;
 }) {
   const router = useRouter();
   const [, deleteAction] = useActionState<AssistantActionState, FormData>(
@@ -152,6 +157,8 @@ export function ChatPanel({
   );
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachNote, setAttachNote] = useState<string | null>(null);
+  /** 本对话当前关联的项目文件数 —— 附件跨轮保留,不再只作用于一条消息 */
+  const [contextFiles, setContextFiles] = useState(initialFileCount);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   /** 桌面端历史栏是否展开。收起后输出区能多出 224px 宽度 */
   const [historyOpen, setHistoryOpen] = useState(true);
@@ -273,7 +280,13 @@ export function ChatPanel({
           // 单条事件解析失败不能炸掉整个流 —— 之前一处 JSON.parse 抛错就会被
           // 外层 catch 接住,统一报成「网络中断」,把真实原因彻底盖住。
           let payload:
-            | { conversationId: string; model?: string; fallback?: string }
+            | {
+                conversationId: string;
+                model?: string;
+                fallback?: string;
+                trimming?: string;
+                files?: number;
+              }
             | { text: string }
             | {
                 inputTokens: number | null;
@@ -290,6 +303,9 @@ export function ChatPanel({
           if (event === "meta" && "conversationId" in payload) {
             setConversationId(payload.conversationId);
             if (payload.fallback) patchAssistant({ fallback: payload.fallback });
+            // 上下文被裁剪时如实告知 —— 不说的话,用户只会觉得模型「忘了」
+            if (payload.trimming) patchAssistant({ trimming: payload.trimming });
+            if (typeof payload.files === "number") setContextFiles(payload.files);
           } else if (event === "delta" && "text" in payload) {
             text += payload.text;
             patchAssistant({ content: text });
@@ -563,8 +579,13 @@ export function ChatPanel({
           onSubmit={send}
           className="border-divider flex shrink-0 flex-col gap-2 border-t p-3.5"
         >
-          {/* 格式限制提前说明,而不是等用户选完目录才发现大半被跳过 */}
-          {!attachNote && (
+          {/* 已关联的项目文件是智能体的工作依据,常态就要能看到 */}
+          {!attachNote && contextFiles > 0 && (
+            <p className="text-fg-secondary text-label">
+              本对话已关联 {contextFiles} 个项目文件,每轮提问模型都能看到。
+            </p>
+          )}
+          {!attachNote && contextFiles === 0 && (
             <p className="text-fg-tertiary text-label">{FOLDER_HINT}</p>
           )}
 
@@ -575,7 +596,7 @@ export function ChatPanel({
                 <>
                   {/* 如实说明作用范围,免得用户以为文件会一直跟着对话 */}
                   <span className="text-fg-tertiary text-label">
-                    仅对下一条消息生效
+                    将保留在本对话,后续每轮都可见
                   </span>
                   <button
                     type="button"

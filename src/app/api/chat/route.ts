@@ -145,40 +145,61 @@ export async function POST(request: NextRequest) {
     conversationId = created.id as string;
   }
 
-  // 取历史消息作为上下文
-  const { data: history } = await supabase
-    .from("messages")
-    .select("role, content")
-    .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: true })
-    .limit(50);
-
-  // 过滤掉内容为空的历史消息。
+  // 本轮带来的附件先落到**对话**上,而不是塞进这一条消息。
   //
-  // 失败的调用会留下一条 content 为空的 assistant 记录(用于留痕),
-  // 但 OpenAI 兼容接口不接受空内容的消息 —— 把它带进上下文会让之后
-  // 每一轮都失败,故障自我传染。留痕归留痕,不能污染上下文。
-  // 附件拼在本轮用户消息前面,并标明路径 —— 模型需要知道每段代码在项目里的位置。
-  // 只作用于本轮:附件正文不落库,否则每条历史消息都背着几十 KB 代码,
-  // 上下文很快就被自己撑爆了。界面上会说明这一点。
-  const attachments = parsed.data.attachments ?? [];
-  const attachmentBlock =
-    attachments.length === 0
-      ? ""
-      : `以下是用户附带的项目文件,供你参考(共 ${attachments.length} 个):\n\n` +
-        attachments
-          .map((a) => `--- ${a.path} ---\n${a.content}`)
-          .join("\n\n") +
-        "\n\n---\n\n";
+  // 此前附件只作用于发出的那一轮:用户贴了项目目录,第二句问「改一下这个
+  // 函数」,模型已经看不到代码了 —— 那不是智能体,是失忆的聊天框。
+  // 挂在对话上后,每个文件只存一份,而且每一轮都看得到。
+  const incoming = parsed.data.attachments ?? [];
+  if (incoming.length > 0) {
+    await supabase.from("conversation_attachments").upsert(
+      incoming.map((a) => ({
+        conversation_id: conversationId,
+        organization_id: organizationId,
+        path: a.path,
+        content: a.content,
+        size_chars: a.content.length,
+      })),
+      { onConflict: "conversation_id,path" },
+    );
+  }
+
+  const [{ data: attachmentRows }, { data: history }] = await Promise.all([
+    supabase
+      .from("conversation_attachments")
+      .select("path, content")
+      .eq("conversation_id", conversationId)
+      .order("path"),
+    supabase
+      .from("messages")
+      .select("role, content")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: true })
+      // 取得比预算需要的多一些,由预算决定实际带多少 ——
+      // 固定取 50 条是没有依据的数字,长对话照样会越来越贵
+      .limit(200),
+  ]);
+
+  // 在预算内装配上下文:先保项目文件(智能体干活的依据),
+  // 剩余额度给历史消息,历史从最近往前装。
+  // 装不下的如实统计,由界面告知用户 —— 静默截断会让模型看到残缺信息,
+  // 给出的建议全是错的,比不带更糟。见 lib/ai/context.ts。
+  const { buildContext, describeTrimming } = await import("@/lib/ai/context");
+  const built = buildContext(
+    (attachmentRows ?? []).map((r) => ({
+      path: r.path as string,
+      content: r.content as string,
+    })),
+    (history ?? []).map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: (m.content as string | null) ?? "",
+    })),
+  );
+  const trimmingNote = describeTrimming(built.stats);
 
   const messages: ChatMessage[] = [
-    ...(history ?? [])
-      .filter((m) => typeof m.content === "string" && m.content.trim() !== "")
-      .map((m) => ({
-        role: m.role as ChatMessage["role"],
-        content: m.content as string,
-      })),
-    { role: "user" as const, content: `${attachmentBlock}${content}` },
+    ...built.messages,
+    { role: "user" as const, content: `${built.fileBlock}${content}` },
   ];
 
   // 先落库用户消息 —— 即便后续模型调用失败,用户说过的话也不该丢。
@@ -315,6 +336,8 @@ export async function POST(request: NextRequest) {
 
   const encoder = new TextEncoder();
   const convId = conversationId;
+  const trimming = trimmingNote;
+  const fileCount = built.stats.filesIncluded;
 
   const body = new ReadableStream<Uint8Array>({
     async start(streamController) {
@@ -338,7 +361,16 @@ export async function POST(request: NextRequest) {
 
       // 先把对话 id 告知客户端,便于后续消息挂到同一对话。
       // 若发生了降级,一并说明用的其实是哪个模型 —— 悄悄换等于伪造来源。
-      send("meta", { conversationId: convId, model: usedModel, ...(note ? { fallback: note } : {}) });
+      send("meta", {
+        conversationId: convId,
+        model: usedModel,
+        ...(note ? { fallback: note } : {}),
+        // 上下文被裁剪时如实告知 —— 静默截断会让用户以为模型「忘了」,
+        // 实际上是我们没把内容发过去
+        ...(trimming ? { trimming } : {}),
+        // 本对话当前关联的项目文件数,让用户知道智能体看得到什么
+        ...(fileCount > 0 ? { files: fileCount } : {}),
+      });
 
       try {
         for await (const delta of chosen.stream) {

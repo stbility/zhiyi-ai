@@ -69,6 +69,7 @@ describe("助手页渲染", () => {
         conversations={CONVERSATIONS}
         activeConversationId="c1"
         initialTurns={TURNS}
+        initialFileCount={0}
       />,
     );
 
@@ -97,6 +98,7 @@ describe("助手页渲染", () => {
         conversations={CONVERSATIONS}
         activeConversationId="c1"
         initialTurns={TURNS}
+        initialFileCount={0}
       />,
     );
 
@@ -130,6 +132,7 @@ describe("助手页渲染", () => {
         conversations={[]}
         activeConversationId={null}
         initialTurns={[]}
+        initialFileCount={0}
       />,
     );
     expect(screen.getByText(/输入内容开始对话/)).toBeTruthy();
@@ -143,6 +146,7 @@ describe("助手页渲染", () => {
         conversations={[]}
         activeConversationId={null}
         initialTurns={[]}
+        initialFileCount={0}
       />,
     );
     expect(screen.getByText("还没有可用的模型")).toBeTruthy();
@@ -166,6 +170,7 @@ describe("助手页渲染", () => {
             error: "接口或模型不存在(HTTP 404)",
           },
         ]}
+        initialFileCount={0}
       />,
     );
     expect(screen.getByText(/HTTP 404/)).toBeTruthy();
