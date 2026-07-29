@@ -76,7 +76,6 @@ const serverEnvSchema = z.object({
    * 这是「产品完全不可用」与「暂时放宽一项验证」之间的权衡,必须由运维显式决定,
    * 不能由代码静默降级。邮件通道接通后应立即关闭。
    */
-  ALLOW_UNVERIFIED_SIGNUP: optionalString,
 
   // --- 站点 --------------------------------------------------------------
   NEXT_PUBLIC_SITE_URL: optionalUrl,
@@ -127,13 +126,6 @@ export function getSupabaseCredentials(): SupabaseCredentials {
   };
 }
 
-/**
- * 是否允许跳过邮箱验证注册。默认关闭,只有显式设为 "true" 才生效。
- * 任何其它取值(包括未设置、"1"、"yes")一律视为关闭 —— 安全开关不做宽松解析。
- */
-export function allowUnverifiedSignup(): boolean {
-  return getServerEnv().ALLOW_UNVERIFIED_SIGNUP === "true";
-}
 
 /** 跑迁移用的连接串 —— 必须是非连接池地址 */
 export function getMigrationDatabaseUrl(): string | undefined {
