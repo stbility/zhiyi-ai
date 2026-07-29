@@ -374,6 +374,14 @@ export async function POST(request: NextRequest) {
           latency_ms: Date.now() - startedAt,
         });
 
+        // 这次真的成功了,清掉上次的失败留痕 ——
+        // 否则一条早已过时的报错会一直挂在模型旁边,与事实相反。
+        await supabase
+          .from("ai_models")
+          .update({ last_error: null })
+          .eq("provider_id", providerId)
+          .eq("model_id", usedModel);
+
         send("done", {
           inputTokens: chosen.usage.inputTokens,
           outputTokens: chosen.usage.outputTokens,

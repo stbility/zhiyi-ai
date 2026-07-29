@@ -391,15 +391,23 @@ export async function testProvider(
     // 该模型到底留不留,只由用户按删除键决定(删除会写进 ai_model_exclusions,
     // 之后重新测试也不会导回来)。调用真失败时由跨厂商降级链兜住,工作流不中断。
     if (rejected.length > 0) {
+      // 只入库、不留失败痕迹。
+      //
+      // 探测是一次合成的一句话调用,它的失败**不是模型的固有属性**。
+      // 真实案例:用户实测 moonshotai/kimi-k2.6 可用,而我们的探测报 404,
+      // 于是界面上长期挂着一条与事实相反的「上次调用失败」——
+      // 这是拿我们的测试结果去否定用户的实际经验。
+      //
+      // 本次探测的结论只写在返回文案里(一次性、带上下文),
+      // 真正会落库的失败只来自真实对话(见 api/chat),那才是事实。
       await supabase.from("ai_models").upsert(
         rejected.map((r) => ({
           provider_id: parsed.data.id,
           organization_id: provider.organization_id as string,
           model_id: r.model,
           display_name: r.model.length > 60 ? r.model.slice(0, 60) : r.model,
-          last_error: r.reason.slice(0, 300),
         })),
-        { onConflict: "provider_id,model_id" },
+        { onConflict: "provider_id,model_id", ignoreDuplicates: true },
       );
     }
   }
