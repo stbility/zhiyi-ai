@@ -570,7 +570,8 @@ export function ChatPanel({
                   <p className="text-error text-label">{turn.error}</p>
                 )}
 
-                {turn.role === "assistant" && turn.content !== "" && (
+                {/* 用户自己写的长提示词同样需要复制 —— 常要改一版重发 */}
+                {turn.content !== "" && (
                   <div className="flex items-center gap-3">
                     <CopyButton text={turn.content} />
                     {turn.meta && (
@@ -593,14 +594,13 @@ export function ChatPanel({
           onSubmit={send}
           className="border-divider flex shrink-0 flex-col gap-2 border-t p-3.5"
         >
-          {/* 已关联的项目文件是智能体的工作依据,常态就要能看到 */}
+          {/* 只说结论,不说规则。
+              取用规则那一长段搬到按钮的 title 里 —— 需要时悬停可见,
+              不必每次都占掉输入区两行。 */}
           {!attachNote && contextFiles > 0 && (
             <p className="text-fg-secondary text-label">
               本对话已关联 {contextFiles} 个项目文件,每轮提问模型都能看到。
             </p>
-          )}
-          {!attachNote && contextFiles === 0 && (
-            <p className="text-fg-tertiary text-label">{FOLDER_HINT}</p>
           )}
 
           {attachNote && (
@@ -643,6 +643,10 @@ export function ChatPanel({
             className="bg-surface-2 border-border-default rounded-control text-fg placeholder:text-fg-tertiary focus:border-border-focus w-full resize-none border px-3 py-2.25 text-[14px] outline-none transition-colors duration-[var(--duration-hover)] ease-standard"
           />
 
+          {/* 一行里只有「发送」是主操作。
+              此前「联网已开启」也用 primary,两个同等强调的按钮并排,
+              用户一眼分不出哪个才是提交。开启状态改用边框与图标表达,
+              不靠提升按钮层级。三个控件统一 min-h-10,高度一致。 */}
           <div className="flex flex-wrap items-center gap-2">
             <Select
               value={selected}
@@ -651,7 +655,7 @@ export function ChatPanel({
                 value: m.value,
                 label: `${m.providerName} · ${m.modelId}`,
               }))}
-              className="min-w-0 max-w-full"
+              className="min-h-10 min-w-0 max-w-full py-0"
             />
 
             <input
@@ -677,12 +681,17 @@ export function ChatPanel({
 
             <Button
               type="button"
-              variant={webSearch ? "primary" : "secondary"}
+              variant="secondary"
               onClick={() => setWebSearch((v) => !v)}
               aria-pressed={webSearch}
               title="开启后本轮会先联网检索,再让模型基于检索到的材料作答并标注来源"
+              className={webSearch ? "border-brand text-brand" : undefined}
             >
-              <Icon name="search" size={15} />
+              <Icon
+                name={webSearch ? "check" : "search"}
+                size={15}
+                className={webSearch ? "text-brand" : undefined}
+              />
               {webSearch ? "联网已开启" : "联网"}
             </Button>
 

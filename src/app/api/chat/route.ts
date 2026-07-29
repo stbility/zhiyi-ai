@@ -44,8 +44,20 @@ export const maxDuration = 300;
 const FIRST_CHUNK_TIMEOUT_MS = 45_000;
 /** 流中途卡住的上限 —— 已经在输出了,给宽一些 */
 const STALL_TIMEOUT_MS = 60_000;
-/** 总预算,留足余量给落库和收尾,绝不让平台来强杀 */
-const TOTAL_BUDGET_MS = 240_000;
+/**
+ * 总预算。
+ *
+ * 上限来自平台:Vercel Hobby 的函数最长 300 秒,调不高。我们在撞上它之前
+ * 主动收尾,才能把原因说清楚 —— 被平台强杀时连接直接断开,浏览器只报
+ * 「Failed to fetch」。
+ *
+ * 从 240 秒提到 285 秒:写长代码的请求经常跑到 4 分钟以上,240 秒会把
+ * 正常输出拦腰截断,而用户看到的是「断网」。留 15 秒给落库与收尾足够。
+ *
+ * 但这治不了根:单次 HTTP 请求最长就是 300 秒,真正的长任务必须转成
+ * 后台作业(见工作流引擎)。
+ */
+const TOTAL_BUDGET_MS = 285_000;
 /**
  * 一次请求最多换几个模型。
  *
@@ -303,7 +315,10 @@ export async function POST(request: NextRequest) {
 
     const wd = createStallWatchdog(
       remaining,
-      `本次调用已超过 ${Math.round(TOTAL_BUDGET_MS / 1000)} 秒仍未完成,已中止。请稍后重试。`,
+      `本次生成已达到平台单次请求的时长上限(${Math.round(TOTAL_BUDGET_MS / 1000)} 秒),已中止。\n` +
+        `这不是网络故障 —— Vercel 的函数最长只能运行 300 秒。\n` +
+        `如果任务本身很长(比如生成整个项目),请拆成几步分别提问;` +
+        `长时间运行的任务需要工作流引擎在后台执行。`,
       request.signal,
     );
     wd.arm(
