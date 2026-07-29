@@ -131,14 +131,14 @@ async function generateDisplayName(
   source: string,
   fallback: string,
 ): Promise<string> {
-  let base = fallback;
-  try {
-    const host = new URL(source).hostname;
-    const parts = host.split(".").filter((p) => p !== "www" && p !== "api");
-    if (parts.length > 0) base = parts[0] as string;
-  } catch {
-    // source 不是合法 URL,直接用服务商类型名
-  }
+  // 命名逻辑抽到 lib/providers/display-name.ts,那里有对应测试。
+  // 早先这里是「取主机名第一段」,对 api.deepseek.com 恰好正确,
+  // 对 integrate.api.nvidia.com 就取成了子域名 —— 模型选择器显示成
+  // 「integrate · z-ai/glm-5.2」,用户完全看不出这是英伟达。
+  const { displayNameForBaseUrl } = await import(
+    "@/lib/providers/display-name"
+  );
+  const base = displayNameForBaseUrl(source) ?? fallback;
 
   if (!supabase) return base;
 
