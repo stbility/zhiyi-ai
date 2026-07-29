@@ -3,7 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useActionState } from "react";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+} from "react";
 
 import { Icon } from "@/components/icons/Icon";
 import { Button, buttonClasses } from "@/components/primitives/Button";
@@ -107,8 +113,51 @@ function CopyButton({ text }: { text: string }) {
 }
 
 /** 「添加文件夹」的取用规则,按钮提示与表单说明共用同一份文案 */
+/** 开关变更事件 —— storage 事件不会在本页触发 */
+const TOGGLE_EVENT = "zhiyi-toggle-change";
+
 const FOLDER_HINT =
   "添加文件夹:只读取代码与文本类文件(ts/js/py/go/java/md/json/yaml 等),自动跳过 node_modules、.git、dist 等目录及图片压缩包等二进制文件;不限文件个数,合计上限 120 万字符;文件会保留在本对话,后续每轮提问模型都能看到。";
+
+/**
+ * 记得住的开关。
+ *
+ * 「联网」「智能体」是**模式**而不是一次性动作,用户开了就该一直有效,
+ * 直到他自己关掉。
+ *
+ * 真实故障:新建对话后页面会 router.refresh(),而 ChatPanel 带着
+ * key={对话id} —— 对话 id 从 "new" 变成真实 UUID 时 React 会重挂组件,
+ * useState 的初始值把开关重置回 false。用户第一条开了智能体,
+ * 第二条就莫名其妙变回普通对话,而界面上看不出发生过什么。
+ *
+ * 用 localStorage + useSyncExternalStore:重挂后仍读到同一个值,
+ * 而且服务端快照固定为 false,不会造成水合不一致。
+ */
+function usePersistentToggle(
+  key: string,
+): [boolean, (next: boolean | ((v: boolean) => boolean)) => void] {
+  const value = useSyncExternalStore(
+    (onChange) => {
+      window.addEventListener(TOGGLE_EVENT, onChange);
+      window.addEventListener("storage", onChange);
+      return () => {
+        window.removeEventListener(TOGGLE_EVENT, onChange);
+        window.removeEventListener("storage", onChange);
+      };
+    },
+    () => window.localStorage.getItem(key) === "on",
+    () => false,
+  );
+
+  const set = (next: boolean | ((v: boolean) => boolean)) => {
+    const resolved = typeof next === "function" ? next(value) : next;
+    window.localStorage.setItem(key, resolved ? "on" : "off");
+    // storage 事件只在其它标签页触发,本页要自己发一个
+    window.dispatchEvent(new Event(TOGGLE_EVENT));
+  };
+
+  return [value, set];
+}
 
 function toTurn(t: InitialTurn): Turn {
   const turn: Turn = { id: t.id, role: t.role, content: t.content };
@@ -167,14 +216,14 @@ export function ChatPanel({
    * 由用户显式开启,不让模型自己决定 —— 模型判断「要不要搜」并不可靠,
    * 而每次搜索都消耗配额。显式开关让成本和行为都可预期。
    */
-  const [webSearch, setWebSearch] = useState(false);
+  const [webSearch, setWebSearch] = usePersistentToggle("zhiyi-web-search");
   /**
    * 智能体模式。
    *
    * 开启后模型可以连续调用文件工具,产物直接写进工作区 ——
    * 而不是把代码贴在回答正文里等人复制。这是「智能体」与「聊天助手」的分界。
    */
-  const [agentMode, setAgentMode] = useState(false);
+  const [agentMode, setAgentMode] = usePersistentToggle("zhiyi-agent-mode");
   /** 智能体运行过程中的每一步,实时显示,免得几分钟里什么都看不到 */
   const [agentSteps, setAgentSteps] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -637,6 +686,24 @@ export function ChatPanel({
           onSubmit={send}
           className="border-divider flex shrink-0 flex-col gap-2 border-t p-3.5"
         >
+          {/* 智能体模式是「这一条会怎么执行」,必须在发送前就看得见。
+              此前只有一个次要按钮的边框变色,太容易忽略 ——
+              用户开了一次,重挂后被重置回普通对话,自己完全不知道。 */}
+          {agentMode && (
+            <div className="border-brand bg-brand-tint rounded-control flex flex-wrap items-center gap-2 border px-3 py-2">
+              <Icon name="bot" size={14} className="text-brand shrink-0" />
+              <span className="text-brand text-label">
+                智能体模式:代码会写入工作区,不会贴在回答里
+              </span>
+              <a
+                href="/workspace"
+                className="text-brand hover:text-brand-hover text-label underline"
+              >
+                查看工作区
+              </a>
+            </div>
+          )}
+
           {/* 只说结论,不说规则。
               取用规则那一长段搬到按钮的 title 里 —— 需要时悬停可见,
               不必每次都占掉输入区两行。 */}
