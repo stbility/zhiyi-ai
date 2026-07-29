@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { DEFAULT_LIMITS, runAgent, summarizeRun } from "@/lib/ai/agent";
+import { buildFallbackChain } from "@/lib/ai/fallback";
 import type { AgentStep } from "@/lib/ai/agent";
 import { ProviderCallError } from "@/lib/ai/gateway";
 import type { ProviderCredentials } from "@/lib/ai/gateway";
@@ -56,6 +57,20 @@ export async function runAgentTurn({
     conversationId,
   );
 
+  // 备用模型:智能体一跑十几步,中途撞限流是常态。
+  // 没有备用的话,第 11 步一个 503 就把前 10 步打死。
+  const { data: availableRows } = await supabase
+    .from("ai_models")
+    .select("model_id")
+    .eq("provider_id", providerId)
+    .eq("enabled", true)
+    .is("chat_unavailable_reason", null);
+
+  const fallbackModels = buildFallbackChain(
+    (availableRows ?? []).map((r) => r.model_id as string),
+    model,
+  ).slice(1, 4);
+
   const encoder = new TextEncoder();
   const startedAt = Date.now();
 
@@ -79,6 +94,7 @@ export async function runAgentTurn({
         const outcome = await runAgent({
           credentials,
           model,
+          fallbackModels,
           userMessage,
           history,
           toolContext,
@@ -101,7 +117,22 @@ export async function runAgentTurn({
           },
         });
 
-        const summary = summarizeRun(outcome);
+        // 一个文件都没写,却输出了一大段像代码的正文 ——
+        // 说明模型没理会工具,把代码贴在了回答里。这正是智能体模式要消灭的行为,
+        // 必须明说,否则用户会以为是系统没保存。
+        const wroteAnything = outcome.steps.some((s) =>
+          s.tools.some((t) => t.name === "write_file" && t.ok),
+        );
+        const looksLikeCode = /```|function |const |import |class /.test(
+          outcome.answer,
+        );
+        const summary =
+          !wroteAnything && looksLikeCode
+            ? summarizeRun(outcome) +
+              "\n\n⚠️ 本次模型把代码写在了回答里,没有调用文件工具,因此工作区没有产物。" +
+              "这通常是该模型对工具调用支持较弱 —— 换一个模型(GLM-5.2 或 deepseek-v4-pro)重试," +
+              "或把任务说得更具体一些(例如「用 write_file 分别创建 A、B、C 三个文件」)。"
+            : summarizeRun(outcome);
 
         await supabase.from("messages").insert({
           conversation_id: conversationId,

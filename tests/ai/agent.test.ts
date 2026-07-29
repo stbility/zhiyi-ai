@@ -195,6 +195,79 @@ describe("智能体循环", () => {
     vi.unstubAllGlobals();
   });
 
+  it("临时性失败会换备用模型,不让一个 503 打死整轮", async () => {
+    /**
+     * 真实故障:智能体跑到一半,英伟达返回
+     *   503 ResourceExhausted: Worker local total request limit reached (48/48)
+     * 整轮直接结束,前面几步写好的文件用户完全不知道还在不在。
+     * 普通对话早就有跨厂商降级,我写智能体循环时漏接了。
+     */
+    const { agent, cipher } = await load();
+    const ws = memoryWorkspace();
+
+    let call = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          return new Response("ResourceExhausted: Worker limit reached", {
+            status: 503,
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            choices: [
+              { message: { content: "换了模型也办好了。" }, finish_reason: "stop" },
+            ],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    const r = await agent.runAgent({
+      credentials: creds(cipher),
+      model: "busy-model",
+      fallbackModels: ["backup-model"],
+      userMessage: "干活",
+      history: [],
+      toolContext: ws.ctx,
+      signal: new AbortController().signal,
+    });
+
+    expect(r.answer).toBe("换了模型也办好了。");
+    // 换过模型必须留痕 —— 悄悄换等于伪造来源
+    expect(r.usedModels).toContain("backup-model");
+    vi.unstubAllGlobals();
+  });
+
+  it("永久性失败不浪费配额换模型 —— 换几次都一样", async () => {
+    const { agent, cipher } = await load();
+    const ws = memoryWorkspace();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response("invalid api key", { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      agent.runAgent({
+        credentials: creds(cipher),
+        model: "m",
+        fallbackModels: ["a", "b", "c"],
+        userMessage: "干活",
+        history: [],
+        toolContext: ws.ctx,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow();
+
+    // 密钥错误换模型没有意义,只该试一次
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
   it("总结只列文件清单,不重复贴文件内容", async () => {
     const { agent } = await load();
     const summary = agent.summarizeRun({
@@ -216,6 +289,7 @@ describe("智能体循环", () => {
       inputTokens: 1,
       outputTokens: 1,
       haltReason: null,
+      usedModels: [],
     });
 
     expect(summary).toContain("src/login.tsx");

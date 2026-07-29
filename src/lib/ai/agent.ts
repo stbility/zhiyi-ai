@@ -1,6 +1,7 @@
 import "server-only";
 
 import { ProviderCallError, callWithTools } from "@/lib/ai/gateway";
+import { isTransientFailure } from "@/lib/providers/model-filter";
 import type { ProviderCredentials } from "@/lib/ai/gateway";
 import {
   AGENT_SYSTEM_PROMPT,
@@ -40,6 +41,8 @@ export interface AgentOutcome {
   readonly outputTokens: number;
   /** 因为撞上护栏而中止时的说明。正常结束为 null */
   readonly haltReason: string | null;
+  /** 运行中降级用过的备用模型。悄悄换模型等于伪造来源,必须告知 */
+  readonly usedModels: readonly string[];
 }
 
 export interface AgentLimits {
@@ -71,6 +74,7 @@ export interface AgentReporter {
 export async function runAgent({
   credentials,
   model,
+  fallbackModels = [],
   userMessage,
   history,
   toolContext,
@@ -80,6 +84,14 @@ export async function runAgent({
 }: {
   credentials: ProviderCredentials;
   model: string;
+  /**
+   * 备用模型,按优先级排列。
+   *
+   * 智能体一跑就是十几步,中途撞上限流或排队是常态。没有备用模型的话,
+   * 第 11 步一个 503 就把前 10 步的工作全打死 —— 而那些文件其实已经写好了。
+   * 普通对话早有跨厂商降级,智能体循环当初漏接了,这里补上。
+   */
+  fallbackModels?: readonly string[];
   userMessage: string;
   history: readonly { role: "user" | "assistant"; content: string }[];
   toolContext: ToolContext;
@@ -103,6 +115,10 @@ export async function runAgent({
   let consecutiveFailures = 0;
   let answer = "";
   let haltReason: string | null = null;
+  /** 当前实际在用的模型,降级后会变 */
+  let activeModel = model;
+  /** 本次运行中用过的备用模型 —— 换过模型必须告诉用户,不能悄悄换 */
+  const switchedModels = new Set<string>();
 
   for (let index = 1; index <= limits.maxSteps; index++) {
     if (Date.now() - startedAt > limits.budgetMs) {
@@ -112,20 +128,47 @@ export async function runAgent({
       break;
     }
 
+    // 这一步依次尝试主模型与备用模型。
+    //
+    // 只对**临时性**失败换模型(限流、排队、5xx);密钥错误、模型不存在
+    // 这类换几次都一样,换了只是白白多烧几次配额。
     let turn;
-    try {
-      turn = await callWithTools({
-        credentials,
-        model,
-        messages,
-        tools: FILE_TOOLS,
-        signal,
-      });
-    } catch (e) {
-      // 模型调用失败直接中止 —— 与工具失败不同,这不是模型能改正的事
-      throw e instanceof ProviderCallError
-        ? e
-        : new ProviderCallError("调用模型服务失败。");
+    let lastError: ProviderCallError | null = null;
+    for (const candidate of [model, ...fallbackModels]) {
+      try {
+        turn = await callWithTools({
+          credentials,
+          model: candidate,
+          messages,
+          tools: FILE_TOOLS,
+          signal,
+        });
+        if (candidate !== activeModel) {
+          activeModel = candidate;
+          switchedModels.add(candidate);
+        }
+        lastError = null;
+        break;
+      } catch (e) {
+        const err =
+          e instanceof ProviderCallError
+            ? e
+            : new ProviderCallError("调用模型服务失败。");
+        lastError = err;
+        if (!isTransientFailure(err.status, err.message)) break;
+      }
+    }
+
+    if (!turn) {
+      // 全都试过还是不行。已完成的步骤不能白费 —— 文件早就写进工作区了,
+      // 所以这里不抛错,而是带着已有成果如实收尾。
+      haltReason =
+        steps.length > 0
+          ? `第 ${index} 步调用模型失败,已停止:${lastError?.message ?? "未知原因"}\n` +
+            `前 ${steps.length} 步已完成,产出的文件都在工作区里。`
+          : (lastError?.message ?? "调用模型服务失败。");
+      if (steps.length === 0 && lastError) throw lastError;
+      break;
     }
 
     inputTokens += turn.usage.inputTokens ?? 0;
@@ -188,7 +231,14 @@ export async function runAgent({
     }
   }
 
-  return { answer, steps, inputTokens, outputTokens, haltReason };
+  return {
+    answer,
+    steps,
+    inputTokens,
+    outputTokens,
+    haltReason,
+    usedModels: [...switchedModels],
+  };
 }
 
 /**
@@ -222,6 +272,11 @@ export function summarizeRun(outcome: AgentOutcome): string {
     );
   }
   if (outcome.answer.trim() !== "") parts.push(outcome.answer.trim());
+  if (outcome.usedModels.length > 0) {
+    parts.push(
+      `运行中主模型不可用,已自动改用:${outcome.usedModels.join("、")}。`,
+    );
+  }
   if (outcome.haltReason) parts.push(outcome.haltReason);
 
   return parts.length === 0
