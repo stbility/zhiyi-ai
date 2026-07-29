@@ -100,6 +100,16 @@ export async function POST(request: NextRequest) {
     return errorResponse(parsed.error.issues[0]?.message ?? "请求不合法", 400);
   }
 
+  // 限流。放在最前面 —— 越早拒绝,越少浪费。
+  //
+  // 这是整个系统里唯一会造成直接金钱损失的缺口:此前只校验登录,
+  // 一个循环脚本就能把用户配置的服务商配额刷干,账单落在用户头上。
+  const { checkRateLimit } = await import("@/lib/services/rate-limit");
+  const limit = await checkRateLimit(`chat:${user.id}`);
+  if (!limit.allowed) {
+    return errorResponse(limit.reason ?? "请求过于频繁,请稍后再试。", 429);
+  }
+
   const { providerId, model, content } = parsed.data;
 
   // 读取 Provider —— 走用户身份客户端,RLS 保证只能读到自己组织的
