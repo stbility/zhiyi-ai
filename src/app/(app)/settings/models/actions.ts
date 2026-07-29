@@ -22,6 +22,14 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
  */
 const PROBE_TIMEOUT_MS = 25_000;
 
+/**
+ * 同时探测多少个模型。
+ *
+ * 取小值是为了不触发服务商限流 —— 一次打出几十个请求,能用的模型也会
+ * 被限流判成不可用,等于用测试手段制造假故障。
+ */
+const PROBE_CONCURRENCY = 4;
+
 const addSchema = z.object({
   organizationId: z.string().uuid("组织标识无效"),
   kind: z.enum(["openai", "anthropic", "google", "openai_compatible"]),
@@ -306,12 +314,24 @@ export async function testProvider(
       apiKeyCipher: provider.api_key_cipher as string,
     };
 
-    // 并发探测。串行的话十来个模型能跑掉几分钟,撞上函数时限。
-    const results = await Promise.all(
-      candidates.map((model) =>
-        probeChatModel({ credentials, model, timeoutMs: PROBE_TIMEOUT_MS }),
-      ),
-    );
+    // 分批并发。
+    //
+    // 串行太慢(十来个模型能跑掉几分钟,撞函数时限),但全量并发同样不行 ——
+    // 一次打出几十个请求会触发服务商限流,好模型也会被判成不可用,
+    // 那就是用测试手段制造假故障。限制并发数是两头都要顾。
+    //
+    // 也绝不截断候选列表:上一版写死 .slice(0, 100) 把智谱整个家族砍没了。
+    const results: Awaited<ReturnType<typeof probeChatModel>>[] = [];
+    for (let i = 0; i < candidates.length; i += PROBE_CONCURRENCY) {
+      const batch = candidates.slice(i, i + PROBE_CONCURRENCY);
+      results.push(
+        ...(await Promise.all(
+          batch.map((model) =>
+            probeChatModel({ credentials, model, timeoutMs: PROBE_TIMEOUT_MS }),
+          ),
+        )),
+      );
+    }
 
     for (const r of results) {
       if (r.ok) verified.push(r.model);
