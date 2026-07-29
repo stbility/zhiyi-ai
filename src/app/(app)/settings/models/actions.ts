@@ -212,6 +212,15 @@ export async function testProvider(
     return { error: "缺少 Base URL,无法测试。" };
   }
 
+  // 用户此前删除过的模型,导入时跳过 —— 删了又被导回来是最烦人的那类 bug
+  const { data: exclusionRows } = await supabase
+    .from("ai_model_exclusions")
+    .select("model_id")
+    .eq("provider_id", parsed.data.id);
+  const excluded = new Set(
+    (exclusionRows ?? []).map((r) => r.model_id as string),
+  );
+
   let ok = false;
   let failure: string | null = null;
   /** 服务商真实返回的全部模型标识 */
@@ -269,7 +278,9 @@ export async function testProvider(
           "@/lib/providers/model-filter"
         );
         allModels = [...fromOpenAi, ...fromGoogle];
-        candidates = selectCoreChatModels(allModels);
+        candidates = selectCoreChatModels(allModels).filter(
+          (id) => !excluded.has(id),
+        );
       } catch {
         // 响应不是预期结构,不影响「连接成功」这一事实
       }
@@ -446,6 +457,13 @@ export async function deleteModel(
   const supabase = await createSupabaseServerClient();
   if (!supabase) return { error: "认证服务未配置。" };
 
+  const { data: provider } = await supabase
+    .from("ai_providers")
+    .select("organization_id")
+    .eq("id", parsed.data.providerId)
+    .maybeSingle();
+  if (!provider) return { error: "未找到该模型服务。" };
+
   const { error } = await supabase
     .from("ai_models")
     .delete()
@@ -453,7 +471,45 @@ export async function deleteModel(
     .eq("model_id", parsed.data.modelId);
   if (error) return { error: error.message };
 
+  // 记住这个决定,否则下次「测试连接」又把它导回来 —— 用户删了它,
+  // 就是不想再看到它,不该被自动导入推翻。
+  await supabase.from("ai_model_exclusions").upsert(
+    {
+      provider_id: parsed.data.providerId,
+      organization_id: provider.organization_id as string,
+      model_id: parsed.data.modelId,
+    },
+    { onConflict: "provider_id,model_id" },
+  );
+
   revalidatePath("/settings/models");
   revalidatePath("/assistant");
-  return { ok: `已删除 ${parsed.data.modelId}。` };
+  return { ok: `已删除 ${parsed.data.modelId},重新测试连接也不会再导入它。` };
+}
+
+/** 恢复一个此前被删除的模型 —— 删除是决定,不是永久黑名单 */
+export async function restoreModel(
+  _prev: ProviderActionState,
+  formData: FormData,
+): Promise<ProviderActionState> {
+  const parsed = modelSchema.safeParse({
+    providerId: formData.get("providerId"),
+    modelId: formData.get("modelId"),
+  });
+  if (!parsed.success) return { error: "标识无效" };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { error: "认证服务未配置。" };
+
+  const { error } = await supabase
+    .from("ai_model_exclusions")
+    .delete()
+    .eq("provider_id", parsed.data.providerId)
+    .eq("model_id", parsed.data.modelId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/settings/models");
+  return {
+    ok: `已恢复 ${parsed.data.modelId},下次测试连接会重新导入。`,
+  };
 }

@@ -49,6 +49,27 @@ async function loadProviders(organizationId: string): Promise<ProviderRow[]> {
  * 明明看得到 Kimi,系统里却无声无息 —— 只能怀疑是系统丢了模型。
  * 列出来并写清原因,才谈得上排查。
  */
+/** 用户删除过的模型,按服务商归组 —— 界面上要能看到并随时恢复 */
+async function loadExclusions(
+  organizationId: string,
+): Promise<Record<string, string[]>> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return {};
+
+  const { data } = await supabase
+    .from("ai_model_exclusions")
+    .select("provider_id, model_id")
+    .eq("organization_id", organizationId)
+    .order("model_id");
+
+  const byProvider: Record<string, string[]> = {};
+  for (const row of data ?? []) {
+    const pid = row.provider_id as string;
+    (byProvider[pid] ??= []).push(row.model_id as string);
+  }
+  return byProvider;
+}
+
 async function loadModels(
   organizationId: string,
 ): Promise<Record<string, ModelRow[]>> {
@@ -94,9 +115,10 @@ export default async function ModelSettingsPage() {
     );
   }
 
-  const [providers, modelsByProvider] = await Promise.all([
+  const [providers, modelsByProvider, exclusionsByProvider] = await Promise.all([
     loadProviders(org.id),
     loadModels(org.id),
+    loadExclusions(org.id),
   ]);
   const canManage = org.role === "owner" || org.role === "admin";
 
@@ -113,6 +135,7 @@ export default async function ModelSettingsPage() {
         organizationId={org.id}
         providers={providers}
         modelsByProvider={modelsByProvider}
+        exclusionsByProvider={exclusionsByProvider}
         canManage={canManage}
         encryptionAvailable={isEncryptionAvailable()}
       />

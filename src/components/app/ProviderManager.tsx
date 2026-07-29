@@ -10,6 +10,7 @@ import { Select } from "@/components/primitives/Select";
 import {
   addProvider,
   deleteModel,
+  restoreModel,
   deleteProvider,
   testProvider,
   type ProviderActionState,
@@ -62,15 +63,21 @@ function TestStatus({ row }: { row: ProviderRow }) {
 function ModelList({
   providerId,
   models,
+  excluded,
   canManage,
 }: {
   providerId: string;
   models: readonly ModelRow[];
+  excluded: readonly string[];
   canManage: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [, removeAction] = useActionState<ProviderActionState, FormData>(
     deleteModel,
+    {},
+  );
+  const [, restoreAction] = useActionState<ProviderActionState, FormData>(
+    restoreModel,
     {},
   );
 
@@ -98,6 +105,7 @@ function ModelList({
         <span>
           模型 {usable.length} 个可用
           {blocked.length > 0 ? `,${blocked.length} 个不可用` : ""}
+          {excluded.length > 0 ? `,${excluded.length} 个已删除` : ""}
         </span>
         <button
           type="button"
@@ -140,6 +148,35 @@ function ModelList({
             ))}
           </ul>
 
+          {/* 已删除的单独一组:删除是决定,不是永久黑名单 ——
+              随时看得到、随时能改主意,才不会出现「删了又莫名回来」。
+              每个模型各自一条记录,互不牵连。 */}
+          {excluded.length > 0 && (
+            <div className="border-divider flex flex-col gap-1 border-t pt-2">
+              <p className="text-fg-tertiary text-label">
+                已删除(测试连接不会重新导入)
+              </p>
+              {excluded.map((modelId) => (
+                <div key={modelId} className="flex items-center gap-1.5">
+                  <span className="text-fg-tertiary text-label min-w-0 flex-1 font-mono break-all line-through">
+                    {modelId}
+                  </span>
+                  {canManage && (
+                    <form action={restoreAction} className="shrink-0">
+                      <input type="hidden" name="providerId" value={providerId} />
+                      <input type="hidden" name="modelId" value={modelId} />
+                      <button
+                        type="submit"
+                        className="text-brand hover:text-brand-hover text-label cursor-pointer"
+                      >
+                        恢复
+                      </button>
+                    </form>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>
@@ -150,12 +187,14 @@ export function ProviderManager({
   organizationId,
   providers,
   modelsByProvider,
+  exclusionsByProvider,
   canManage,
   encryptionAvailable,
 }: {
   organizationId: string;
   providers: readonly ProviderRow[];
   modelsByProvider: Record<string, ModelRow[]>;
+  exclusionsByProvider: Record<string, string[]>;
   canManage: boolean;
   encryptionAvailable: boolean;
 }) {
@@ -236,6 +275,7 @@ export function ProviderManager({
                 <ModelList
                   providerId={row.id}
                   models={modelsByProvider[row.id] ?? []}
+                  excluded={exclusionsByProvider[row.id] ?? []}
                   canManage={canManage}
                 />
 
