@@ -20,6 +20,9 @@ import {
   type ProviderKind,
 } from "@/lib/providers/registry";
 
+/** 预设的展示分组与顺序 */
+const PRESET_GROUPS = ["国内", "国际", "聚合", "本地"] as const;
+
 export interface ProviderRow {
   id: string;
   kind: ProviderKind;
@@ -192,16 +195,45 @@ export function ProviderManager({
                 onChange={setBaseUrl}
               />
               {spec.requiresBaseUrl ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {COMPATIBLE_PRESETS.map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() => setBaseUrl(preset.baseUrl)}
-                      className="border-border-default rounded-tag text-fg-tertiary hover:text-fg-secondary hover:border-border-strong cursor-pointer border px-2 py-1 text-[11px] transition-colors duration-[var(--duration-hover)] ease-standard"
-                    >
-                      {preset.label}
-                    </button>
+                <div className="flex flex-col gap-2.5">
+                  <p className="text-fg-tertiary font-zh text-label">
+                    点击一键填入。预设只是省去查文档,不是白名单 ——
+                    任何 OpenAI 兼容地址都能手填,包括自建服务与未列出的服务商。
+                  </p>
+                  {PRESET_GROUPS.map((group) => (
+                    <div key={group} className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-fg-tertiary font-zh text-label w-9 shrink-0">
+                        {group}
+                      </span>
+                      {COMPATIBLE_PRESETS.filter((p) => p.group === group).map(
+                        (preset) => (
+                          <span
+                            key={preset.label}
+                            className="border-border-default rounded-tag inline-flex items-center overflow-hidden border"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setBaseUrl(preset.baseUrl)}
+                              title={preset.baseUrl}
+                              className="text-fg-tertiary hover:text-fg-secondary cursor-pointer px-2 py-1 text-[11px] transition-colors duration-[var(--duration-hover)] ease-standard"
+                            >
+                              {preset.label}
+                            </button>
+                            {/* 直达官方文档 —— 地址会变,密钥也在那里申请 */}
+                            <a
+                              href={preset.docsUrl}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                              title={`${preset.label} 官方 API 文档`}
+                              aria-label={`${preset.label} 官方 API 文档`}
+                              className="border-border-default text-fg-tertiary hover:text-brand border-l px-1.5 py-1 transition-colors duration-[var(--duration-hover)] ease-standard"
+                            >
+                              <Icon name="externalLink" size={11} />
+                            </a>
+                          </span>
+                        ),
+                      )}
+                    </div>
                   ))}
                 </div>
               ) : null}

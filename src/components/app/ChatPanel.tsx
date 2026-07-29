@@ -36,6 +36,46 @@ interface Turn {
  * 逐字流式呈现,用的是真实的模型调用 —— 没有任何模拟或预设回复。
  * 调用失败时如实显示服务商返回的原因,不伪造成功。
  */
+/**
+ * 复制按钮。
+ *
+ * 模型回复往往是要拿去用的 —— 手动选中长文本既慢又容易漏。
+ * 复制成功后短暂改文案作为反馈,不用弹窗打断。
+ */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // 剪贴板 API 在非安全上下文或被拒权限时会抛错,退回选中复制
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      aria-label="复制回复内容"
+      className="text-fg-tertiary hover:text-fg-secondary font-zh text-label inline-flex items-center gap-1 transition-colors duration-[var(--duration-hover)] ease-standard"
+    >
+      <Icon name={copied ? "check" : "copy"} size={13} />
+      {copied ? "已复制" : "复制"}
+    </button>
+  );
+}
+
 export function ChatPanel({ models }: { models: readonly ModelOption[] }) {
   const [selected, setSelected] = useState(models[0]?.value ?? "");
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -210,7 +250,8 @@ export function ChatPanel({ models }: { models: readonly ModelOption[] }) {
 
       <div
         ref={scrollRef}
-        className="border-border-default bg-surface-2 rounded-card flex-1 overflow-y-auto border p-4"
+        // 给出高度下限:内容少时也不该缩成一条窄缝
+        className="border-border-default bg-surface-2 rounded-card min-h-[58vh] flex-1 overflow-y-auto border p-4 md:p-5"
       >
         {turns.length === 0 ? (
           <p className="text-fg-tertiary font-zh text-caption">
@@ -228,7 +269,7 @@ export function ChatPanel({ models }: { models: readonly ModelOption[] }) {
               >
                 <div
                   className={cn(
-                    "rounded-bubble max-w-[88%] px-3 py-2.5 text-[14px] leading-[1.7] whitespace-pre-wrap",
+                    "rounded-bubble max-w-[92%] px-3 py-2.5 text-[14px] leading-[1.7] whitespace-pre-wrap",
                     turn.role === "user"
                       ? "bg-brand-tint text-fg"
                       : "bg-surface-3 border-border-default text-fg border",
@@ -244,25 +285,31 @@ export function ChatPanel({ models }: { models: readonly ModelOption[] }) {
                 </div>
 
                 {turn.fallback && (
-                  <p className="text-fg-secondary text-label max-w-[88%]">
+                  <p className="text-fg-secondary text-label max-w-[92%]">
                     {turn.fallback}
                   </p>
                 )}
 
                 {turn.error && (
-                  <p className="text-error text-label max-w-[88%]">
+                  <p className="text-error text-label max-w-[92%]">
                     {turn.error}
                   </p>
                 )}
 
-                {turn.meta && (
-                  <p className="text-fg-tertiary text-label font-mono">
-                    {turn.meta.latencyMs} ms
-                    {turn.meta.inputTokens !== null &&
-                      ` · 输入 ${turn.meta.inputTokens}`}
-                    {turn.meta.outputTokens !== null &&
-                      ` · 输出 ${turn.meta.outputTokens} token`}
-                  </p>
+                {/* 回复有内容就给复制入口 —— 长文本手动选中既慢又容易漏 */}
+                {turn.role === "assistant" && turn.content !== "" && (
+                  <div className="flex items-center gap-3">
+                    <CopyButton text={turn.content} />
+                    {turn.meta && (
+                      <span className="text-fg-tertiary text-label font-mono">
+                        {turn.meta.latencyMs} ms
+                        {turn.meta.inputTokens !== null &&
+                          ` · 输入 ${turn.meta.inputTokens}`}
+                        {turn.meta.outputTokens !== null &&
+                          ` · 输出 ${turn.meta.outputTokens} token`}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             ))}
@@ -281,7 +328,7 @@ export function ChatPanel({ models }: { models: readonly ModelOption[] }) {
               void send(e as unknown as FormEvent);
             }
           }}
-          rows={2}
+          rows={3}
           placeholder="输入内容,Enter 发送,Shift+Enter 换行"
           aria-label="对话输入"
           className="bg-surface-2 border-border-default rounded-control text-fg font-zh placeholder:text-fg-tertiary focus:border-border-focus min-w-0 flex-1 resize-none border px-3 py-2.5 text-[14px] outline-none transition-colors duration-[var(--duration-hover)] ease-standard"

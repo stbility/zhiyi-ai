@@ -65,7 +65,9 @@ export default async function AssistantPage() {
   const models = await loadModels(org.id);
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-4xl flex-col gap-4 px-4 py-6 md:px-8 md:py-10">
+    // 对话是这个页面的主体,给它更宽的版面和确定的高度。
+    // 原先 max-w-4xl + 纯 flex-1,在内容少时整块会缩成一小条。
+    <div className="mx-auto flex h-full w-full max-w-5xl flex-col gap-4 px-4 py-5 md:px-8 md:py-8">
       <header>
         <h2 className="text-fg text-h2 font-zh font-semibold">AI 助手</h2>
         <p className="text-fg-secondary font-zh text-caption mt-2">
