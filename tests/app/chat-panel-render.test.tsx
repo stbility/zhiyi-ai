@@ -79,8 +79,14 @@ describe("助手页渲染", () => {
     expect(screen.getByText("发送")).toBeTruthy();
   });
 
-  it("用户消息靠右、助手消息靠左 —— 设计系统 AIAssistantPanel 的原生规范", () => {
-    // 我曾把两者都改成全宽左对齐,破坏了这条规范。这里守住它。
+  it("用户消息靠右成气泡,AI 回答靠左整幅铺开", () => {
+    /**
+     * 两条都被我破坏过,所以都要守住:
+     *   一次把两者都改成全宽左对齐,用户消息和 AI 回答分不清;
+     *   一次给 AI 回答套上设计系统右侧停靠面板的窄气泡(max-w-[88%] + 边框),
+     *   那是给 320px 侧栏设计的样式,搬到整页对话上,回答被压在一个小框里 ——
+     *   这正是用户反馈的「输出框太小」。
+     */
     const { container } = render(
       <ChatPanel
         models={MODELS}
@@ -98,12 +104,19 @@ describe("助手页渲染", () => {
     expect(user?.className).toContain("items-end");
     expect(assistant?.className).toContain("items-start");
 
-    // 气泡样式也要沿用设计系统:rounded-bubble + 用户 brand-tint / 助手带边框
-    expect(container.querySelectorAll(".rounded-bubble").length).toBe(2);
-    expect(screen.getByText("你好").className).toContain("bg-brand-tint");
-    expect(screen.getByText("你好,有什么可以帮你的?").className).toContain(
-      "bg-surface-2",
-    );
+    // 用户消息:气泡 + brand-tint + 限宽
+    const userBubble = screen.getByText("你好");
+    expect(userBubble.className).toContain("rounded-bubble");
+    expect(userBubble.className).toContain("bg-brand-tint");
+    expect(userBubble.className).toContain("max-w-[88%]");
+
+    // AI 回答:整幅铺开,不套气泡、不限宽
+    const answer = screen.getByText("你好,有什么可以帮你的?");
+    expect(answer.className).toContain("w-full");
+    expect(answer.className).not.toContain("rounded-bubble");
+    expect(answer.className).not.toContain("max-w-[88%]");
+    // 全页面只应有一个气泡 —— 用户那条
+    expect(container.querySelectorAll(".rounded-bubble").length).toBe(1);
   });
 
   it("没有历史对话时也能渲染", () => {

@@ -1,10 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Icon } from "@/components/icons/Icon";
-import { Button } from "@/components/primitives/Button";
+import { Button, buttonClasses } from "@/components/primitives/Button";
 import { IconButton } from "@/components/primitives/IconButton";
 import { Select } from "@/components/primitives/Select";
 import {
@@ -317,19 +318,18 @@ export function ChatPanel({
   const sidebar = (
     <div className="flex h-full flex-col">
       <div className="px-3 pt-3 pb-2">
-        <Button
-          variant="secondary"
-          size="sm"
-          className="w-full"
-          onClick={() => {
-            setSidebarOpen(false);
-            router.push("/assistant?c=new");
-            router.refresh();
-          }}
+        <Link
+          href="/assistant?c=new"
+          onClick={() => setSidebarOpen(false)}
+          className={buttonClasses({
+            variant: "secondary",
+            size: "sm",
+            className: "w-full",
+          })}
         >
           <Icon name="plus" size={14} />
           新对话
-        </Button>
+        </Link>
       </div>
 
       <p className="text-fg-tertiary text-label px-3 pb-1">历史对话</p>
@@ -341,17 +341,18 @@ export function ChatPanel({
           {conversations.map((c) => {
             const active = c.id === conversationId;
             return (
-              <button
+              // 用真正的 <a> 而不是 button + router.push。
+              // 设计系统在 Button.tsx 里就写明了这条:导航场景应该渲染真正的 <a>,
+              // 否则会丢失新标签页打开、右键菜单;而且 router.push 在同路由
+              // 只变查询参数时未必触发重新取数,表现就是「点了没反应」。
+              <Link
                 key={c.id}
-                type="button"
+                href={`/assistant?c=${c.id}`}
                 aria-current={active ? "page" : undefined}
-                onClick={() => {
-                  setSidebarOpen(false);
-                  router.push(`/assistant?c=${c.id}`);
-                }}
+                onClick={() => setSidebarOpen(false)}
                 title={c.title}
                 className={cn(
-                  "rounded-control flex cursor-pointer items-center gap-2.5 px-3 py-2.25 text-left text-[14px]",
+                  "rounded-control flex items-center gap-2.5 px-3 py-2.25 text-left text-[14px]",
                   "transition-colors duration-[var(--duration-hover)] ease-standard",
                   active
                     ? "bg-brand-tint text-brand"
@@ -360,7 +361,7 @@ export function ChatPanel({
               >
                 <Icon name="assistant" size={15} className="shrink-0" />
                 <span className="min-w-0 truncate">{c.title}</span>
-              </button>
+              </Link>
             );
           })}
         </nav>
@@ -427,7 +428,7 @@ export function ChatPanel({
 
         <div
           ref={scrollRef}
-          className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-[18px]"
+          className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-[18px] py-5"
         >
           {turns.length === 0 ? (
             <p className="text-fg-tertiary text-caption">
@@ -451,10 +452,17 @@ export function ChatPanel({
 
                 <div
                   className={cn(
-                    "rounded-bubble max-w-[88%] px-3 py-2.5 text-[14px] leading-[1.6] whitespace-pre-wrap",
+                    "text-[14px] leading-[1.7] whitespace-pre-wrap",
                     turn.role === "user"
-                      ? "bg-brand-tint text-fg"
-                      : "bg-surface-2 border-border-default text-fg border",
+                      // 用户消息是气泡,靠右 —— 一眼能和 AI 的回答区分开
+                      ? "rounded-bubble bg-brand-tint text-fg max-w-[88%] px-3 py-2.5"
+                      // AI 回答整幅铺开,不套框。
+                      //
+                      // 之前用的是设计系统右侧停靠面板的样式(带边框的窄气泡),
+                      // 那是给 320px 侧栏设计的;搬到整页对话上,回答被压在一个
+                      // 悬浮小框里,再加上左边的历史栏,可读宽度所剩无几。
+                      // 长回答和代码块尤其吃亏 —— 这就是「输出框太小」的原因。
+                      : "text-fg w-full",
                   )}
                 >
                   {turn.content}
@@ -467,15 +475,13 @@ export function ChatPanel({
                 </div>
 
                 {turn.fallback && (
-                  <p className="text-fg-secondary text-label max-w-[88%]">
+                  <p className="text-fg-secondary text-label">
                     {turn.fallback}
                   </p>
                 )}
 
                 {turn.error && (
-                  <p className="text-error text-label max-w-[88%]">
-                    {turn.error}
-                  </p>
+                  <p className="text-error text-label">{turn.error}</p>
                 )}
 
                 {turn.role === "assistant" && turn.content !== "" && (
