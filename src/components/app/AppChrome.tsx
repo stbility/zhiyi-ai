@@ -40,20 +40,24 @@ export const APP_NAV: readonly NavEntry[] = [
 ];
 
 export interface AppChromeProps {
-  title: string;
   displayName: string;
   organizationName: string | null;
   children: ReactNode;
 }
 
 export function AppChrome({
-  title,
   displayName,
   organizationName,
   children,
 }: AppChromeProps) {
   const pathname = usePathname();
   const router = useRouter();
+
+  // 顶栏标题由当前路由推导。此前由布局写死成「今日」,于是每个页面顶部
+  // 都显示「今日」—— 在 AI 助手页尤其明显,顶栏说「今日」、内容是对话,
+  // 看起来就像两个不相干的组件拼在一起。
+  const title =
+    APP_NAV.find((item) => pathname.startsWith(item.href))?.label ?? "智一 AI";
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   // 抽屉打开时锁滚动,并支持 Esc 关闭

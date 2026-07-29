@@ -387,7 +387,7 @@ export function ChatPanel({
     // 任何一层断掉整块就会塌成 0 —— 表现就是白屏。
     <div className="font-zh flex h-full min-h-[calc(100dvh-3.5rem)] w-full min-w-0">
       {/* 左侧:历史对话。导航类操作集中在这里 */}
-      <aside className="border-border-default bg-surface-1 hidden w-60 shrink-0 flex-col border-r md:flex">
+      <aside className="border-divider hidden w-56 shrink-0 flex-col border-r md:flex">
         {sidebar}
       </aside>
 
@@ -413,23 +413,16 @@ export function ChatPanel({
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* 分区之间用 border-divider,与 AIAssistantPanel 一致 */}
-        <div className="border-divider flex shrink-0 items-center gap-3 border-b px-[18px] py-4">
+        {/* 不再自建标题栏 —— AppChrome 顶部已有一条,再加一条就是两个 header
+            摞在一起。窄屏需要一个入口打开历史对话,只保留这一个按钮。 */}
+        <div className="flex shrink-0 items-center px-[18px] pt-3 md:hidden">
           <IconButton
             aria-label="打开历史对话"
             onClick={() => setSidebarOpen(true)}
             size={28}
-            className="md:hidden"
           >
             <Icon name="more" size={16} />
           </IconButton>
-          <span className="text-fg flex items-center gap-2 text-[14px] font-medium">
-            <Icon name="assistant" size={16} className="text-brand" />
-            AI 助手
-          </span>
-          <span className="text-fg-tertiary text-label hidden lg:block">
-            回复由你配置的模型真实生成,耗时与 token 用量如实记录
-          </span>
         </div>
 
         <div

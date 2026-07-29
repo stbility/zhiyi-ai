@@ -28,7 +28,6 @@ export default async function AppLayout({
 
   return (
     <AppChrome
-      title="今日"
       displayName={displayName}
       organizationName={organizations[0]?.name ?? null}
     >
