@@ -51,9 +51,21 @@ export function OAuthButtons({
     setError(null);
     setPending(provider);
 
+    // 回到用户当前所在的域,而不是一个写死的域名。
+    //
+    // 真实故障:这个部署挂了三个别名域,而 Cookie 是按域名隔离的。
+    // 用户在别名域点登录,回调却固定跳到正式域 —— Supabase 侧三次登录全部成功
+    // (日志有 action=login 记录),会话却写在了另一个域上,用户回来一看还是未登录。
+    // 表现就是「第三方登录成功了却用不了」。
+    //
+    // 跟着当前 origin 走,在哪个域登录就在哪个域拿到会话,这个问题从根上消失。
+    // siteUrl 仅作服务端渲染阶段的兜底(此时还没有 window)。
+    const origin =
+      typeof window === "undefined" ? siteUrl : window.location.origin;
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
-      options: { redirectTo: `${siteUrl}/auth/callback` },
+      options: { redirectTo: `${origin}/auth/callback` },
     });
 
     if (error) {
