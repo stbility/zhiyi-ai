@@ -28,6 +28,37 @@ export function RegisterForm({
     {},
   );
 
+  // 邮箱已被注册。Supabase 此时不发任何邮件 —— 必须说清楚,
+  // 否则用户会一直等一封永远不来的验证信(生产上就是这么卡住的)。
+  // 措辞不直接确认该邮箱存在,避免账号枚举。
+  if (state.alreadyRegistered) {
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="border-border-default bg-surface-2 rounded-control p-4">
+          <p className="text-fg font-zh text-caption font-medium">
+            该邮箱已注册过,系统不会重复发送验证邮件。
+          </p>
+          <p className="text-fg-secondary font-zh text-label mt-1.5 leading-[1.7]">
+            请直接登录。如果你当初是用 Google 或 GitHub
+            注册的,请用同一种方式登录;忘记密码可通过「忘记密码」重设。
+          </p>
+        </div>
+        <Link
+          href="/login"
+          className="text-brand hover:text-brand-hover font-zh text-caption text-center"
+        >
+          前往登录
+        </Link>
+        <Link
+          href="/forgot-password"
+          className="text-fg-tertiary hover:text-fg-secondary font-zh text-label text-center"
+        >
+          忘记密码
+        </Link>
+      </div>
+    );
+  }
+
   if (state.awaitingVerification) {
     return (
       <div className="flex flex-col gap-3">
@@ -36,7 +67,7 @@ export function RegisterForm({
             验证邮件已发送。
           </p>
           <p className="text-fg-tertiary font-zh text-label mt-1">
-            请前往邮箱点击验证链接,完成后即可登录。
+            请前往邮箱点击验证链接,完成后即可登录。若几分钟内没收到,请检查垃圾邮件箱。
           </p>
         </div>
         <Link

@@ -40,6 +40,13 @@ export interface RegisterState {
   readonly awaitingVerification?: boolean;
   /** 注册成功,但因邮件通道不可用跳过了邮箱验证 */
   readonly emailVerificationSkipped?: boolean;
+  /**
+   * 该邮箱已被注册,Supabase 不会重复发信。
+   *
+   * 措辞上不能直接确认「这个邮箱存在」—— 那正是 Supabase 要防的账号枚举。
+   * 但必须让用户知道下一步该干什么,不能让他干等一封永远不来的邮件。
+   */
+  readonly alreadyRegistered?: boolean;
 }
 
 /** Supabase 的限流错误 —— 账号不会被创建 */
@@ -81,13 +88,30 @@ export async function register(
   // 之前用「RESEND_API_KEY 是否存在」来判断能否发信是错的 —— 那导致代码根本不去
   // 尝试标准注册,直接落到兜底分支,而兜底被安全开关关掉后就必然失败。
   // 能不能发信只有真发一次才知道,不能靠猜。
-  const { error: signUpError } = await supabase.auth.signUp({
+  const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
     email,
     password,
     options: { emailRedirectTo: `${getSiteUrl()}/auth/callback` },
   });
 
-  if (!signUpError) return { awaitingVerification: true };
+  if (!signUpError) {
+    // 「成功」不等于真的注册了。
+    //
+    // 邮箱已被注册时,Supabase 为防止账号枚举会返回一个**伪造的用户对象**:
+    // error 为空、带一个随机 id、identities 为空数组,而且不发任何邮件。
+    // 官方原文:「If you try to create an email account after previously
+    // signing up with OAuth using the same email, you'll receive an obfuscated
+    // user response with no verification email sent.」
+    // https://supabase.com/docs/guides/auth/auth-identity-linking
+    //
+    // 这正是生产上「注册后永远等不到验证邮件」的原因 —— 此前只看 error 是否为空,
+    // 就报「请查收邮件」,而那封信根本不会发出。
+    // 生产实测的伪造响应:id=1abbf59e…(真实用户是 ae257bf8…)、identities=[]。
+    if ((signUpData.user?.identities?.length ?? 0) === 0) {
+      return { alreadyRegistered: true };
+    }
+    return { awaitingVerification: true };
+  }
 
   // 不是邮件问题(密码太弱、邮箱非法等)—— 如实回报,不要落到兜底
   if (!isRateLimited(signUpError.message) && !isMailFailure(signUpError.message)) {
