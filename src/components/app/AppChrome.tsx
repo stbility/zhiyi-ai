@@ -34,6 +34,7 @@ export interface NavEntry {
 export const APP_NAV: readonly NavEntry[] = [
   { key: "today", label: "今日", icon: "today", href: "/today", available: true },
   { key: "assistant", label: "AI 助手", icon: "assistant", href: "/assistant", available: true },
+  { key: "workspace", label: "工作区", icon: "book", href: "/workspace", available: true },
   { key: "workflow", label: "工作流", icon: "workflow", href: "/workflow", available: false },
   { key: "knowledge", label: "知识库", icon: "knowledge", href: "/knowledge", available: false },
   { key: "memory", label: "AI 记忆", icon: "memory", href: "/memory", available: false },

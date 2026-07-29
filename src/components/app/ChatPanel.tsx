@@ -168,6 +168,15 @@ export function ChatPanel({
    * 而每次搜索都消耗配额。显式开关让成本和行为都可预期。
    */
   const [webSearch, setWebSearch] = useState(false);
+  /**
+   * 智能体模式。
+   *
+   * 开启后模型可以连续调用文件工具,产物直接写进工作区 ——
+   * 而不是把代码贴在回答正文里等人复制。这是「智能体」与「聊天助手」的分界。
+   */
+  const [agentMode, setAgentMode] = useState(false);
+  /** 智能体运行过程中的每一步,实时显示,免得几分钟里什么都看不到 */
+  const [agentSteps, setAgentSteps] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   /** 桌面端历史栏是否展开。收起后输出区能多出 224px 宽度 */
   const [historyOpen, setHistoryOpen] = useState(true);
@@ -232,6 +241,7 @@ export function ChatPanel({
     setTurns((prev) => [...prev, userTurn, assistantTurn]);
     setDraft("");
     setStreaming(true);
+    setAgentSteps([]);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -253,6 +263,7 @@ export function ChatPanel({
           content,
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(webSearch ? { webSearch: true } : {}),
+          ...(agentMode ? { agent: true } : {}),
         }),
         signal: controller.signal,
       });
@@ -300,6 +311,11 @@ export function ChatPanel({
               }
             | { text: string }
             | {
+                index: number;
+                text: string;
+                tools: { name: string; ok: boolean; content: string }[];
+              }
+            | {
                 inputTokens: number | null;
                 outputTokens: number | null;
                 latencyMs: number;
@@ -331,6 +347,23 @@ export function ChatPanel({
                 latencyMs: payload.latencyMs,
               },
             });
+          } else if (event === "step" && "index" in payload) {
+            // 智能体每完成一步就推一条 —— 跑几分钟期间什么都不显示,
+            // 用户只会以为卡死了
+            const p = payload as {
+              index: number;
+              text: string;
+              tools: { name: string; ok: boolean; content: string }[];
+            };
+            const line =
+              p.tools.length > 0
+                ? p.tools
+                    .map((t) => `${t.ok ? "✓" : "✗"} ${t.content}`)
+                    .join("\n")
+                : p.text;
+            if (line.trim() !== "") {
+              setAgentSteps((prev) => [...prev, `第 ${p.index} 步:${line}`]);
+            }
           } else if (event === "error" && "message" in payload) {
             patchAssistant({ error: payload.message });
           }
@@ -588,6 +621,16 @@ export function ChatPanel({
               </div>
             ))
           )}
+
+          {/* 智能体运行进度 */}
+          {streaming && agentSteps.length > 0 && (
+            <div className="border-border-default bg-surface-2 rounded-card mx-auto mt-4 w-full max-w-[900px] border p-3">
+              <p className="text-fg-tertiary text-label mb-1.5">智能体运行中</p>
+              <pre className="text-fg-secondary text-label max-h-40 overflow-auto whitespace-pre-wrap">
+                {agentSteps.join("\n")}
+              </pre>
+            </div>
+          )}
         </div>
 
         <form
@@ -693,6 +736,22 @@ export function ChatPanel({
                 className={webSearch ? "text-brand" : undefined}
               />
               {webSearch ? "联网已开启" : "联网"}
+            </Button>
+
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setAgentMode((v) => !v)}
+              aria-pressed={agentMode}
+              title="开启后模型可以连续调用文件工具,产物直接写入工作区,而不是把代码贴在回答里"
+              className={agentMode ? "border-brand text-brand" : undefined}
+            >
+              <Icon
+                name={agentMode ? "check" : "bot"}
+                size={15}
+                className={agentMode ? "text-brand" : undefined}
+              />
+              {agentMode ? "智能体已开启" : "智能体"}
             </Button>
 
             <Button type="submit" loading={streaming} className="shrink-0">

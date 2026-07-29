@@ -79,6 +79,13 @@ const bodySchema = z.object({
    */
   webSearch: z.boolean().optional(),
   /**
+   * 本轮是否以智能体模式运行。
+   *
+   * 开启后模型可以连续调用文件工具,产物直接写进工作区,
+   * 而不是把代码贴在回答正文里。
+   */
+  agent: z.boolean().optional(),
+  /**
    * 本轮附带的项目文件。
    *
    * 单独成一个字段而不是拼进 content:用户自己打的字要保持可读、可回看,
@@ -270,6 +277,30 @@ export async function POST(request: NextRequest) {
     role: "user",
     content,
   });
+
+  // --- 智能体模式 -----------------------------------------------------------
+  //
+  // 与普通问答的根本区别:模型能连续调用工具改变工作区,而不只是输出文本。
+  // 这是「智能体」和「聊天助手」的分界线。
+  if (parsed.data.agent === true) {
+    const { runAgentTurn } = await import("@/lib/ai/agent-turn");
+    return runAgentTurn({
+      supabase,
+      userId: user.id,
+      organizationId,
+      conversationId,
+      providerId,
+      model,
+      credentials: {
+        kind: provider.kind as ProviderKind,
+        baseUrl: (provider.base_url as string | null) ?? null,
+        apiKeyCipher: provider.api_key_cipher as string,
+      },
+      userMessage: `${built.fileBlock}${searchBlock}${content}`,
+      history: built.messages,
+      signal: request.signal,
+    });
+  }
 
   const startedAt = Date.now();
   const credentials = {

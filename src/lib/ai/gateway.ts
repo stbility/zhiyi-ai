@@ -715,3 +715,108 @@ export function translateUpstreamError(raw: string): string {
   // 未收录:保留原文,让用户能据此去服务商侧排查
   return `模型返回错误:${text}`;
 }
+
+/** 带工具的一次调用返回 */
+export interface ToolTurnResult {
+  /** 模型这一步说的话。可能为空(它只想调工具) */
+  readonly text: string;
+  /** 模型请求的工具调用。为空表示它认为任务完成了 */
+  readonly toolCalls: readonly {
+    id: string;
+    name: string;
+    rawArguments: string;
+  }[];
+  readonly usage: ChatUsage;
+  /** 上游给的结束原因,用于判断是否被长度截断 */
+  readonly finishReason: string | null;
+}
+
+/**
+ * 带工具的一次调用(非流式)。
+ *
+ * 为什么工具循环用非流式:流式下工具调用参数是分片拼接的,拼错一个字符
+ * 整次调用就废了;而且循环里每一步都要等参数完整才能执行,流式并不能
+ * 让用户更早看到东西。每步短、结果确定,比追求流畅更重要。
+ *
+ * 最终答案仍然可以流式呈现 —— 那是循环结束之后的事。
+ *
+ * 只支持 OpenAI 兼容协议。Anthropic 与 Google 的工具协议不同,
+ * 需要各自的适配;在它们接入之前,调用方应先检查 supportsTools。
+ */
+export async function callWithTools({
+  credentials,
+  model,
+  messages,
+  tools,
+  signal,
+}: {
+  credentials: ProviderCredentials;
+  model: string;
+  /** 允许带 tool 角色的消息 —— 工具结果要按协议回喂 */
+  messages: readonly Record<string, unknown>[];
+  tools: readonly unknown[];
+  signal: AbortSignal;
+}): Promise<ToolTurnResult> {
+  const apiKey = decryptSecret(credentials.apiKeyCipher);
+  const response = await fetch(`${resolveBaseUrl(credentials)}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      tools,
+      tool_choice: "auto",
+      stream: false,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new ProviderCallError(await describeFailure(response), response.status);
+  }
+
+  const payload = (await response.json()) as {
+    choices?: {
+      message?: {
+        content?: string | null;
+        reasoning_content?: string | null;
+        tool_calls?: {
+          id?: string;
+          function?: { name?: string; arguments?: string };
+        }[];
+      };
+      finish_reason?: string | null;
+    }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
+
+  const choice = payload.choices?.[0];
+  const message = choice?.message;
+
+  const toolCalls = (message?.tool_calls ?? []).flatMap((c) =>
+    c.function?.name
+      ? [
+          {
+            id: c.id ?? `call_${c.function.name}`,
+            name: c.function.name,
+            rawArguments: c.function.arguments ?? "",
+          },
+        ]
+      : [],
+  );
+
+  return {
+    // 推理模型可能只给 reasoning_content。它不是答案,但完全丢掉会让
+    // 「模型什么都没说」变得无法解释,所以在没有正文时退而用它。
+    text: message?.content ?? message?.reasoning_content ?? "",
+    toolCalls,
+    usage: {
+      inputTokens: payload.usage?.prompt_tokens ?? null,
+      outputTokens: payload.usage?.completion_tokens ?? null,
+    },
+    finishReason: choice?.finish_reason ?? null,
+  };
+}
