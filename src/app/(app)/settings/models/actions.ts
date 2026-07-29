@@ -14,6 +14,14 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
  * 数据库里没有明文,界面回显只用掩码。
  */
 
+/**
+ * 单个模型探测的等待上限。
+ *
+ * 候选是并发探测的,所以这也约等于整个测试流程的耗时上限。取 25 秒是为了
+ * 给排队中的模型一点机会,同时离 Vercel 的函数时限(300 秒)留足余量。
+ */
+const PROBE_TIMEOUT_MS = 25_000;
+
 const addSchema = z.object({
   organizationId: z.string().uuid("组织标识无效"),
   kind: z.enum(["openai", "anthropic", "google", "openai_compatible"]),
@@ -198,9 +206,10 @@ export async function testProvider(
 
   let ok = false;
   let failure: string | null = null;
-  let discoveredModels: string[] = [];
-  /** 服务商返回但用途不是对话、已被剔除的数量 —— 要如实告诉用户,否则数字对不上 */
-  let skippedCount = 0;
+  /** 服务商真实返回的全部模型标识 */
+  let allModels: string[] = [];
+  /** 属于核心家族、准备逐个真实探测的候选 */
+  let candidates: readonly string[] = [];
 
   try {
     const { decryptSecret } = await import("@/lib/crypto/secret-box");
@@ -242,14 +251,17 @@ export async function testProvider(
           // Google 返回 models/gemini-x 形式,去掉前缀便于调用
           .map((id) => id.replace(/^models\//, ""));
 
-        // 服务商返回的是「账号能访问的全部模型」,里面混着向量嵌入、图像理解、
-        // 安全分类、文档解析等根本没有对话端点的模型。之前不加区分全导进来,
-        // 用户选中就是 404,却完全看不出为什么。
-        const { filterChatModels } = await import("@/lib/providers/model-filter");
-        const all = [...fromOpenAi, ...fromGoogle];
-        const chatOnly = filterChatModels(all);
-        skippedCount = all.length - chatOnly.length;
-        discoveredModels = [...chatOnly].slice(0, 100);
+        // 服务商返回的是「账号能访问的全部模型」,动辄上百个,里面还混着
+        // 向量嵌入、安全分类、文档解析等根本没有对话端点的东西。
+        // 只取核心家族的对话模型作为候选,其余一律不导入。
+        //
+        // 这里绝不截断列表 —— 之前写了 .slice(0, 100),把排在后面的
+        // z-ai/glm-* 整个家族砍掉了,用户根本看不到智谱的模型。
+        const { selectCoreChatModels } = await import(
+          "@/lib/providers/model-filter"
+        );
+        allModels = [...fromOpenAi, ...fromGoogle];
+        candidates = selectCoreChatModels(allModels);
       } catch {
         // 响应不是预期结构,不影响「连接成功」这一事实
       }
@@ -278,33 +290,88 @@ export async function testProvider(
     })
     .eq("id", parsed.data.id);
 
-  // 连接正常时顺带把可用模型导进来 —— 否则用户得自己去文档里抄模型名,
-  // 抄错了又只能在对话时才发现。
-  let importedCount = 0;
-  if (ok && discoveredModels.length > 0) {
-    const rows = discoveredModels.map((id) => ({
-      provider_id: parsed.data.id,
-      organization_id: provider.organization_id as string,
-      model_id: id,
-      display_name: id.length > 60 ? id.slice(0, 60) : id,
-    }));
+  // 逐个真实调用候选模型,只有确实回了内容的才入库。
+  //
+  // /models 只说明「这个账号能看到该模型」,不说明它能对话。所以不真调一次
+  // 就入库,等于把没验证过的东西摆给用户选 —— 那就是伪模型。宁可列表短,
+  // 也不能有一个点开是坏的。
+  const verified: string[] = [];
+  const rejected: { model: string; reason: string }[] = [];
 
-    const { error: upsertError } = await supabase
-      .from("ai_models")
-      .upsert(rows, { onConflict: "provider_id,model_id", ignoreDuplicates: true });
+  if (ok && candidates.length > 0) {
+    const { probeChatModel } = await import("@/lib/ai/gateway");
+    const credentials = {
+      kind: provider.kind as ProviderKind,
+      baseUrl: (provider.base_url as string | null) ?? null,
+      apiKeyCipher: provider.api_key_cipher as string,
+    };
 
-    if (!upsertError) importedCount = rows.length;
+    // 并发探测。串行的话十来个模型能跑掉几分钟,撞上函数时限。
+    const results = await Promise.all(
+      candidates.map((model) =>
+        probeChatModel({ credentials, model, timeoutMs: PROBE_TIMEOUT_MS }),
+      ),
+    );
+
+    for (const r of results) {
+      if (r.ok) verified.push(r.model);
+      else rejected.push({ model: r.model, reason: r.reason ?? "调用失败" });
+    }
+
+    if (verified.length > 0) {
+      await supabase.from("ai_models").upsert(
+        verified.map((id) => ({
+          provider_id: parsed.data.id,
+          organization_id: provider.organization_id as string,
+          model_id: id,
+          display_name: id.length > 60 ? id.slice(0, 60) : id,
+          chat_unavailable_reason: null,
+        })),
+        { onConflict: "provider_id,model_id" },
+      );
+    }
+
+    // 探测失败的也要落库并标记原因,而不是悄悄丢掉 —— 用户有权知道
+    // 「为什么我在英伟达控制台看得到这个模型,这里却没有」。
+    if (rejected.length > 0) {
+      await supabase.from("ai_models").upsert(
+        rejected.map((r) => ({
+          provider_id: parsed.data.id,
+          organization_id: provider.organization_id as string,
+          model_id: r.model,
+          display_name: r.model.length > 60 ? r.model.slice(0, 60) : r.model,
+          chat_unavailable_reason: r.reason.slice(0, 300),
+        })),
+        { onConflict: "provider_id,model_id" },
+      );
+    }
   }
 
   revalidatePath("/settings/models");
   revalidatePath("/assistant");
 
   if (!ok) return { error: `连接失败:${failure ?? "未知原因"}` };
-  if (importedCount === 0) return { ok: "连接成功,密钥可用。" };
-  return {
-    ok:
-      skippedCount > 0
-        ? `连接成功,已导入 ${importedCount} 个可对话的模型;另有 ${skippedCount} 个是嵌入、安全分类、解析等非对话模型,已跳过。`
-        : `连接成功,已导入 ${importedCount} 个可用模型。`,
-  };
+
+  const { coreModelFamilyLabels } = await import(
+    "@/lib/providers/model-filter"
+  );
+  const families = coreModelFamilyLabels().join("、");
+
+  if (candidates.length === 0) {
+    return {
+      ok: `连接成功,密钥可用。但该服务商返回的 ${allModels.length} 个模型里没有核心家族(${families})的对话模型。`,
+    };
+  }
+
+  const head = `连接成功。从服务商的 ${allModels.length} 个模型中筛出 ${candidates.length} 个核心家族(${families})候选,逐个真实调用验证:`;
+  const okPart =
+    verified.length > 0
+      ? `${verified.length} 个确认可用(${verified.join("、")})`
+      : "没有一个通过验证";
+  const badPart =
+    rejected.length > 0
+      ? `;${rejected.length} 个未通过:${rejected.map((r) => `${r.model} — ${r.reason}`).join(";")}`
+      : "";
+
+  return { ok: `${head}${okPart}${badPart}。` };
 }

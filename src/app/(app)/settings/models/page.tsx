@@ -9,6 +9,10 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "模型服务 · 智一 AI" };
 export const dynamic = "force-dynamic";
+// 「测试连接」会并发真实调用每个候选模型来验证可用性,比普通页面动作耗时。
+// Server Action 走的是本路由,所以时限声明在这里。
+// Vercel Hobby 计划上限即 300 秒,调不高。
+export const maxDuration = 300;
 
 async function loadProviders(organizationId: string): Promise<ProviderRow[]> {
   const supabase = await createSupabaseServerClient();

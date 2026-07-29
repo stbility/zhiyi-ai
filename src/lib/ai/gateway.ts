@@ -427,6 +427,91 @@ export async function streamChat({
   return { stream, usage, diagnostics };
 }
 
+/** 一次模型可用性探测的结果 */
+export interface ModelProbeResult {
+  readonly model: string;
+  readonly ok: boolean;
+  /** 失败时的原因,已翻译成可读中文;成功时为 null */
+  readonly reason: string | null;
+  readonly latencyMs: number;
+}
+
+/**
+ * 用一次真实对话确认模型确实能工作。
+ *
+ * 为什么必须真调一次:服务商的 /models 只说明「这个账号能看到该模型」,
+ * 不说明它能对话。此前把整个列表无差别导入,用户选中嵌入模型就是 404;
+ * 而即便是货真价实的对话模型,也可能因为容量、权限、下线而调不通。
+ * 「能不能用」只有调过才知道 —— 这正是用户要求的「不要写伪模型」。
+ *
+ * 探测刻意做得极小:一句话、几个 token,成本可以忽略。
+ */
+export async function probeChatModel({
+  credentials,
+  model,
+  timeoutMs,
+}: {
+  credentials: ProviderCredentials;
+  model: string;
+  timeoutMs: number;
+}): Promise<ModelProbeResult> {
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const { stream, diagnostics } = await streamChat({
+      credentials,
+      model,
+      messages: [{ role: "user", content: "你好" }],
+      signal: controller.signal,
+    });
+
+    let text = "";
+    for await (const delta of stream) {
+      text += delta;
+      // 收到内容就够了 —— 探测不需要等模型说完
+      if (text.trim() !== "") break;
+    }
+
+    const latencyMs = Date.now() - startedAt;
+    if (text.trim() === "") {
+      return {
+        model,
+        ok: false,
+        reason: explainEmptyResponse(diagnostics),
+        latencyMs,
+      };
+    }
+    return { model, ok: true, reason: null, latencyMs };
+  } catch (e) {
+    const latencyMs = Date.now() - startedAt;
+    if (controller.signal.aborted) {
+      return {
+        model,
+        ok: false,
+        reason: `探测超过 ${Math.round(timeoutMs / 1000)} 秒未返回,通常是该模型正在排队`,
+        latencyMs,
+      };
+    }
+    return {
+      model,
+      ok: false,
+      reason:
+        e instanceof ProviderCallError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "调用失败",
+      latencyMs,
+    };
+  } finally {
+    clearTimeout(timer);
+    // 探测拿到内容就走,剩下的流不再需要,主动中止省配额
+    controller.abort();
+  }
+}
+
 
 /**
  * 把「上游返回了 200 却没有任何内容」翻译成可排查的说明。

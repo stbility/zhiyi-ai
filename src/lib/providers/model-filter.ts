@@ -56,6 +56,55 @@ export function filterChatModels(
 }
 
 /**
+ * 核心模型家族。
+ *
+ * 服务商往往提供上百个模型,全导进来只会让选择列表变成噪音,而且绝大多数
+ * 用户一辈子用不到。这里只收几个主力家族,其余一律不导入。
+ *
+ * 匹配的是**厂商前缀**,不是写死的模型标识 —— 写死标识等于把「今天存在
+ * 什么模型」固化进代码,厂商一升级就变成指向不存在模型的伪配置。
+ * 具体有哪些模型,永远以服务商 /models 的真实返回为准。
+ *
+ * 要增减家族,改这一个常量即可。
+ */
+const CORE_MODEL_FAMILIES: readonly {
+  /** 展示用的中文名 */
+  readonly label: string;
+  /** 模型标识的厂商前缀,来自服务商真实返回 */
+  readonly prefixes: readonly string[];
+}[] = [
+  { label: "DeepSeek", prefixes: ["deepseek-ai/", "deepseek/"] },
+  { label: "Kimi(月之暗面)", prefixes: ["moonshotai/", "moonshot/"] },
+  // 智谱 AI 现用品牌 Z.ai,英伟达上的前缀是 z-ai/(如 z-ai/glm-5.2)
+  { label: "智谱 GLM", prefixes: ["z-ai/", "zai-org/", "thudm/"] },
+];
+
+/** 该模型是否属于核心家族 */
+export function isCoreModel(modelId: string): boolean {
+  const id = modelId.toLowerCase();
+  return CORE_MODEL_FAMILIES.some((f) =>
+    f.prefixes.some((p) => id.startsWith(p)),
+  );
+}
+
+/** 核心家族的中文名,用于向用户说明收录范围 */
+export function coreModelFamilyLabels(): readonly string[] {
+  return CORE_MODEL_FAMILIES.map((f) => f.label);
+}
+
+/**
+ * 从服务商返回的全部模型中,选出「属于核心家族且用途是对话」的候选。
+ *
+ * 注意这只是候选 —— 能不能真的对话,要靠一次真实调用来定,见
+ * settings/models/actions.ts 的导入流程。
+ */
+export function selectCoreChatModels(
+  modelIds: readonly string[],
+): readonly string[] {
+  return modelIds.filter((id) => isCoreModel(id) && isLikelyChatModel(id));
+}
+
+/**
  * 判断一次调用失败是否说明「该模型不能用于对话」。
  *
  * 只在能确定是模型本身不支持时才返回 true —— 限流、容量不足这类

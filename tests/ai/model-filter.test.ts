@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  coreModelFamilyLabels,
   filterChatModels,
   indicatesModelUnusable,
+  isCoreModel,
   isLikelyChatModel,
+  selectCoreChatModels,
 } from "@/lib/providers/model-filter";
 
 /**
@@ -92,6 +95,64 @@ describe("非对话模型的识别", () => {
       "openai/gpt-oss-120b",
       "meta/llama-3.3-70b-instruct",
     ]);
+  });
+});
+
+describe("核心模型家族筛选", () => {
+  it("收录用户点名的三个家族:DeepSeek、Kimi、智谱 GLM", () => {
+    expect(isCoreModel("deepseek-ai/deepseek-v4-pro")).toBe(true);
+    expect(isCoreModel("moonshotai/kimi-k2.6")).toBe(true);
+    // 智谱现用品牌 Z.ai,英伟达上的前缀是 z-ai/
+    expect(isCoreModel("z-ai/glm-5.2")).toBe(true);
+    expect(isCoreModel("z-ai/glm4.7")).toBe(true);
+  });
+
+  it("其余家族一律不收 —— 用户要的是几个核心模型,不是一百个", () => {
+    for (const id of [
+      "openai/gpt-oss-120b",
+      "meta/llama-3.3-70b-instruct",
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "google/gemma-3-12b-it",
+      "mistralai/mistral-large",
+      "qwen/qwen3-next-80b-a3b-instruct",
+    ]) {
+      expect(isCoreModel(id), id).toBe(false);
+    }
+  });
+
+  it("前缀必须整段匹配,不能被相似厂商名蒙混", () => {
+    // 「z-ai-labs/」不是「z-ai/」;前缀里带斜杠正是为了防这个
+    expect(isCoreModel("notdeepseek-ai/foo")).toBe(false);
+    expect(isCoreModel("xz-ai/glm")).toBe(false);
+  });
+
+  it("核心家族里的非对话模型仍然要剔除", () => {
+    // 假如智谱哪天上了嵌入模型,不能因为它属于核心家族就放进对话列表
+    expect(selectCoreChatModels(["z-ai/glm-embed-2"])).toEqual([]);
+    expect(selectCoreChatModels(["deepseek-ai/deepseek-rerank"])).toEqual([]);
+  });
+
+  it("从服务商的完整返回中选出候选,不截断", () => {
+    // 真实教训:曾写死 .slice(0, 100),把排在后面的 z-ai/* 整个家族砍掉,
+    // 用户根本看不到智谱的模型。所以补一个远超 100 的列表守住这一点。
+    const noise = Array.from({ length: 150 }, (_, i) => `vendor-${i}/model`);
+    const all = [
+      "deepseek-ai/deepseek-v4-pro",
+      ...noise,
+      "moonshotai/kimi-k2.6",
+      "z-ai/glm-5.2",
+    ];
+    expect(selectCoreChatModels(all)).toEqual([
+      "deepseek-ai/deepseek-v4-pro",
+      "moonshotai/kimi-k2.6",
+      "z-ai/glm-5.2",
+    ]);
+  });
+
+  it("家族名可读,用于向用户说明收录范围", () => {
+    const labels = coreModelFamilyLabels();
+    expect(labels).toContain("DeepSeek");
+    expect(labels.some((l) => l.includes("GLM"))).toBe(true);
   });
 });
 
