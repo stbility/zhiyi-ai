@@ -104,23 +104,18 @@ export function AuthForm({
         return;
       }
 
-      if (mode === "register") {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: `${siteUrl}/auth/callback` },
-        });
-        if (error) {
-          setError(translateAuthError(error.message));
-          return;
-        }
-        // 不回显账号是否已存在 —— 无论新老账号都给同一句提示
-        setNotice("验证邮件已发送,请前往邮箱完成验证后再登录。");
-        return;
-      }
+      // 注册不走这里 —— 见 (auth)/register/actions.ts。
+      // 原先这里还有一段 signUp 分支,但 /register 用的是 RegisterForm,
+      // 那段代码根本执行不到,却带着「邮箱已注册也报『验证邮件已发送』」
+      // 这个已在别处修掉的 bug。死代码留着只会让人以为它还在生效。
+
+      // 回调跟随当前所在的域,不写死 —— 这个部署挂了多个别名域,
+      // 写死域名会让重置链接把人送到另一个域,会话对不上。
+      const origin =
+        typeof window === "undefined" ? siteUrl : window.location.origin;
 
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${siteUrl}/reset-password`,
+        redirectTo: `${origin}/reset-password`,
       });
       if (error) {
         setError(translateAuthError(error.message));
