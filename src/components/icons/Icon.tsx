@@ -152,6 +152,15 @@ const PATHS = {
       <path d="M5 21h14" />
     </>
   ),
+  // 下载是「往下、落到本地」;此前「下载全部」误用了 upload,箭头朝上,
+  // 语义与动作正好相反
+  download: (
+    <>
+      <path d="M12 5v14" />
+      <polyline points="19 12 12 19 5 12" />
+      <path d="M5 21h14" />
+    </>
+  ),
   trash: (
     <>
       <polyline points="3 6 5 6 21 6" />

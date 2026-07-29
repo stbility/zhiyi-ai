@@ -96,7 +96,7 @@ export default async function WorkspacePage() {
         </div>
       ) : (
         workspaces.map((w) => (
-          <WorkspaceBrowser key={w.id} name={w.name} files={w.files} />
+          <WorkspaceBrowser key={w.id} id={w.id} name={w.name} files={w.files} />
         ))
       )}
     </div>
