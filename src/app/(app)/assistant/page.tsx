@@ -1,7 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { ChatPanel, type ModelOption } from "@/components/app/ChatPanel";
+import {
+  ChatPanel,
+  type ConversationSummary,
+  type InitialTurn,
+  type ModelOption,
+} from "@/components/app/ChatPanel";
 import { getMyOrganizations } from "@/lib/db/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -41,7 +46,61 @@ async function loadModels(organizationId: string): Promise<ModelOption[]> {
   });
 }
 
-export default async function AssistantPage() {
+/**
+ * 历史对话列表。
+ *
+ * 对话和消息一直都在库里,只是页面从不读取 —— 关掉标签页就等于全丢。
+ * 这对「长期使用」是致命的:用户没法接着昨天的思路继续,也无法回看
+ * 模型当时到底说了什么。
+ */
+async function loadConversations(
+  organizationId: string,
+): Promise<ConversationSummary[]> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return [];
+
+  // RLS 已限定只能读到自己的对话,这里不必再按 user_id 过滤
+  const { data } = await supabase
+    .from("conversations")
+    .select("id, title, created_at")
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    title: (row.title as string | null) ?? "未命名对话",
+    createdAt: row.created_at as string,
+  }));
+}
+
+/** 某个对话的全部消息,用于恢复现场 */
+async function loadTurns(conversationId: string): Promise<InitialTurn[]> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return [];
+
+  const { data } = await supabase
+    .from("messages")
+    .select("id, role, content, input_tokens, output_tokens, latency_ms, error_message")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true });
+
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    role: row.role as "user" | "assistant",
+    content: (row.content as string | null) ?? "",
+    inputTokens: (row.input_tokens as number | null) ?? null,
+    outputTokens: (row.output_tokens as number | null) ?? null,
+    latencyMs: (row.latency_ms as number | null) ?? null,
+    error: (row.error_message as string | null) ?? null,
+  }));
+}
+
+export default async function AssistantPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ c?: string }>;
+}) {
   const organizations = await getMyOrganizations();
   const org = organizations[0];
 
@@ -62,24 +121,36 @@ export default async function AssistantPage() {
     );
   }
 
-  const models = await loadModels(org.id);
+  const [models, conversations] = await Promise.all([
+    loadModels(org.id),
+    loadConversations(org.id),
+  ]);
+
+  // 打开指定对话;没指定就接着最近一次继续 —— 用户回来通常是想接着上次说。
+  // c=new 表示明确要开新的,此时不能回落到最近一条,否则「新对话」等于没反应。
+  const requested = (await searchParams).c;
+  const active =
+    requested === "new"
+      ? null
+      : (conversations.find((c) => c.id === requested) ??
+        conversations[0] ??
+        null);
+  const initialTurns = active ? await loadTurns(active.id) : [];
 
   return (
     // 对话页占满整屏:页面本身不滚动,只有消息区滚动。
     // 原先是 mx-auto max-w-5xl + 页面整体滚动,两侧留白吃掉大量横向空间,
     // 长回复还要跟着页面一起滚 —— 屏幕再大也显得局促。
-    <div className="flex h-full w-full flex-col overflow-hidden px-4 py-4 md:px-6 md:py-5">
-      {/* 标题压到一行,把纵向空间让给对话本身 */}
-      <header className="mb-3 flex shrink-0 items-baseline gap-3">
-        <h2 className="text-fg text-h3 font-zh font-semibold">AI 助手</h2>
-        <p className="text-fg-tertiary font-zh text-label hidden sm:block">
-          回复由你配置的模型真实生成,耗时与 token 用量如实记录
-        </p>
-      </header>
-
-      <div className="min-h-0 flex-1">
-        <ChatPanel models={models} />
-      </div>
+    <div className="flex h-full w-full overflow-hidden">
+      <ChatPanel
+        // 切换对话时直接重挂组件,由初始 state 载入新数据 ——
+        // 比在 effect 里同步 state 干净,也不会引起级联渲染
+        key={active?.id ?? "new"}
+        models={models}
+        conversations={conversations}
+        activeConversationId={active?.id ?? null}
+        initialTurns={initialTurns}
+      />
     </div>
   );
 }

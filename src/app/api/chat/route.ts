@@ -59,6 +59,21 @@ const bodySchema = z.object({
   providerId: z.string().uuid("请选择模型服务"),
   model: z.string().trim().min(1, "请选择模型"),
   content: z.string().trim().min(1, "请输入内容").max(32_000, "内容过长"),
+  /**
+   * 本轮附带的项目文件。
+   *
+   * 单独成一个字段而不是拼进 content:用户自己打的字要保持可读、可回看,
+   * 附件是另一回事。上限在服务端再校验一次 —— 浏览器侧的限制随时可以绕过。
+   */
+  attachments: z
+    .array(
+      z.object({
+        path: z.string().trim().min(1).max(400),
+        content: z.string().max(60_000),
+      }),
+    )
+    .max(40)
+    .optional(),
 });
 
 function errorResponse(message: string, status: number) {
@@ -127,6 +142,19 @@ export async function POST(request: NextRequest) {
   // 失败的调用会留下一条 content 为空的 assistant 记录(用于留痕),
   // 但 OpenAI 兼容接口不接受空内容的消息 —— 把它带进上下文会让之后
   // 每一轮都失败,故障自我传染。留痕归留痕,不能污染上下文。
+  // 附件拼在本轮用户消息前面,并标明路径 —— 模型需要知道每段代码在项目里的位置。
+  // 只作用于本轮:附件正文不落库,否则每条历史消息都背着几十 KB 代码,
+  // 上下文很快就被自己撑爆了。界面上会说明这一点。
+  const attachments = parsed.data.attachments ?? [];
+  const attachmentBlock =
+    attachments.length === 0
+      ? ""
+      : `以下是用户附带的项目文件,供你参考(共 ${attachments.length} 个):\n\n` +
+        attachments
+          .map((a) => `--- ${a.path} ---\n${a.content}`)
+          .join("\n\n") +
+        "\n\n---\n\n";
+
   const messages: ChatMessage[] = [
     ...(history ?? [])
       .filter((m) => typeof m.content === "string" && m.content.trim() !== "")
@@ -134,10 +162,11 @@ export async function POST(request: NextRequest) {
         role: m.role as ChatMessage["role"],
         content: m.content as string,
       })),
-    { role: "user" as const, content },
+    { role: "user" as const, content: `${attachmentBlock}${content}` },
   ];
 
-  // 先落库用户消息 —— 即便后续模型调用失败,用户说过的话也不该丢
+  // 先落库用户消息 —— 即便后续模型调用失败,用户说过的话也不该丢。
+  // 存的是用户自己打的字,不含附件正文。
   await supabase.from("messages").insert({
     conversation_id: conversationId,
     organization_id: organizationId,
