@@ -274,11 +274,19 @@ export async function testProvider(
         //
         // 这里绝不截断列表 —— 之前写了 .slice(0, 100),把排在后面的
         // z-ai/glm-* 整个家族砍掉了,用户根本看不到智谱的模型。
-        const { selectCoreChatModels } = await import(
-          "@/lib/providers/model-filter"
-        );
+        // 按**用途**过滤,不按厂商。
+        //
+        // 之前用的是厂商前缀白名单(deepseek-ai/、moonshotai/、z-ai/…),
+        // 那个维度从一开始就错了 —— 它只在英伟达这种带命名空间的标识上
+        // 看起来正常。DeepSeek 官方 API 返回的是裸标识 deepseek-chat、
+        // deepseek-reasoner,前缀一个都对不上,结果「连接正常、模型 0 个可用」。
+        // OpenAI 的 gpt-4o、Moonshot 的 moonshot-v1-8k、智谱的 glm-4 同理。
+        //
+        // 该收窄的是「用途不是对话」(嵌入、重排、安全分类…),
+        // 不是「厂商我没听过」。
+        const { filterChatModels } = await import("@/lib/providers/model-filter");
         allModels = [...fromOpenAi, ...fromGoogle];
-        candidates = selectCoreChatModels(allModels).filter(
+        candidates = filterChatModels(allModels).filter(
           (id) => !excluded.has(id),
         );
       } catch {
@@ -417,19 +425,14 @@ export async function testProvider(
 
   if (!ok) return { error: `连接失败:${failure ?? "未知原因"}` };
 
-  const { coreModelFamilyLabels } = await import(
-    "@/lib/providers/model-filter"
-  );
-  const families = coreModelFamilyLabels().join("、");
-
   if (candidates.length === 0) {
     return {
-      ok: `连接成功,密钥可用。但该服务商返回的 ${allModels.length} 个模型里没有核心家族(${families})的对话模型。`,
+      ok: `连接成功,密钥可用。但该服务商返回的 ${allModels.length} 个模型里没有可用于对话的。`,
     };
   }
 
   const parts = [
-    `连接成功。从服务商的 ${allModels.length} 个模型中筛出 ${candidates.length} 个核心家族(${families})候选,逐个真实调用验证。`,
+    `连接成功。服务商共返回 ${allModels.length} 个模型,其中 ${candidates.length} 个用途为对话,已逐个真实调用验证。`,
     verified.length > 0
       ? `✅ ${verified.length} 个确认可用:${verified.join("、")}`
       : "⚠️ 没有一个当场通过验证",

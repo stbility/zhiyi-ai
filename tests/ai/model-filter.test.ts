@@ -1,13 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  coreModelFamilyLabels,
   filterChatModels,
   indicatesModelUnusable,
-  isCoreModel,
   isLikelyChatModel,
   isTransientFailure,
-  selectCoreChatModels,
 } from "@/lib/providers/model-filter";
 
 /**
@@ -99,61 +96,71 @@ describe("非对话模型的识别", () => {
   });
 });
 
-describe("核心模型家族筛选", () => {
-  it("收录用户点名的三个家族:DeepSeek、Kimi、智谱 GLM", () => {
-    expect(isCoreModel("deepseek-ai/deepseek-v4-pro")).toBe(true);
-    expect(isCoreModel("moonshotai/kimi-k2.6")).toBe(true);
-    // 智谱现用品牌 Z.ai,英伟达上的前缀是 z-ai/
-    expect(isCoreModel("z-ai/glm-5.2")).toBe(true);
-    expect(isCoreModel("z-ai/glm4.7")).toBe(true);
-  });
-
-  it("其余家族一律不收 —— 用户要的是几个核心模型,不是一百个", () => {
+describe("各家服务商的真实标识都要能通过", () => {
+  /**
+   * 真实故障:曾按**厂商前缀**白名单过滤(deepseek-ai/、moonshotai/、z-ai/…),
+   * 那个维度从一开始就错了 —— 它只在英伟达这种带命名空间的标识上看起来正常。
+   * DeepSeek 官方 API 返回的是裸标识 deepseek-chat,前缀一个都对不上,
+   * 结果界面显示「连接正常,模型 0 个可用」。
+   *
+   * 下面这些标识取自各家官方文档的真实形态,不是编造的。
+   */
+  it("裸标识(无厂商前缀)一律要通过", () => {
     for (const id of [
-      "openai/gpt-oss-120b",
-      "meta/llama-3.3-70b-instruct",
-      "nvidia/nemotron-3-ultra-550b-a55b",
-      "google/gemma-3-12b-it",
-      "mistralai/mistral-large",
-      "qwen/qwen3-next-80b-a3b-instruct",
+      // DeepSeek 官方
+      "deepseek-chat",
+      "deepseek-reasoner",
+      // OpenAI
+      "gpt-4o",
+      "gpt-4o-mini",
+      "o3-mini",
+      // Moonshot 官方
+      "moonshot-v1-8k",
+      "moonshot-v1-128k",
+      "kimi-k2-0711-preview",
+      // 智谱官方
+      "glm-4",
+      "glm-4-plus",
+      "glm-4-flash",
+      // 通义千问
+      "qwen-max",
+      "qwen-plus",
+      // 火山方舟
+      "doubao-pro-32k",
+      // Mistral
+      "mistral-large-latest",
+      // 本地
+      "llama3.2:latest",
     ]) {
-      expect(isCoreModel(id), id).toBe(false);
+      expect(isLikelyChatModel(id), id).toBe(true);
     }
   });
 
-  it("前缀必须整段匹配,不能被相似厂商名蒙混", () => {
-    // 「z-ai-labs/」不是「z-ai/」;前缀里带斜杠正是为了防这个
-    expect(isCoreModel("notdeepseek-ai/foo")).toBe(false);
-    expect(isCoreModel("xz-ai/glm")).toBe(false);
+  it("带命名空间的标识同样通过", () => {
+    for (const id of [
+      "deepseek-ai/deepseek-v4-flash",
+      "moonshotai/kimi-k2.6",
+      "z-ai/glm-5.2",
+      "meta/llama-3.3-70b-instruct",
+      "anthropic/claude-sonnet-4",
+    ]) {
+      expect(isLikelyChatModel(id), id).toBe(true);
+    }
   });
 
-  it("核心家族里的非对话模型仍然要剔除", () => {
-    // 假如智谱哪天上了嵌入模型,不能因为它属于核心家族就放进对话列表
-    expect(selectCoreChatModels(["z-ai/glm-embed-2"])).toEqual([]);
-    expect(selectCoreChatModels(["deepseek-ai/deepseek-rerank"])).toEqual([]);
-  });
-
-  it("从服务商的完整返回中选出候选,不截断", () => {
-    // 真实教训:曾写死 .slice(0, 100),把排在后面的 z-ai/* 整个家族砍掉,
-    // 用户根本看不到智谱的模型。所以补一个远超 100 的列表守住这一点。
-    const noise = Array.from({ length: 150 }, (_, i) => `vendor-${i}/model`);
+  it("过滤只按用途,不按厂商 —— 没听过的厂商也要放行", () => {
     const all = [
-      "deepseek-ai/deepseek-v4-pro",
-      ...noise,
-      "moonshotai/kimi-k2.6",
-      "z-ai/glm-5.2",
+      "deepseek-chat",
+      "some-unknown-vendor/brand-new-model",
+      "text-embedding-3-large",
+      "glm-4",
+      "bge-reranker-v2",
     ];
-    expect(selectCoreChatModels(all)).toEqual([
-      "deepseek-ai/deepseek-v4-pro",
-      "moonshotai/kimi-k2.6",
-      "z-ai/glm-5.2",
+    expect(filterChatModels(all)).toEqual([
+      "deepseek-chat",
+      "some-unknown-vendor/brand-new-model",
+      "glm-4",
     ]);
-  });
-
-  it("家族名可读,用于向用户说明收录范围", () => {
-    const labels = coreModelFamilyLabels();
-    expect(labels).toContain("DeepSeek");
-    expect(labels.some((l) => l.includes("GLM"))).toBe(true);
   });
 });
 
