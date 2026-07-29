@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Icon } from "@/components/icons/Icon";
 import { Button } from "@/components/primitives/Button";
+import { IconButton } from "@/components/primitives/IconButton";
 import { Select } from "@/components/primitives/Select";
 import {
   collectFolderAttachments,
@@ -311,59 +312,66 @@ export function ChatPanel({
     }
   }
 
+  // 侧栏沿用设计系统导航项的写法(SidebarNavigation):同样的圆角、间距、
+  // 选中态 bg-brand-tint text-brand。自己另起一套样式正是「拼装感」的来源。
   const sidebar = (
-    <div className="flex h-full flex-col gap-2 p-3">
-      <Button
-        variant="secondary"
-        size="sm"
-        className="w-full justify-start"
-        onClick={() => {
-          setSidebarOpen(false);
-          router.push("/assistant?c=new");
-          router.refresh();
-        }}
-      >
-        <Icon name="plus" size={14} />
-        新对话
-      </Button>
+    <div className="flex h-full flex-col">
+      <div className="px-3 pt-3 pb-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          className="w-full"
+          onClick={() => {
+            setSidebarOpen(false);
+            router.push("/assistant?c=new");
+            router.refresh();
+          }}
+        >
+          <Icon name="plus" size={14} />
+          新对话
+        </Button>
+      </div>
 
-      <p className="text-fg-tertiary font-zh text-label mt-1 px-1">历史对话</p>
+      <p className="text-fg-tertiary text-label px-3 pb-1">历史对话</p>
 
       {conversations.length === 0 ? (
-        <p className="text-fg-tertiary font-zh text-label px-1">
-          还没有对话记录。
-        </p>
+        <p className="text-fg-tertiary text-label px-3">还没有对话记录。</p>
       ) : (
-        <ul className="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1">
-          {conversations.map((c) => (
-            <li key={c.id}>
+        <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-3 pb-3">
+          {conversations.map((c) => {
+            const active = c.id === conversationId;
+            return (
               <button
+                key={c.id}
                 type="button"
+                aria-current={active ? "page" : undefined}
                 onClick={() => {
                   setSidebarOpen(false);
                   router.push(`/assistant?c=${c.id}`);
                 }}
-                className={cn(
-                  "font-zh text-label rounded-control w-full cursor-pointer truncate px-2 py-1.5 text-left transition-colors duration-[var(--duration-hover)] ease-standard",
-                  c.id === conversationId
-                    ? "bg-surface-3 text-fg"
-                    : "text-fg-secondary hover:bg-surface-3",
-                )}
                 title={c.title}
+                className={cn(
+                  "rounded-control flex cursor-pointer items-center gap-2.5 px-3 py-2.25 text-left text-[14px]",
+                  "transition-colors duration-[var(--duration-hover)] ease-standard",
+                  active
+                    ? "bg-brand-tint text-brand"
+                    : "text-fg-secondary hover:bg-surface-2",
+                )}
               >
-                {c.title}
+                <Icon name="assistant" size={15} className="shrink-0" />
+                <span className="min-w-0 truncate">{c.title}</span>
               </button>
-            </li>
-          ))}
-        </ul>
+            );
+          })}
+        </nav>
       )}
     </div>
   );
 
   if (models.length === 0) {
     return (
-      <div className="w-full p-4 md:p-6">
-        <div className="border-border-default bg-surface-2 rounded-card font-zh border p-5">
+      <div className="font-zh w-full p-[18px]">
+        <div className="border-border-default bg-surface-2 rounded-card border p-5">
           <p className="text-fg text-body mb-1 font-medium">还没有可用的模型</p>
           <p className="text-fg-secondary text-caption">
             请先到「模型服务」添加您的 API
@@ -376,131 +384,137 @@ export function ChatPanel({
 
   return (
     // min-h 是兜底:h-full 依赖祖先链上每一层都有确定高度,
-    // 任何一层断掉(例如某个容器只设了 min-height)整块就会塌成 0 —— 表现就是白屏。
-    // 加一道视口下限,即便高度链出问题,内容也一定看得见。
-    <div className="flex h-full min-h-[calc(100dvh-3.5rem)] w-full min-w-0">
-      {/* 左侧:对话列表。所有导航类操作集中在这一侧,不再散落在顶部 */}
-      <aside className="border-border-default bg-surface-1 hidden w-56 shrink-0 border-r md:block">
+    // 任何一层断掉整块就会塌成 0 —— 表现就是白屏。
+    <div className="font-zh flex h-full min-h-[calc(100dvh-3.5rem)] w-full min-w-0">
+      {/* 左侧:历史对话。导航类操作集中在这里 */}
+      <aside className="border-border-default bg-surface-1 hidden w-60 shrink-0 flex-col border-r md:flex">
         {sidebar}
       </aside>
 
-      {/* 窄屏用抽屉,避免挤掉对话本身 */}
+      {/* 窄屏抽屉,避免挤掉对话本身 */}
       {sidebarOpen && (
-        <div className="fixed inset-0 z-40 flex md:hidden">
+        <div className="bg-canvas/60 fixed inset-0 z-100 flex md:hidden">
           <div
-            className="bg-surface-1 border-border-default w-64 max-w-[80vw] border-r"
             role="dialog"
-            aria-label="对话列表"
+            aria-modal
+            aria-label="历史对话"
+            onClick={(e) => e.stopPropagation()}
+            className="border-border-default bg-surface-1 shadow-flyout w-64 max-w-[80vw] border-r"
           >
             {sidebar}
           </div>
           <button
             type="button"
-            aria-label="关闭对话列表"
-            className="flex-1 bg-black/40"
+            aria-label="关闭历史对话"
+            className="flex-1"
             onClick={() => setSidebarOpen(false)}
           />
         </div>
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col px-4 py-4 md:px-6 md:py-5">
-        <header className="mb-3 flex shrink-0 items-center gap-2">
-          <button
-            type="button"
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* 分区之间用 border-divider,与 AIAssistantPanel 一致 */}
+        <div className="border-divider flex shrink-0 items-center gap-3 border-b px-[18px] py-4">
+          <IconButton
+            aria-label="打开历史对话"
             onClick={() => setSidebarOpen(true)}
-            aria-label="打开对话列表"
-            className="text-fg-secondary hover:text-fg md:hidden"
+            size={28}
+            className="md:hidden"
           >
-            <Icon name="menu" size={18} />
-          </button>
-          <h2 className="text-fg text-h3 font-zh font-semibold">AI 助手</h2>
-          <p className="text-fg-tertiary font-zh text-label hidden lg:block">
+            <Icon name="more" size={16} />
+          </IconButton>
+          <span className="text-fg flex items-center gap-2 text-[14px] font-medium">
+            <Icon name="assistant" size={16} className="text-brand" />
+            AI 助手
+          </span>
+          <span className="text-fg-tertiary text-label hidden lg:block">
             回复由你配置的模型真实生成,耗时与 token 用量如实记录
-          </p>
-        </header>
+          </span>
+        </div>
 
         <div
           ref={scrollRef}
-          className="border-border-default bg-surface-2 rounded-card min-h-0 flex-1 overflow-y-auto border px-4 py-4 md:px-6 md:py-5"
+          className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-[18px]"
         >
           {turns.length === 0 ? (
-            <p className="text-fg-tertiary font-zh text-caption">
+            <p className="text-fg-tertiary text-caption">
               输入内容开始对话。回复由您配置的模型真实生成,不是预设内容。
             </p>
           ) : (
-            <div className="mx-auto flex w-full max-w-[900px] flex-col gap-5">
-              {turns.map((turn) => (
-                // 消息按整行铺开、一律左对齐,不用左右气泡 ——
-                // 气泡把内容压在窄栏里,长回复和代码块在大屏上被挤成一条。
-                <div key={turn.id} className="font-zh flex flex-col gap-1.5">
+            turns.map((turn) => (
+              // 用户在右、助手在左 —— 设计系统 AIAssistantPanel 的原生规范
+              <div
+                key={turn.id}
+                className={cn(
+                  "flex w-full flex-col gap-1",
+                  turn.role === "user" ? "items-end" : "items-start",
+                )}
+              >
+                {turn.attachedFiles ? (
                   <span className="text-fg-tertiary text-label">
-                    {turn.role === "user" ? "你" : "助手"}
-                    {turn.attachedFiles
-                      ? ` · 附带 ${turn.attachedFiles} 个文件`
-                      : ""}
+                    附带 {turn.attachedFiles} 个文件
                   </span>
+                ) : null}
 
-                  <div
-                    className={cn(
-                      "rounded-card w-full px-3.5 py-3 text-[14px] leading-[1.75] whitespace-pre-wrap",
-                      turn.role === "user"
-                        ? "bg-brand-tint text-fg"
-                        : "bg-surface-3 border-border-default text-fg border",
+                <div
+                  className={cn(
+                    "rounded-bubble max-w-[88%] px-3 py-2.5 text-[14px] leading-[1.6] whitespace-pre-wrap",
+                    turn.role === "user"
+                      ? "bg-brand-tint text-fg"
+                      : "bg-surface-2 border-border-default text-fg border",
+                  )}
+                >
+                  {turn.content}
+                  {turn.role === "assistant" &&
+                    turn.content === "" &&
+                    !turn.error &&
+                    streaming && (
+                      <span className="text-fg-tertiary">正在生成…</span>
                     )}
-                  >
-                    {turn.content}
-                    {turn.role === "assistant" &&
-                      turn.content === "" &&
-                      !turn.error &&
-                      streaming && (
-                        <span className="text-fg-tertiary">正在生成…</span>
-                      )}
-                  </div>
-
-                  {turn.fallback && (
-                    <p className="text-fg-secondary text-label">
-                      {turn.fallback}
-                    </p>
-                  )}
-
-                  {turn.error && (
-                    <p className="text-error text-label">{turn.error}</p>
-                  )}
-
-                  {/* 回复有内容就给复制入口 —— 长文本手动选中既慢又容易漏 */}
-                  {turn.role === "assistant" && turn.content !== "" && (
-                    <div className="flex items-center gap-3">
-                      <CopyButton text={turn.content} />
-                      {turn.meta && (
-                        <span className="text-fg-tertiary text-label font-mono">
-                          {turn.meta.latencyMs} ms
-                          {turn.meta.inputTokens !== null &&
-                            ` · 输入 ${turn.meta.inputTokens}`}
-                          {turn.meta.outputTokens !== null &&
-                            ` · 输出 ${turn.meta.outputTokens} token`}
-                        </span>
-                      )}
-                    </div>
-                  )}
                 </div>
-              ))}
-            </div>
+
+                {turn.fallback && (
+                  <p className="text-fg-secondary text-label max-w-[88%]">
+                    {turn.fallback}
+                  </p>
+                )}
+
+                {turn.error && (
+                  <p className="text-error text-label max-w-[88%]">
+                    {turn.error}
+                  </p>
+                )}
+
+                {turn.role === "assistant" && turn.content !== "" && (
+                  <div className="flex items-center gap-3">
+                    <CopyButton text={turn.content} />
+                    {turn.meta && (
+                      <span className="text-fg-tertiary text-label font-mono">
+                        {turn.meta.latencyMs} ms
+                        {turn.meta.inputTokens !== null &&
+                          ` · 输入 ${turn.meta.inputTokens}`}
+                        {turn.meta.outputTokens !== null &&
+                          ` · 输出 ${turn.meta.outputTokens} token`}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))
           )}
         </div>
 
         <form
           onSubmit={send}
-          className="mx-auto flex w-full max-w-[900px] shrink-0 flex-col gap-2 pt-2.5"
+          className="border-divider flex shrink-0 flex-col gap-2 border-t p-3.5"
         >
           {attachNote && (
             <div className="border-border-default bg-surface-2 rounded-control flex flex-wrap items-center gap-2 px-3 py-2">
-              <span className="text-fg-secondary font-zh text-label">
-                {attachNote}
-              </span>
-              {/* 如实说明作用范围,免得用户以为文件会一直跟着对话 */}
+              <span className="text-fg-secondary text-label">{attachNote}</span>
               {attachments.length > 0 && (
                 <>
-                  <span className="text-fg-tertiary font-zh text-label">
+                  {/* 如实说明作用范围,免得用户以为文件会一直跟着对话 */}
+                  <span className="text-fg-tertiary text-label">
                     仅对下一条消息生效
                   </span>
                   <button
@@ -509,7 +523,7 @@ export function ChatPanel({
                       setAttachments([]);
                       setAttachNote(null);
                     }}
-                    className="text-fg-tertiary hover:text-fg-secondary font-zh text-label cursor-pointer"
+                    className="text-fg-tertiary hover:text-fg-secondary text-label cursor-pointer"
                   >
                     移除
                   </button>
@@ -531,10 +545,9 @@ export function ChatPanel({
             rows={3}
             placeholder="输入内容,Enter 发送,Shift+Enter 换行"
             aria-label="对话输入"
-            className="bg-surface-2 border-border-default rounded-control text-fg font-zh placeholder:text-fg-tertiary focus:border-border-focus w-full resize-none border px-3.5 py-3 text-[14px] outline-none transition-colors duration-[var(--duration-hover)] ease-standard"
+            className="bg-surface-2 border-border-default rounded-control text-fg placeholder:text-fg-tertiary focus:border-border-focus w-full resize-none border px-3 py-2.25 text-[14px] outline-none transition-colors duration-[var(--duration-hover)] ease-standard"
           />
 
-          {/* 控件统一靠左一排 */}
           <div className="flex flex-wrap items-center gap-2">
             <Select
               value={selected}

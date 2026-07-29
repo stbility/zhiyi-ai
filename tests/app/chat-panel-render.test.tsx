@@ -79,6 +79,33 @@ describe("助手页渲染", () => {
     expect(screen.getByText("发送")).toBeTruthy();
   });
 
+  it("用户消息靠右、助手消息靠左 —— 设计系统 AIAssistantPanel 的原生规范", () => {
+    // 我曾把两者都改成全宽左对齐,破坏了这条规范。这里守住它。
+    const { container } = render(
+      <ChatPanel
+        models={MODELS}
+        conversations={CONVERSATIONS}
+        activeConversationId="c1"
+        initialTurns={TURNS}
+      />,
+    );
+
+    const user = screen.getByText("你好").closest("div.flex.w-full");
+    const assistant = screen
+      .getByText("你好,有什么可以帮你的?")
+      .closest("div.flex.w-full");
+
+    expect(user?.className).toContain("items-end");
+    expect(assistant?.className).toContain("items-start");
+
+    // 气泡样式也要沿用设计系统:rounded-bubble + 用户 brand-tint / 助手带边框
+    expect(container.querySelectorAll(".rounded-bubble").length).toBe(2);
+    expect(screen.getByText("你好").className).toContain("bg-brand-tint");
+    expect(screen.getByText("你好,有什么可以帮你的?").className).toContain(
+      "bg-surface-2",
+    );
+  });
+
   it("没有历史对话时也能渲染", () => {
     render(
       <ChatPanel
