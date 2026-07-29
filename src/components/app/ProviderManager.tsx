@@ -7,6 +7,7 @@ import { Badge } from "@/components/primitives/Badge";
 import { Button } from "@/components/primitives/Button";
 import { Input } from "@/components/primitives/Input";
 import { Select } from "@/components/primitives/Select";
+import { cn } from "@/lib/cn";
 import {
   addProvider,
   deleteModel,
@@ -28,8 +29,10 @@ const PRESET_GROUPS = ["国内", "国际", "聚合", "本地"] as const;
 /** 某个服务商下的一个模型 */
 export interface ModelRow {
   modelId: string;
-  /** 非空表示不可用于对话,值为原因 */
+  /** 非空表示不可用于对话,值为原因。系统不会自动写入 —— 只由用户决定 */
   unavailableReason: string | null;
+  /** 上次调用失败的原因。仅作留痕,不影响该模型是否可选 */
+  lastError: string | null;
 }
 
 export interface ProviderRow {
@@ -122,12 +125,24 @@ function ModelList({
             {usable.map((m) => (
               <li key={m.modelId} className="flex items-start gap-1.5">
                 <Icon
-                  name="check"
+                  name={m.lastError ? "alert" : "check"}
                   size={12}
-                  className="text-success mt-1 shrink-0"
+                  className={cn(
+                    "mt-1 shrink-0",
+                    m.lastError ? "text-warning" : "text-success",
+                  )}
                 />
-                <span className="text-fg-secondary text-label min-w-0 flex-1 font-mono break-all">
-                  {m.modelId}
+                <span className="min-w-0 flex-1">
+                  <span className="text-fg-secondary text-label font-mono break-all">
+                    {m.modelId}
+                  </span>
+                  {/* 上次失败只是留痕,模型仍然可选 —— 说清楚这一点,
+                      否则用户会以为它又被系统禁用了 */}
+                  {m.lastError && (
+                    <span className="text-fg-tertiary text-label block">
+                      上次调用失败(仍可选用):{m.lastError}
+                    </span>
+                  )}
                 </span>
                 {canManage && removeButton(m.modelId)}
               </li>

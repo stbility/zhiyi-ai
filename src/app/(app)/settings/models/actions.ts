@@ -371,19 +371,25 @@ export async function testProvider(
           model_id: id,
           display_name: id.length > 60 ? id.slice(0, 60) : id,
           chat_unavailable_reason: null,
+          // 这次通过了,清掉上次的失败留痕,免得界面一直显示过期的旧报错
+          last_error: null,
         })),
         { onConflict: "provider_id,model_id" },
       );
     }
 
-    // 探测失败的模型仍然保留在列表里,只记下上次失败的原因。
+    // 探测失败的模型仍然保留在列表里、仍然可选,只记下上次失败的原因。
     //
-    // 这条策略反复调整过,最后定在这里,理由是:
-    //   - 自动删除会把用户真正需要的模型悄悄拿走(Kimi 就是这种情况:
-    //     服务商目录里有、代理编程要用,只是这个账号暂时没被授权);
-    //   - 而失败也不该被藏起来,否则用户只会觉得"点了没反应"。
-    // 所以:系统只如实记录,去留由用户自己按删除键决定。
-    // 调用真的失败时,跨厂商降级链会自动换一个模型完成任务,工作流不会中断。
+    // 这里曾经写的是 chat_unavailable_reason —— 那一列的含义是「不可选」,
+    // 于是每点一次「测试连接」,探测失败的模型就被重新变成不可选。
+    // 用户手动恢复过的模型(比如已经能用的 kimi-k2.6)又被打回去,
+    // 看起来就像"系统自己把我的设置改了"。
+    //
+    // 根因是同一条策略我只改了一半:对话路由已经改成「只记 last_error、
+    // 不动可选状态」,测试连接这一路却漏改了。现在两边一致。
+    //
+    // 该模型到底留不留,只由用户按删除键决定(删除会写进 ai_model_exclusions,
+    // 之后重新测试也不会导回来)。调用真失败时由跨厂商降级链兜住,工作流不中断。
     if (rejected.length > 0) {
       await supabase.from("ai_models").upsert(
         rejected.map((r) => ({
@@ -391,7 +397,7 @@ export async function testProvider(
           organization_id: provider.organization_id as string,
           model_id: r.model,
           display_name: r.model.length > 60 ? r.model.slice(0, 60) : r.model,
-          chat_unavailable_reason: r.reason.slice(0, 300),
+          last_error: r.reason.slice(0, 300),
         })),
         { onConflict: "provider_id,model_id" },
       );
