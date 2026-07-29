@@ -375,7 +375,10 @@ export function ChatPanel({
   }
 
   return (
-    <div className="flex h-full w-full min-w-0">
+    // min-h 是兜底:h-full 依赖祖先链上每一层都有确定高度,
+    // 任何一层断掉(例如某个容器只设了 min-height)整块就会塌成 0 —— 表现就是白屏。
+    // 加一道视口下限,即便高度链出问题,内容也一定看得见。
+    <div className="flex h-full min-h-[calc(100dvh-3.5rem)] w-full min-w-0">
       {/* 左侧:对话列表。所有导航类操作集中在这一侧,不再散落在顶部 */}
       <aside className="border-border-default bg-surface-1 hidden w-56 shrink-0 border-r md:block">
         {sidebar}
