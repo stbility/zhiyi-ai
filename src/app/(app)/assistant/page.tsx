@@ -65,13 +65,15 @@ export default async function AssistantPage() {
   const models = await loadModels(org.id);
 
   return (
-    // 对话是这个页面的主体,给它更宽的版面和确定的高度。
-    // 原先 max-w-4xl + 纯 flex-1,在内容少时整块会缩成一小条。
-    <div className="mx-auto flex h-full w-full max-w-5xl flex-col gap-4 px-4 py-5 md:px-8 md:py-8">
-      <header>
-        <h2 className="text-fg text-h2 font-zh font-semibold">AI 助手</h2>
-        <p className="text-fg-secondary font-zh text-caption mt-2">
-          使用您自己配置的模型。每次调用的耗时与 token 用量都会如实记录。
+    // 对话页占满整屏:页面本身不滚动,只有消息区滚动。
+    // 原先是 mx-auto max-w-5xl + 页面整体滚动,两侧留白吃掉大量横向空间,
+    // 长回复还要跟着页面一起滚 —— 屏幕再大也显得局促。
+    <div className="flex h-full w-full flex-col overflow-hidden px-4 py-4 md:px-6 md:py-5">
+      {/* 标题压到一行,把纵向空间让给对话本身 */}
+      <header className="mb-3 flex shrink-0 items-baseline gap-3">
+        <h2 className="text-fg text-h3 font-zh font-semibold">AI 助手</h2>
+        <p className="text-fg-tertiary font-zh text-label hidden sm:block">
+          回复由你配置的模型真实生成,耗时与 token 用量如实记录
         </p>
       </header>
 

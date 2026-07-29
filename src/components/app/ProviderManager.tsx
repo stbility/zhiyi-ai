@@ -23,6 +23,13 @@ import {
 /** 预设的展示分组与顺序 */
 const PRESET_GROUPS = ["国内", "国际", "聚合", "本地"] as const;
 
+/** 某个服务商下的一个模型 */
+export interface ModelRow {
+  modelId: string;
+  /** 非空表示不可用于对话,值为原因 */
+  unavailableReason: string | null;
+}
+
 export interface ProviderRow {
   id: string;
   kind: ProviderKind;
@@ -44,14 +51,76 @@ function TestStatus({ row }: { row: ProviderRow }) {
   return <Badge tone="error">连接失败</Badge>;
 }
 
+/**
+ * 该服务商下的模型清单。
+ *
+ * 不可用的也要列出来并写明原因。此前它们只是从助手页的下拉框里消失,
+ * 用户在服务商控制台明明看得到 Kimi,系统里却无声无息 ——
+ * 那只会让人怀疑是系统把模型弄丢了,根本无从排查。
+ */
+function ModelList({ models }: { models: readonly ModelRow[] }) {
+  const [expanded, setExpanded] = useState(false);
+  if (models.length === 0) return null;
+
+  const usable = models.filter((m) => m.unavailableReason === null);
+  const blocked = models.filter((m) => m.unavailableReason !== null);
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-fg-tertiary text-label flex flex-wrap items-center gap-2">
+        <span>
+          模型 {usable.length} 个可用
+          {blocked.length > 0 ? `,${blocked.length} 个不可用` : ""}
+        </span>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="text-brand hover:text-brand-hover cursor-pointer"
+        >
+          {expanded ? "收起" : "查看明细"}
+        </button>
+      </div>
+
+      {expanded && (
+        <ul className="flex flex-col gap-1">
+          {usable.map((m) => (
+            <li
+              key={m.modelId}
+              className="text-fg-secondary text-label flex items-start gap-1.5 font-mono break-all"
+            >
+              <Icon name="check" size={12} className="text-success mt-0.5 shrink-0" />
+              {m.modelId}
+            </li>
+          ))}
+          {blocked.map((m) => (
+            <li key={m.modelId} className="flex items-start gap-1.5">
+              <Icon name="x" size={12} className="text-error mt-1 shrink-0" />
+              <span className="min-w-0">
+                <span className="text-fg-tertiary text-label font-mono break-all">
+                  {m.modelId}
+                </span>
+                <span className="text-fg-tertiary text-label block">
+                  {m.unavailableReason}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function ProviderManager({
   organizationId,
   providers,
+  modelsByProvider,
   canManage,
   encryptionAvailable,
 }: {
   organizationId: string;
   providers: readonly ProviderRow[];
+  modelsByProvider: Record<string, ModelRow[]>;
   canManage: boolean;
   encryptionAvailable: boolean;
 }) {
@@ -128,6 +197,8 @@ export function ProviderManager({
                 {row.lastTestOk === false && row.lastTestError && (
                   <p className="text-error text-label">{row.lastTestError}</p>
                 )}
+
+                <ModelList models={modelsByProvider[row.id] ?? []} />
 
                 {canManage && (
                   <div className="flex flex-wrap gap-2">

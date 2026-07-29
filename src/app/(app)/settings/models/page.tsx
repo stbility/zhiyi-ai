@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { ProviderManager, type ProviderRow } from "@/components/app/ProviderManager";
+import {
+  ProviderManager,
+  type ModelRow,
+  type ProviderRow,
+} from "@/components/app/ProviderManager";
 import { isEncryptionAvailable } from "@/lib/crypto/secret-box";
 import { getMyOrganizations } from "@/lib/db/queries";
 import type { ProviderKind } from "@/lib/providers/registry";
@@ -38,6 +42,37 @@ async function loadProviders(organizationId: string): Promise<ProviderRow[]> {
   }));
 }
 
+/**
+ * 每个服务商下的模型清单,含被剔除的和原因。
+ *
+ * 被剔除的模型必须能看见。此前它们只是从下拉框里消失,用户在服务商控制台
+ * 明明看得到 Kimi,系统里却无声无息 —— 只能怀疑是系统丢了模型。
+ * 列出来并写清原因,才谈得上排查。
+ */
+async function loadModels(
+  organizationId: string,
+): Promise<Record<string, ModelRow[]>> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return {};
+
+  const { data } = await supabase
+    .from("ai_models")
+    .select("provider_id, model_id, chat_unavailable_reason")
+    .eq("organization_id", organizationId)
+    .order("model_id");
+
+  const byProvider: Record<string, ModelRow[]> = {};
+  for (const row of data ?? []) {
+    const pid = row.provider_id as string;
+    (byProvider[pid] ??= []).push({
+      modelId: row.model_id as string,
+      unavailableReason:
+        (row.chat_unavailable_reason as string | null) ?? null,
+    });
+  }
+  return byProvider;
+}
+
 export default async function ModelSettingsPage() {
   const organizations = await getMyOrganizations();
   const org = organizations[0];
@@ -59,7 +94,10 @@ export default async function ModelSettingsPage() {
     );
   }
 
-  const providers = await loadProviders(org.id);
+  const [providers, modelsByProvider] = await Promise.all([
+    loadProviders(org.id),
+    loadModels(org.id),
+  ]);
   const canManage = org.role === "owner" || org.role === "admin";
 
   return (
@@ -74,6 +112,7 @@ export default async function ModelSettingsPage() {
       <ProviderManager
         organizationId={org.id}
         providers={providers}
+        modelsByProvider={modelsByProvider}
         canManage={canManage}
         encryptionAvailable={isEncryptionAvailable()}
       />

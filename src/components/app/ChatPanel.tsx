@@ -234,42 +234,31 @@ export function ChatPanel({ models }: { models: readonly ModelOption[] }) {
   }
 
   return (
-    <div className="flex h-full flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-fg-secondary font-zh text-label">模型</span>
-        <Select
-          value={selected}
-          onChange={setSelected}
-          options={models.map((m) => ({
-            value: m.value,
-            label: `${m.providerName} · ${m.modelId}`,
-          }))}
-          className="min-w-0 flex-1 sm:flex-none"
-        />
-      </div>
-
+    // 满屏三段式:消息区独占剩余高度并自行滚动,输入区固定在底部。
+    // 所有控件统一在输入区左下角一排 —— 不再散落在顶部和右侧。
+    <div className="flex h-full min-h-0 flex-col gap-2.5">
       <div
         ref={scrollRef}
-        // 给出高度下限:内容少时也不该缩成一条窄缝
-        className="border-border-default bg-surface-2 rounded-card min-h-[58vh] flex-1 overflow-y-auto border p-4 md:p-5"
+        className="border-border-default bg-surface-2 rounded-card min-h-0 flex-1 overflow-y-auto border px-4 py-4 md:px-6 md:py-5"
       >
         {turns.length === 0 ? (
           <p className="text-fg-tertiary font-zh text-caption">
             输入内容开始对话。回复由您配置的模型真实生成,不是预设内容。
           </p>
         ) : (
-          <div className="flex flex-col gap-3.5">
+          <div className="mx-auto flex w-full max-w-[900px] flex-col gap-5">
             {turns.map((turn) => (
-              <div
-                key={turn.id}
-                className={cn(
-                  "font-zh flex flex-col gap-1",
-                  turn.role === "user" ? "items-end" : "items-start",
-                )}
-              >
+              // 消息按整行铺开、一律左对齐,不再用左右气泡。
+              // 气泡把内容压在 92% 宽度里,长回复和代码块在大屏上被挤成窄条 ——
+              // 这正是「全屏了内容还是很小」的来源。
+              <div key={turn.id} className="font-zh flex flex-col gap-1.5">
+                <span className="text-fg-tertiary text-label">
+                  {turn.role === "user" ? "你" : "助手"}
+                </span>
+
                 <div
                   className={cn(
-                    "rounded-bubble max-w-[92%] px-3 py-2.5 text-[14px] leading-[1.7] whitespace-pre-wrap",
+                    "rounded-card w-full px-3.5 py-3 text-[14px] leading-[1.75] whitespace-pre-wrap",
                     turn.role === "user"
                       ? "bg-brand-tint text-fg"
                       : "bg-surface-3 border-border-default text-fg border",
@@ -285,15 +274,11 @@ export function ChatPanel({ models }: { models: readonly ModelOption[] }) {
                 </div>
 
                 {turn.fallback && (
-                  <p className="text-fg-secondary text-label max-w-[92%]">
-                    {turn.fallback}
-                  </p>
+                  <p className="text-fg-secondary text-label">{turn.fallback}</p>
                 )}
 
                 {turn.error && (
-                  <p className="text-error text-label max-w-[92%]">
-                    {turn.error}
-                  </p>
+                  <p className="text-error text-label">{turn.error}</p>
                 )}
 
                 {/* 回复有内容就给复制入口 —— 长文本手动选中既慢又容易漏 */}
@@ -317,7 +302,10 @@ export function ChatPanel({ models }: { models: readonly ModelOption[] }) {
         )}
       </div>
 
-      <form onSubmit={send} className="flex items-end gap-2">
+      <form
+        onSubmit={send}
+        className="mx-auto flex w-full max-w-[900px] shrink-0 flex-col gap-2"
+      >
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -331,12 +319,25 @@ export function ChatPanel({ models }: { models: readonly ModelOption[] }) {
           rows={3}
           placeholder="输入内容,Enter 发送,Shift+Enter 换行"
           aria-label="对话输入"
-          className="bg-surface-2 border-border-default rounded-control text-fg font-zh placeholder:text-fg-tertiary focus:border-border-focus min-w-0 flex-1 resize-none border px-3 py-2.5 text-[14px] outline-none transition-colors duration-[var(--duration-hover)] ease-standard"
+          className="bg-surface-2 border-border-default rounded-control text-fg font-zh placeholder:text-fg-tertiary focus:border-border-focus w-full resize-none border px-3.5 py-3 text-[14px] outline-none transition-colors duration-[var(--duration-hover)] ease-standard"
         />
-        <Button type="submit" loading={streaming} className="shrink-0">
-          <Icon name="send" size={16} />
-          发送
-        </Button>
+
+        {/* 控件统一靠左一排:模型选择在前,发送在后 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={selected}
+            onChange={setSelected}
+            options={models.map((m) => ({
+              value: m.value,
+              label: `${m.providerName} · ${m.modelId}`,
+            }))}
+            className="min-w-0 max-w-full"
+          />
+          <Button type="submit" loading={streaming} className="shrink-0">
+            <Icon name="send" size={16} />
+            发送
+          </Button>
+        </div>
       </form>
     </div>
   );
