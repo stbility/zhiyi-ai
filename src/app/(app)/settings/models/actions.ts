@@ -20,7 +20,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
  * 候选是并发探测的,所以这也约等于整个测试流程的耗时上限。取 25 秒是为了
  * 给排队中的模型一点机会,同时离 Vercel 的函数时限(300 秒)留足余量。
  */
-const PROBE_TIMEOUT_MS = 25_000;
+const PROBE_TIMEOUT_MS = 10_000;
 
 /**
  * 同时探测多少个模型。
@@ -28,7 +28,16 @@ const PROBE_TIMEOUT_MS = 25_000;
  * 取小值是为了不触发服务商限流 —— 一次打出几十个请求,能用的模型也会
  * 被限流判成不可用,等于用测试手段制造假故障。
  */
-const PROBE_CONCURRENCY = 4;
+const PROBE_CONCURRENCY = 8;
+
+/**
+ * 探测的总时间预算。
+ *
+ * 探测只是「提前告知」,不该拖垮整个测试连接。英伟达有上百个模型,
+ * 全部探完必然撞上 Vercel 的 300 秒函数上限 —— 那会让整个动作被强杀,
+ * 结果一个模型都没导入。超出预算就停下,并如实说明还有多少没探。
+ */
+const PROBE_BUDGET_MS = 120_000;
 
 const addSchema = z.object({
   organizationId: z.string().uuid("组织标识无效"),
@@ -317,19 +326,54 @@ export async function testProvider(
     })
     .eq("id", parsed.data.id);
 
-  // 逐个真实调用候选模型,只有确实回了内容的才入库。
+  // 先入库,再探测。顺序很重要。
   //
-  // /models 只说明「这个账号能看到该模型」,不说明它能对话。所以不真调一次
-  // 就入库,等于把没验证过的东西摆给用户选 —— 那就是伪模型。宁可列表短,
-  // 也不能有一个点开是坏的。
-  /** 真调通过,确认可用 */
+  // 之前是「全部探完才写库」。DeepSeek 只有 2 个模型所以看起来正常,
+  // 英伟达有上百个:并发 4、每个超时 25 秒、临时失败还重试 ——
+  // 整个 Server Action 撞上 Vercel 的 300 秒函数上限被强杀,
+  // 一条都没写进去。界面上就是「连接正常,模型 0 个可用」。
+  //
+  // 现在:候选先全部入库(用户立刻就能用),探测只用于**报告状态**,
+  // 而且带总时间预算,探不完就如实说明还剩多少没探。
+  // 模型能不能用,最终由真实调用决定 —— 探测本来就只是提前告知,
+  // 不该成为「能不能入库」的前置条件。
+  let imported = 0;
   const verified: string[] = [];
-  /** 此刻排队/限流,但模型本身没问题 —— 保留可选,只记一句现状 */
   const busy: { model: string; reason: string }[] = [];
-  /** 确实用不了(下线、无对话端点),从列表剔除 */
   const rejected: { model: string; reason: string }[] = [];
+  let notProbed = 0;
 
-  if (ok && candidates.length > 0) {
+  // 已经有模型的服务商,测试连接**只验证不改动**。
+  //
+  // 用户整理过的列表(比如英伟达上百个模型里只留 4 个常用的)是他的决定,
+  // 不该被一次「测试连接」冲掉。此前每点一次就全量重导,用户的整理白做。
+  //
+  // 只有列表为空时才自动导入 —— 那是「首次接入」,此时导入才是帮忙。
+  // 想重新拉取完整列表,删掉该服务商重新添加即可,那是明确的意图表达。
+  const { count: existingCount } = await supabase
+    .from("ai_models")
+    .select("model_id", { count: "exact", head: true })
+    .eq("provider_id", parsed.data.id);
+  const alreadyCurated = (existingCount ?? 0) > 0;
+
+  if (ok && candidates.length > 0 && !alreadyCurated) {
+    const { error: upsertError } = await supabase.from("ai_models").upsert(
+      candidates.map((id) => ({
+        provider_id: parsed.data.id,
+        organization_id: provider.organization_id as string,
+        model_id: id,
+        display_name: id.length > 60 ? id.slice(0, 60) : id,
+        chat_unavailable_reason: null,
+      })),
+      { onConflict: "provider_id,model_id" },
+    );
+    if (upsertError) {
+      return { error: `导入模型失败:${upsertError.message}` };
+    }
+    imported = candidates.length;
+
+    // 探测预算。留足余量给上面的写库和下面的收尾,绝不让平台来强杀。
+    const deadline = Date.now() + PROBE_BUDGET_MS;
     const { probeChatModel } = await import("@/lib/ai/gateway");
     const credentials = {
       kind: provider.kind as ProviderKind,
@@ -337,87 +381,29 @@ export async function testProvider(
       apiKeyCipher: provider.api_key_cipher as string,
     };
 
-    // 分批并发。
-    //
-    // 串行太慢(十来个模型能跑掉几分钟,撞函数时限),但全量并发同样不行 ——
-    // 一次打出几十个请求会触发服务商限流,好模型也会被判成不可用,
-    // 那就是用测试手段制造假故障。限制并发数是两头都要顾。
-    //
-    // 也绝不截断候选列表:上一版写死 .slice(0, 100) 把智谱整个家族砍没了。
-    const results: Awaited<ReturnType<typeof probeChatModel>>[] = [];
-    for (let i = 0; i < candidates.length; i += PROBE_CONCURRENCY) {
+    // 分批并发:串行太慢,全量并发会触发限流把好模型判成坏的。
+    let i = 0;
+    for (; i < candidates.length; i += PROBE_CONCURRENCY) {
+      if (Date.now() > deadline) break;
       const batch = candidates.slice(i, i + PROBE_CONCURRENCY);
-      results.push(
-        ...(await Promise.all(
-          batch.map((model) =>
-            probeChatModel({ credentials, model, timeoutMs: PROBE_TIMEOUT_MS }),
-          ),
-        )),
+      const results = await Promise.all(
+        batch.map((model) =>
+          probeChatModel({
+            credentials,
+            model,
+            timeoutMs: PROBE_TIMEOUT_MS,
+            attempts: 1,
+          }),
+        ),
       );
+      for (const r of results) {
+        if (r.ok) verified.push(r.model);
+        else if (r.transient)
+          busy.push({ model: r.model, reason: r.reason ?? "暂时不可用" });
+        else rejected.push({ model: r.model, reason: r.reason ?? "调用失败" });
+      }
     }
-
-    // 三分,而不是二分。
-    //
-    // 真实教训:deepseek-v4-flash 报「排队已满」、deepseek-v4-pro 探测超时,
-    // 这两个都是容量问题,模型本身好好的。当时按「失败即剔除」处理,
-    // 结果用户从此在列表里再也看不到 DeepSeek —— 因为一次堵车就把路拆了。
-    for (const r of results) {
-      if (r.ok) verified.push(r.model);
-      else if (r.transient)
-        busy.push({ model: r.model, reason: r.reason ?? "暂时不可用" });
-      else rejected.push({ model: r.model, reason: r.reason ?? "调用失败" });
-    }
-
-    // 通过的、以及只是排队的,都留在可选列表里(chat_unavailable_reason 为空)。
-    // 排队的模型此刻调用可能失败,但对话与工作流都有自动降级,不会因此中断。
-    const selectable = [...verified, ...busy.map((b) => b.model)];
-    if (selectable.length > 0) {
-      await supabase.from("ai_models").upsert(
-        selectable.map((id) => ({
-          provider_id: parsed.data.id,
-          organization_id: provider.organization_id as string,
-          model_id: id,
-          display_name: id.length > 60 ? id.slice(0, 60) : id,
-          chat_unavailable_reason: null,
-          // 这次通过了,清掉上次的失败留痕,免得界面一直显示过期的旧报错
-          last_error: null,
-        })),
-        { onConflict: "provider_id,model_id" },
-      );
-    }
-
-    // 探测失败的模型仍然保留在列表里、仍然可选,只记下上次失败的原因。
-    //
-    // 这里曾经写的是 chat_unavailable_reason —— 那一列的含义是「不可选」,
-    // 于是每点一次「测试连接」,探测失败的模型就被重新变成不可选。
-    // 用户手动恢复过的模型(比如已经能用的 kimi-k2.6)又被打回去,
-    // 看起来就像"系统自己把我的设置改了"。
-    //
-    // 根因是同一条策略我只改了一半:对话路由已经改成「只记 last_error、
-    // 不动可选状态」,测试连接这一路却漏改了。现在两边一致。
-    //
-    // 该模型到底留不留,只由用户按删除键决定(删除会写进 ai_model_exclusions,
-    // 之后重新测试也不会导回来)。调用真失败时由跨厂商降级链兜住,工作流不中断。
-    if (rejected.length > 0) {
-      // 只入库、不留失败痕迹。
-      //
-      // 探测是一次合成的一句话调用,它的失败**不是模型的固有属性**。
-      // 真实案例:用户实测 moonshotai/kimi-k2.6 可用,而我们的探测报 404,
-      // 于是界面上长期挂着一条与事实相反的「上次调用失败」——
-      // 这是拿我们的测试结果去否定用户的实际经验。
-      //
-      // 本次探测的结论只写在返回文案里(一次性、带上下文),
-      // 真正会落库的失败只来自真实对话(见 api/chat),那才是事实。
-      await supabase.from("ai_models").upsert(
-        rejected.map((r) => ({
-          provider_id: parsed.data.id,
-          organization_id: provider.organization_id as string,
-          model_id: r.model,
-          display_name: r.model.length > 60 ? r.model.slice(0, 60) : r.model,
-        })),
-        { onConflict: "provider_id,model_id", ignoreDuplicates: true },
-      );
-    }
+    notProbed = Math.max(0, candidates.length - i);
   }
 
   revalidatePath("/settings/models");
@@ -431,24 +417,36 @@ export async function testProvider(
     };
   }
 
+  if (alreadyCurated) {
+    return {
+      ok:
+        `连接成功,密钥可用。服务商当前提供 ${allModels.length} 个模型,` +
+        `其中 ${candidates.length} 个可用于对话。\n` +
+        `你的模型列表已保留,未做改动 —— 测试连接只验证密钥,不会覆盖你整理好的选择。\n` +
+        `如需重新拉取完整列表,删除该服务商后重新添加即可。`,
+    };
+  }
+
   const parts = [
-    `连接成功。服务商共返回 ${allModels.length} 个模型,其中 ${candidates.length} 个用途为对话,已逐个真实调用验证。`,
-    verified.length > 0
-      ? `✅ ${verified.length} 个确认可用:${verified.join("、")}`
-      : "⚠️ 没有一个当场通过验证",
+    `连接成功。服务商共返回 ${allModels.length} 个模型,已导入 ${imported} 个可用于对话的,现在就能在助手页选用。`,
   ];
+  if (verified.length > 0) {
+    parts.push(`✅ 抽样验证 ${verified.length} 个可正常对话`);
+  }
   if (busy.length > 0) {
-    parts.push(
-      `⏳ ${busy.length} 个此刻排队中,已保留在可选列表(调用时会自动降级到可用模型):${busy
-        .map((b) => `${b.model} — ${b.reason}`)
-        .join(";")}`,
-    );
+    parts.push(`⏳ ${busy.length} 个此刻排队或超时,仍可选用(调用时会自动降级)`);
   }
   if (rejected.length > 0) {
     parts.push(
-      `❌ ${rejected.length} 个确实不可用,已从列表移除:${rejected
-        .map((r) => `${r.model} — ${r.reason}`)
-        .join(";")}`,
+      `⚠️ ${rejected.length} 个本次调用未通过,仍保留在列表中,可自行删除:${rejected
+        .slice(0, 5)
+        .map((r) => r.model)
+        .join("、")}${rejected.length > 5 ? " 等" : ""}`,
+    );
+  }
+  if (notProbed > 0) {
+    parts.push(
+      `另有 ${notProbed} 个未在本次验证时限内测到 —— 它们同样已导入可用,能不能用由第一次真实调用决定。`,
     );
   }
 

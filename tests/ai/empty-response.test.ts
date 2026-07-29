@@ -95,3 +95,104 @@ describe("空回复的原因解释", () => {
     }
   });
 });
+
+/**
+ * 推理模型只吐思考过程时,不该报「没有内容」。
+ *
+ * 英伟达官方示例里有 extra_body={"chat_template_kwargs":{"thinking":False}},
+ * 那是**关闭**推理模式的开关。不传它时,deepseek-v4-pro 这类模型可能整轮
+ * 只产出 reasoning_content 而 content 始终为空 —— 此前我们只取 content,
+ * 于是把它判成「返回 200 却没有内容」,用户看到一个空气泡,
+ * 而模型其实是有输出的,只是放在了另一个字段里。
+ *
+ * 字段名 reasoning_content 是 DeepSeek、英伟达等多家共用的约定,
+ * 所以按字段判断,不按服务商判断。
+ */
+describe("只有思考过程时的处理", () => {
+  const ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
+
+  async function loadWithCrypto() {
+    vi.resetModules();
+    vi.doMock("server-only", () => ({}));
+    process.env["ENCRYPTION_KEY"] = ENCRYPTION_KEY;
+    const { encryptSecret } = await import("@/lib/crypto/secret-box");
+    const gateway = await import("@/lib/ai/gateway");
+    return { gateway, cipher: encryptSecret("test-key") };
+  }
+
+  function sse(events: readonly string[]): Response {
+    const body =
+      events.map((e) => `data: ${e}\n\n`).join("") + "data: [DONE]\n\n";
+    return new Response(body, { status: 200 });
+  }
+
+  it("content 为空但有 reasoning_content 时,把思考过程交出来并标明", async () => {
+    const { gateway, cipher } = await loadWithCrypto();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        sse([
+          JSON.stringify({
+            choices: [{ delta: { reasoning_content: "先分析需求…" } }],
+          }),
+          JSON.stringify({
+            choices: [{ delta: { reasoning_content: "再考虑边界。" } }],
+          }),
+        ]),
+      ),
+    );
+
+    const { stream } = await gateway.streamChat({
+      credentials: {
+        kind: "openai_compatible",
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+        apiKeyCipher: cipher,
+      },
+      model: "deepseek-ai/deepseek-v4-pro",
+      messages: [{ role: "user", content: "你好" }],
+      signal: new AbortController().signal,
+    });
+
+    let text = "";
+    for await (const d of stream) text += d;
+
+    expect(text).toContain("先分析需求");
+    expect(text).toContain("再考虑边界");
+    // 必须说明这是思考过程,不能冒充正式回答
+    expect(text).toContain("思考过程");
+    vi.unstubAllGlobals();
+  });
+
+  it("有正文时不掺入思考过程 —— 思考不该混进给用户看的回答", async () => {
+    const { gateway, cipher } = await loadWithCrypto();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        sse([
+          JSON.stringify({
+            choices: [{ delta: { reasoning_content: "内部推演…" } }],
+          }),
+          JSON.stringify({ choices: [{ delta: { content: "答案是 42。" } }] }),
+        ]),
+      ),
+    );
+
+    const { stream } = await gateway.streamChat({
+      credentials: {
+        kind: "openai_compatible",
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+        apiKeyCipher: cipher,
+      },
+      model: "deepseek-ai/deepseek-v4-pro",
+      messages: [{ role: "user", content: "你好" }],
+      signal: new AbortController().signal,
+    });
+
+    let text = "";
+    for await (const d of stream) text += d;
+
+    expect(text).toBe("答案是 42。");
+    expect(text).not.toContain("内部推演");
+    vi.unstubAllGlobals();
+  });
+});

@@ -219,6 +219,10 @@ async function callOpenAICompatible(
 
   return (async function* () {
     const keys = new Set<string>();
+    /** 本轮是否产出过正文 */
+    let emittedContent = false;
+    /** 思考过程。只有在完全没有正文时才交给用户,并标明它是什么 */
+    let reasoningBuffer = "";
 
     for await (const line of readSseLines(body)) {
       if (!line.startsWith("data:")) continue;
@@ -272,11 +276,32 @@ async function callOpenAICompatible(
         for (const k of Object.keys(delta)) keys.add(k);
         diagnostics.seenDeltaKeys = [...keys];
 
-        // 推理类模型把思考过程放在 reasoning_content,最终答案仍在 content。
-        // 只产出 content —— 思考过程不应混进给用户看的回答里。
+        // 推理类模型把思考过程放在 reasoning_content,最终答案在 content。
+        // 正常情况下只产出 content —— 思考过程不该混进给用户看的回答里。
         const text = delta["content"];
-        if (typeof text === "string" && text !== "") yield text;
+        if (typeof text === "string" && text !== "") {
+          emittedContent = true;
+          yield text;
+        }
+
+        // 但也要把思考过程留着。有些推理模型(英伟达上的 deepseek-v4-pro
+        // 这类)在未关闭 thinking 时,整轮可能只吐 reasoning_content 而
+        // content 始终为空 —— 此前这会被判成「返回 200 却没有内容」,
+        // 用户看到一个空气泡,而模型其实是有输出的,只是放在了另一个字段。
+        //
+        // 字段名 reasoning_content 是 DeepSeek 与英伟达等多家共用的约定,
+        // 这里按字段判断,不按服务商判断。
+        const reasoning = delta["reasoning_content"];
+        if (typeof reasoning === "string" && reasoning !== "") {
+          reasoningBuffer += reasoning;
+        }
       }
+    }
+
+    // 整轮下来一个字的正文都没有,但有思考过程 —— 把它交出来,并说明这是什么。
+    // 给出模型真实产生的内容,比报一句「没有内容」有用得多。
+    if (!emittedContent && reasoningBuffer !== "") {
+      yield `(以下为模型的思考过程 —— 本轮没有产出正式回答)\n\n${reasoningBuffer}`;
     }
   })();
 }
