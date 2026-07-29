@@ -26,6 +26,8 @@ interface Turn {
     latencyMs: number;
   };
   error?: string;
+  /** 主模型排队时自动换了模型的说明。必须显示 —— 悄悄换等于伪造来源 */
+  fallback?: string;
 }
 
 /**
@@ -145,7 +147,7 @@ export function ChatPanel({ models }: { models: readonly ModelOption[] }) {
           // 单条事件解析失败不能炸掉整个流 —— 之前一处 JSON.parse 抛错就会被
           // 外层 catch 接住,统一报成「网络中断」,把真实原因彻底盖住。
           let payload:
-            | { conversationId: string }
+            | { conversationId: string; model?: string; fallback?: string }
             | { text: string }
             | { inputTokens: number | null; outputTokens: number | null; latencyMs: number }
             | { message: string };
@@ -157,6 +159,7 @@ export function ChatPanel({ models }: { models: readonly ModelOption[] }) {
 
           if (event === "meta" && "conversationId" in payload) {
             setConversationId(payload.conversationId);
+            if (payload.fallback) patchAssistant({ fallback: payload.fallback });
           } else if (event === "delta" && "text" in payload) {
             text += payload.text;
             patchAssistant({ content: text });
@@ -239,6 +242,12 @@ export function ChatPanel({ models }: { models: readonly ModelOption[] }) {
                       <span className="text-fg-tertiary">正在生成…</span>
                     )}
                 </div>
+
+                {turn.fallback && (
+                  <p className="text-fg-secondary text-label max-w-[88%]">
+                    {turn.fallback}
+                  </p>
+                )}
 
                 {turn.error && (
                   <p className="text-error text-label max-w-[88%]">

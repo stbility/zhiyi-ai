@@ -114,8 +114,33 @@ export function indicatesModelUnusable(
   status: number | undefined,
   message: string,
 ): boolean {
+  if (isTransientFailure(status, message)) return false;
   if (status === 404) return true;
   return /does not (exist|support)|not supported|unsupported.*(model|endpoint)|no such model/i.test(
+    message,
+  );
+}
+
+/**
+ * 这次失败是不是「等一会儿就好」的临时故障?
+ *
+ * 区分临时与永久是整个可用性判定的关键。真实教训:探测时
+ * deepseek-v4-flash 报「排队已满」、deepseek-v4-pro 探测超时,
+ * 这两个都是容量问题,过一阵就恢复 —— 但当时的代码一失败就把模型永久标记为
+ * 不可用,等于因为一次堵车就把路给拆了,用户再也选不到 DeepSeek。
+ *
+ * 判错方向的代价不对称:把临时当永久会误删好模型且不可自愈;
+ * 把永久当临时只是多重试几次。所以拿不准时一律算临时。
+ */
+export function isTransientFailure(
+  status: number | undefined,
+  message: string,
+): boolean {
+  // 限流、超时、网关错误、服务不可用 —— 全是容量或链路问题
+  if (status === 408 || status === 425 || status === 429) return true;
+  if (status !== undefined && status >= 500) return true;
+
+  return /资源|排队|限流|超时|稍后|重试|容量|繁忙|resource ?exhausted|rate.?limit|too many requests|timed? ?out|timeout|overload|capacity|unavailable|try again|temporarily|queue/i.test(
     message,
   );
 }

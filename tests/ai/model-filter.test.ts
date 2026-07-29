@@ -6,6 +6,7 @@ import {
   indicatesModelUnusable,
   isCoreModel,
   isLikelyChatModel,
+  isTransientFailure,
   selectCoreChatModels,
 } from "@/lib/providers/model-filter";
 
@@ -153,6 +154,61 @@ describe("核心模型家族筛选", () => {
     const labels = coreModelFamilyLabels();
     expect(labels).toContain("DeepSeek");
     expect(labels.some((l) => l.includes("GLM"))).toBe(true);
+  });
+});
+
+describe("临时故障与永久故障的区分", () => {
+  /**
+   * 这是整个可用性判定的分水岭,而且我在生产上判错过。
+   *
+   * 真实数据:deepseek-v4-flash 探测时报「排队已满」、deepseek-v4-pro 探测
+   * 25 秒超时。这两个都是容量问题,模型本身好好的 —— 但当时按「失败即剔除」
+   * 处理,用户从此在列表里再也看不到 DeepSeek。因为一次堵车就把路拆了。
+   *
+   * 判错方向的代价不对称:临时当永久会误删好模型且不可自愈;
+   * 永久当临时只是多重试几次。所以拿不准时一律算临时。
+   */
+  it("排队、限流、超时都是临时的", () => {
+    for (const [status, msg] of [
+      [undefined, "该模型当前排队已满,服务商暂时无法接收新请求。请换一个模型,或稍后再试。"],
+      [undefined, "探测超过 25 秒未返回,通常是该模型正在排队"],
+      [undefined, "ResourceExhausted: Worker local total request limit reached (3228/48)"],
+      [429, "rate limit exceeded"],
+      [429, "Too Many Requests"],
+      [408, "request timeout"],
+      [500, "internal server error"],
+      [502, "bad gateway"],
+      [503, "service unavailable"],
+      [504, "gateway timeout"],
+    ] as const) {
+      expect(isTransientFailure(status, msg), msg).toBe(true);
+    }
+  });
+
+  it("模型下线、密钥错误不是临时的 —— 等多久都不会好", () => {
+    for (const [status, msg] of [
+      [404, "接口或模型不存在(HTTP 404),请检查接口地址与模型名称"],
+      [401, "密钥被拒绝(HTTP 401)"],
+      [403, "密钥被拒绝(HTTP 403)"],
+      [400, "The model `foo` does not exist"],
+    ] as const) {
+      expect(isTransientFailure(status, msg), msg).toBe(false);
+    }
+  });
+
+  it("临时故障绝不会让模型被永久剔除", () => {
+    // 这一条守的正是我犯过的错:两个 DeepSeek 因排队被永久标记不可用
+    expect(
+      indicatesModelUnusable(
+        undefined,
+        "该模型当前排队已满,服务商暂时无法接收新请求。",
+      ),
+    ).toBe(false);
+    expect(
+      indicatesModelUnusable(undefined, "探测超过 25 秒未返回,通常是该模型正在排队"),
+    ).toBe(false);
+    // 即便状态码是 404,只要原因写明是排队,也不能剔除
+    expect(indicatesModelUnusable(404, "服务暂时不可用,请稍后重试")).toBe(false);
   });
 });
 

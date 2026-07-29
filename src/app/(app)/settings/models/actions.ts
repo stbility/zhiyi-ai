@@ -303,7 +303,11 @@ export async function testProvider(
   // /models 只说明「这个账号能看到该模型」,不说明它能对话。所以不真调一次
   // 就入库,等于把没验证过的东西摆给用户选 —— 那就是伪模型。宁可列表短,
   // 也不能有一个点开是坏的。
+  /** 真调通过,确认可用 */
   const verified: string[] = [];
+  /** 此刻排队/限流,但模型本身没问题 —— 保留可选,只记一句现状 */
+  const busy: { model: string; reason: string }[] = [];
+  /** 确实用不了(下线、无对话端点),从列表剔除 */
   const rejected: { model: string; reason: string }[] = [];
 
   if (ok && candidates.length > 0) {
@@ -333,14 +337,24 @@ export async function testProvider(
       );
     }
 
+    // 三分,而不是二分。
+    //
+    // 真实教训:deepseek-v4-flash 报「排队已满」、deepseek-v4-pro 探测超时,
+    // 这两个都是容量问题,模型本身好好的。当时按「失败即剔除」处理,
+    // 结果用户从此在列表里再也看不到 DeepSeek —— 因为一次堵车就把路拆了。
     for (const r of results) {
       if (r.ok) verified.push(r.model);
+      else if (r.transient)
+        busy.push({ model: r.model, reason: r.reason ?? "暂时不可用" });
       else rejected.push({ model: r.model, reason: r.reason ?? "调用失败" });
     }
 
-    if (verified.length > 0) {
+    // 通过的、以及只是排队的,都留在可选列表里(chat_unavailable_reason 为空)。
+    // 排队的模型此刻调用可能失败,但对话与工作流都有自动降级,不会因此中断。
+    const selectable = [...verified, ...busy.map((b) => b.model)];
+    if (selectable.length > 0) {
       await supabase.from("ai_models").upsert(
-        verified.map((id) => ({
+        selectable.map((id) => ({
           provider_id: parsed.data.id,
           organization_id: provider.organization_id as string,
           model_id: id,
@@ -351,7 +365,7 @@ export async function testProvider(
       );
     }
 
-    // 探测失败的也要落库并标记原因,而不是悄悄丢掉 —— 用户有权知道
+    // 确实用不了的也要落库并标记原因,而不是悄悄丢掉 —— 用户有权知道
     // 「为什么我在英伟达控制台看得到这个模型,这里却没有」。
     if (rejected.length > 0) {
       await supabase.from("ai_models").upsert(
@@ -383,15 +397,26 @@ export async function testProvider(
     };
   }
 
-  const head = `连接成功。从服务商的 ${allModels.length} 个模型中筛出 ${candidates.length} 个核心家族(${families})候选,逐个真实调用验证:`;
-  const okPart =
+  const parts = [
+    `连接成功。从服务商的 ${allModels.length} 个模型中筛出 ${candidates.length} 个核心家族(${families})候选,逐个真实调用验证。`,
     verified.length > 0
-      ? `${verified.length} 个确认可用(${verified.join("、")})`
-      : "没有一个通过验证";
-  const badPart =
-    rejected.length > 0
-      ? `;${rejected.length} 个未通过:${rejected.map((r) => `${r.model} — ${r.reason}`).join(";")}`
-      : "";
+      ? `✅ ${verified.length} 个确认可用:${verified.join("、")}`
+      : "⚠️ 没有一个当场通过验证",
+  ];
+  if (busy.length > 0) {
+    parts.push(
+      `⏳ ${busy.length} 个此刻排队中,已保留在可选列表(调用时会自动降级到可用模型):${busy
+        .map((b) => `${b.model} — ${b.reason}`)
+        .join(";")}`,
+    );
+  }
+  if (rejected.length > 0) {
+    parts.push(
+      `❌ ${rejected.length} 个确实不可用,已从列表移除:${rejected
+        .map((r) => `${r.model} — ${r.reason}`)
+        .join(";")}`,
+    );
+  }
 
-  return { ok: `${head}${okPart}${badPart}。` };
+  return { ok: parts.join("\n") };
 }

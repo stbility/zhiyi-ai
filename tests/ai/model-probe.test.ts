@@ -134,10 +134,128 @@ describe("模型可用性探测", () => {
       },
       model: "deepseek-ai/deepseek-v4-pro",
       timeoutMs: 150,
+      attempts: 1,
     });
 
     expect(r.ok).toBe(false);
     expect(r.reason).toContain("排队");
+    // 排队是容量问题,模型本身没坏 —— 判成临时才不会被永久剔除
+    expect(r.transient).toBe(true);
+  });
+
+  it("临时故障会重试 —— 一次堵车不该决定一条路的存废", async () => {
+    const { gateway, cipher } = await load();
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(() => {
+        calls += 1;
+        // 前两次排队,第三次通了。真实的排队就是这个样子。
+        return Promise.resolve(
+          calls < 3
+            ? new Response(JSON.stringify({ error: { message: "rate limit exceeded" } }), {
+                status: 429,
+              })
+            : sse([delta("你好")]),
+        );
+      }),
+    );
+
+    const r = await gateway.probeChatModel({
+      credentials: {
+        kind: "openai_compatible",
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+        apiKeyCipher: cipher,
+      },
+      model: "deepseek-ai/deepseek-v4-flash",
+      timeoutMs: 5_000,
+      attempts: 3,
+      backoffMs: 1,
+    });
+
+    expect(r.ok).toBe(true);
+    expect(calls).toBe(3);
+  });
+
+  it("永久故障不重试 —— 模型下线了,再试一百次还是下线", async () => {
+    const { gateway, cipher } = await load();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response("not found", { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const r = await gateway.probeChatModel({
+      credentials: {
+        kind: "openai_compatible",
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+        apiKeyCipher: cipher,
+      },
+      model: "deepseek-ai/deepseek-coder-6.7b-instruct",
+      timeoutMs: 5_000,
+      attempts: 3,
+      backoffMs: 1,
+    });
+
+    expect(r.ok).toBe(false);
+    expect(r.transient).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("上游对失败的原话会被带出来,而不是只剩一句固定文案", async () => {
+    const { gateway, cipher } = await load();
+    // 真实教训:kimi-k2.6 的标识与端点都和官方文档一致却报 404,
+    // 而我们除了「模型不存在」什么都说不出来,根本无从排查。
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ detail: "Model is not available for your account tier" }),
+          { status: 404 },
+        ),
+      ),
+    );
+
+    const r = await gateway.probeChatModel({
+      credentials: {
+        kind: "openai_compatible",
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+        apiKeyCipher: cipher,
+      },
+      model: "moonshotai/kimi-k2.6",
+      timeoutMs: 5_000,
+      attempts: 1,
+    });
+
+    expect(r.reason).toContain("Model is not available for your account tier");
+  });
+
+  it("上游原话里形似密钥的串会被擦掉 —— 错误信息也可能泄密", async () => {
+    const { gateway, cipher } = await load();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: "Invalid key nvapi-abcdefgh12345678xyz provided",
+          }),
+          { status: 401 },
+        ),
+      ),
+    );
+
+    const r = await gateway.probeChatModel({
+      credentials: {
+        kind: "openai_compatible",
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+        apiKeyCipher: cipher,
+      },
+      model: "z-ai/glm-5.2",
+      timeoutMs: 5_000,
+      attempts: 1,
+    });
+
+    expect(r.reason).not.toContain("nvapi-abcdefgh12345678xyz");
+    expect(r.reason).toContain("已隐去");
   });
 
   it("探测拿到内容就中止上游,不把整段回复读完 —— 省配额", async () => {

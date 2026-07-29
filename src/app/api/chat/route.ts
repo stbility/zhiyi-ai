@@ -7,6 +7,7 @@ import {
   streamChat,
   type ChatMessage,
 } from "@/lib/ai/gateway";
+import { buildFallbackChain, describeFallback } from "@/lib/ai/fallback";
 import { createStallWatchdog } from "@/lib/ai/stall-watchdog";
 import type { ProviderKind } from "@/lib/providers/registry";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -45,6 +46,13 @@ const FIRST_CHUNK_TIMEOUT_MS = 45_000;
 const STALL_TIMEOUT_MS = 60_000;
 /** 总预算,留足余量给落库和收尾,绝不让平台来强杀 */
 const TOTAL_BUDGET_MS = 240_000;
+/**
+ * 一次请求最多换几个模型。
+ *
+ * 排队时自动降级是「长期稳定执行任务」的关键,但不能无限换 —— 总预算是
+ * 共享的,换太多次只会让用户干等到超时,还不如早点如实报错。
+ */
+const MAX_MODEL_ATTEMPTS = 3;
 
 const bodySchema = z.object({
   conversationId: z.string().uuid().optional(),
@@ -138,76 +146,101 @@ export async function POST(request: NextRequest) {
   });
 
   const startedAt = Date.now();
+  const credentials = {
+    kind: provider.kind as ProviderKind,
+    baseUrl: (provider.base_url as string | null) ?? null,
+    apiKeyCipher: provider.api_key_cipher as string,
+  };
 
-  // 看门狗同时承担两件事:客户端断开时中止上游(避免白白消耗配额),
-  // 以及上游长时间不出内容时主动掐断(避免函数被平台强杀)。
-  const watchdog = createStallWatchdog(
-    TOTAL_BUDGET_MS,
-    `本次调用已超过 ${Math.round(TOTAL_BUDGET_MS / 1000)} 秒仍未完成,已中止。请换一个更快的模型,或稍后重试。`,
-    request.signal,
+  // 取当前可选模型,排出降级链。
+  //
+  // 用户要的是「长期稳定执行任务」,而共享算力上的模型排队是常态,不是故障。
+  // 稳定不能靠挑一个永不排队的模型(不存在),只能靠排队时自动换一个。
+  const { data: availableRows } = await supabase
+    .from("ai_models")
+    .select("model_id")
+    .eq("provider_id", providerId)
+    .eq("enabled", true)
+    .is("chat_unavailable_reason", null);
+
+  const chain = buildFallbackChain(
+    (availableRows ?? []).map((r) => r.model_id as string),
+    model,
+  ).slice(0, MAX_MODEL_ATTEMPTS);
+
+  const { indicatesModelUnusable, isTransientFailure } = await import(
+    "@/lib/providers/model-filter"
   );
-  watchdog.arm(
-    FIRST_CHUNK_TIMEOUT_MS,
-    `模型在 ${Math.round(FIRST_CHUNK_TIMEOUT_MS / 1000)} 秒内没有返回任何内容,通常是该模型正在排队。请换一个模型,或稍后重试。`,
-  );
 
-  let result;
-  try {
-    result = await streamChat({
-      credentials: {
-        kind: provider.kind as ProviderKind,
-        baseUrl: (provider.base_url as string | null) ?? null,
-        apiKeyCipher: provider.api_key_cipher as string,
-      },
-      model,
-      messages,
-      signal: watchdog.signal,
-    });
-  } catch (e) {
-    watchdog.clear();
+  let result: Awaited<ReturnType<typeof streamChat>> | null = null;
+  let watchdog: ReturnType<typeof createStallWatchdog> | null = null;
+  /** 实际用上的模型,可能不是用户选的那个 */
+  let actualModel = model;
+  /** 降级说明。发生了就必须告诉用户 —— 悄悄换模型等于伪造来源 */
+  let fallbackNote: string | null = null;
+  let lastFailure = "调用模型服务失败。";
+  let lastStatus: number | undefined;
 
-    // 看门狗掐断的,原因比上游抛出的 AbortError 有用得多
-    const timedOut = watchdog.reason;
-    if (timedOut !== null) {
-      await supabase.from("messages").insert({
-        conversation_id: conversationId,
-        organization_id: organizationId,
-        role: "assistant",
-        content: "",
-        provider_id: providerId,
-        model_id: model,
-        latency_ms: Date.now() - startedAt,
-        error_message: timedOut,
-      });
-      return errorResponse(timedOut, 504);
-    }
+  for (const candidate of chain) {
+    // 总预算是整次请求共享的,不是每个模型各给一份 —— 否则四个模型轮下来
+    // 早就撞上平台的函数时限了
+    const remaining = TOTAL_BUDGET_MS - (Date.now() - startedAt);
+    if (remaining < FIRST_CHUNK_TIMEOUT_MS) break;
 
-    // 客户端自己断开了,没人在等回复,不必再做什么
-    if (request.signal.aborted) return errorResponse("请求已取消。", 499);
-
-    const message =
-      e instanceof ProviderCallError ? e.message : "调用模型服务失败。";
-
-    // 如果失败原因是「这个模型压根不提供对话端点」,就把它从可选列表里摘掉。
-    // 导入时的用途过滤只是启发式,总有漏网的;这里依据的是一次真实调用的结果,
-    // 所以是可靠的一道 —— 同一个坑不该让用户踩第二次。
-    const { indicatesModelUnusable } = await import(
-      "@/lib/providers/model-filter"
+    const wd = createStallWatchdog(
+      remaining,
+      `本次调用已超过 ${Math.round(TOTAL_BUDGET_MS / 1000)} 秒仍未完成,已中止。请稍后重试。`,
+      request.signal,
     );
-    if (
-      indicatesModelUnusable(
-        e instanceof ProviderCallError ? e.status : undefined,
-        message,
-      )
-    ) {
-      await supabase
-        .from("ai_models")
-        .update({ chat_unavailable_reason: message })
-        .eq("provider_id", providerId)
-        .eq("model_id", model);
-    }
+    wd.arm(
+      FIRST_CHUNK_TIMEOUT_MS,
+      `模型在 ${Math.round(FIRST_CHUNK_TIMEOUT_MS / 1000)} 秒内没有返回任何内容,通常是该模型正在排队。`,
+    );
 
-    // 失败也留痕
+    try {
+      result = await streamChat({
+        credentials,
+        model: candidate,
+        messages,
+        signal: wd.signal,
+      });
+      watchdog = wd;
+      actualModel = candidate;
+      if (candidate !== model) {
+        fallbackNote = describeFallback(model, candidate, lastFailure);
+      }
+      break;
+    } catch (e) {
+      wd.clear();
+
+      // 客户端自己断开了,没人在等回复,换模型重试毫无意义
+      if (request.signal.aborted) return errorResponse("请求已取消。", 499);
+
+      lastStatus = e instanceof ProviderCallError ? e.status : undefined;
+      lastFailure =
+        wd.reason ??
+        (e instanceof ProviderCallError ? e.message : "调用模型服务失败。");
+
+      // 这个模型压根不提供对话端点 → 从可选列表摘掉,同一个坑不该踩第二次。
+      // 只在确定是永久性问题时才标记 —— 排队、限流绝不能让模型被永久剔除。
+      if (indicatesModelUnusable(lastStatus, lastFailure)) {
+        await supabase
+          .from("ai_models")
+          .update({ chat_unavailable_reason: lastFailure })
+          .eq("provider_id", providerId)
+          .eq("model_id", candidate);
+      }
+      // 继续尝试链上的下一个模型
+    }
+  }
+
+  if (result === null || watchdog === null) {
+    // 全链路都没成功。留痕时记的是用户原本选的模型 —— 那才是他的意图。
+    const message =
+      chain.length > 1
+        ? `${lastFailure}(已依次尝试 ${chain.length} 个模型:${chain.join("、")})`
+        : lastFailure;
+
     await supabase.from("messages").insert({
       conversation_id: conversationId,
       organization_id: organizationId,
@@ -219,8 +252,17 @@ export async function POST(request: NextRequest) {
       error_message: message,
     });
 
-    return errorResponse(message, 502);
+    return errorResponse(
+      message,
+      isTransientFailure(lastStatus, lastFailure) ? 504 : 502,
+    );
   }
+
+  // 收窄成 const,闭包里才拿得到非空类型
+  const chosen = result;
+  const wd = watchdog;
+  const usedModel = actualModel;
+  const note = fallbackNote;
 
   const encoder = new TextEncoder();
   const convId = conversationId;
@@ -245,25 +287,26 @@ export async function POST(request: NextRequest) {
         }
       };
 
-      // 先把对话 id 告知客户端,便于后续消息挂到同一对话
-      send("meta", { conversationId: convId });
+      // 先把对话 id 告知客户端,便于后续消息挂到同一对话。
+      // 若发生了降级,一并说明用的其实是哪个模型 —— 悄悄换等于伪造来源。
+      send("meta", { conversationId: convId, model: usedModel, ...(note ? { fallback: note } : {}) });
 
       try {
-        for await (const delta of result.stream) {
+        for await (const delta of chosen.stream) {
           full += delta;
           send("delta", { text: delta });
           // 有内容进来就重新计时 —— 只有「卡住不动」才该被掐断
-          watchdog.arm(
+          wd.arm(
             STALL_TIMEOUT_MS,
             `模型输出中途停滞超过 ${Math.round(STALL_TIMEOUT_MS / 1000)} 秒,已中止。上面是已生成的部分。`,
           );
         }
-        watchdog.clear();
+        wd.clear();
 
         // 上游返回 200 却一个字都没产出 —— 这是失败,不是「成功但内容为空」。
         // 以前这里静默存成空消息,用户看到空气泡,数据库里也查不出原因。
         if (full === "") {
-          const reason = explainEmptyResponse(result.diagnostics);
+          const reason = explainEmptyResponse(chosen.diagnostics);
 
           await supabase.from("messages").insert({
             conversation_id: convId,
@@ -271,7 +314,7 @@ export async function POST(request: NextRequest) {
             role: "assistant",
             content: "",
             provider_id: providerId,
-            model_id: model,
+            model_id: usedModel,
             latency_ms: Date.now() - startedAt,
             error_message: reason,
           });
@@ -286,21 +329,21 @@ export async function POST(request: NextRequest) {
           role: "assistant",
           content: full,
           provider_id: providerId,
-          model_id: model,
-          input_tokens: result.usage.inputTokens,
-          output_tokens: result.usage.outputTokens,
+          model_id: usedModel,
+          input_tokens: chosen.usage.inputTokens,
+          output_tokens: chosen.usage.outputTokens,
           latency_ms: Date.now() - startedAt,
         });
 
         send("done", {
-          inputTokens: result.usage.inputTokens,
-          outputTokens: result.usage.outputTokens,
+          inputTokens: chosen.usage.inputTokens,
+          outputTokens: chosen.usage.outputTokens,
           latencyMs: Date.now() - startedAt,
         });
       } catch (e) {
         // 看门狗掐断的,原因比 AbortError 有用得多
         const message =
-          watchdog.reason ??
+          wd.reason ??
           (e instanceof ProviderCallError
             ? e.message
             : "生成过程中断,请重试。");
@@ -315,7 +358,7 @@ export async function POST(request: NextRequest) {
             role: "assistant",
             content: full,
             provider_id: providerId,
-            model_id: model,
+            model_id: usedModel,
             latency_ms: Date.now() - startedAt,
             error_message: message,
           });
@@ -325,7 +368,7 @@ export async function POST(request: NextRequest) {
 
         send("error", { message });
       } finally {
-        watchdog.clear();
+        wd.clear();
         try {
           streamController.close();
         } catch {

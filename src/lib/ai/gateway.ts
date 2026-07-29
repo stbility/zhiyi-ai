@@ -1,6 +1,7 @@
 import "server-only";
 
 import { decryptSecret } from "@/lib/crypto/secret-box";
+import { isTransientFailure } from "@/lib/providers/model-filter";
 import { getProviderSpec, type ProviderKind } from "@/lib/providers/registry";
 
 /**
@@ -82,30 +83,77 @@ function resolveBaseUrl(creds: ProviderCredentials): string {
  * 把上游的错误响应转成可读中文。
  * 只取状态码与简短原因 —— 响应体可能回显密钥,绝不原样透出。
  */
-async function describeFailure(response: Response): Promise<string> {
-  const status = response.status;
-  if (status === 401 || status === 403) {
-    return `密钥被拒绝(HTTP ${status}),请到「模型服务」检查密钥`;
+/**
+ * 从上游响应体里取出可读的错误说明。
+ *
+ * 各家结构不一:OpenAI 兼容用 error.message,NVIDIA 有时用 detail 或 title,
+ * 有的直接给纯文本。取不到就算了,但绝不能不取 —— 上游的原话往往是唯一
+ * 能说清「到底哪里不对」的线索。
+ *
+ * 安全:只取说明文字,且做长度截断与疑似密钥擦除。响应体理论上可能回显
+ * 请求内容,而请求头里有密钥。
+ */
+async function readUpstreamDetail(response: Response): Promise<string | null> {
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    return null;
   }
-  if (status === 404) {
-    return `接口或模型不存在(HTTP 404),请检查接口地址与模型名称`;
-  }
-  if (status === 429) {
-    return "服务商限流,请稍后重试";
-  }
-  if (status >= 500) {
-    return `服务商暂时不可用(HTTP ${status})`;
+  if (text.trim() === "") return null;
+
+  let detail: string | null = null;
+  try {
+    const body = JSON.parse(text) as {
+      error?: { message?: string } | string;
+      detail?: string;
+      message?: string;
+      title?: string;
+    };
+    detail =
+      (typeof body.error === "string" ? body.error : body.error?.message) ??
+      body.detail ??
+      body.message ??
+      body.title ??
+      null;
+  } catch {
+    // 不是 JSON,当纯文本用
+    detail = text;
   }
 
-  // 4xx 其它情况:尝试取上游给的 message 字段,它通常是安全的说明文字
-  try {
-    const body = (await response.json()) as { error?: { message?: string } };
-    const detail = body.error?.message;
-    if (detail && detail.length < 200) return `HTTP ${status}:${detail}`;
-  } catch {
-    // 响应体不是 JSON,忽略
+  if (!detail) return null;
+
+  // 擦掉任何形似密钥的串,再截断。宁可少说,不可泄密。
+  const safe = detail
+    .replace(/\b(nvapi|sk|pk|key)[-_][A-Za-z0-9_-]{8,}/gi, "[已隐去]")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return safe === "" ? null : safe.slice(0, 240);
+}
+
+async function describeFailure(response: Response): Promise<string> {
+  const status = response.status;
+  // 先把上游原话取出来 —— 之前对 401/403/404/429/5xx 直接返回固定文案,
+  // 根本没读响应体,上游对失败的真正解释被整个丢掉。
+  // 真实教训:moonshotai/kimi-k2.6 的模型标识与端点都和官方文档一致却报 404,
+  // 而我们除了「模型不存在」什么都说不出来,根本无从排查。
+  const detail = await readUpstreamDetail(response);
+  const suffix = detail ? `。服务商原话:${detail}` : "";
+
+  if (status === 401 || status === 403) {
+    return `密钥被拒绝(HTTP ${status}),请到「模型服务」检查密钥${suffix}`;
   }
-  return `接口返回 HTTP ${status}`;
+  if (status === 404) {
+    return `接口或模型不存在(HTTP 404),请检查接口地址与模型名称${suffix}`;
+  }
+  if (status === 429) {
+    return `服务商限流,请稍后重试${suffix}`;
+  }
+  if (status >= 500) {
+    return `服务商暂时不可用(HTTP ${status})${suffix}`;
+  }
+  return detail ? `HTTP ${status}:${detail}` : `接口返回 HTTP ${status}`;
 }
 
 /** 逐行读取 SSE 流 */
@@ -434,6 +482,16 @@ export interface ModelProbeResult {
   /** 失败时的原因,已翻译成可读中文;成功时为 null */
   readonly reason: string | null;
   readonly latencyMs: number;
+  /**
+   * 失败是否属于「等一会儿就好」。
+   *
+   * 这个字段决定模型的去留:临时故障只是此刻排不上队,模型本身好好的,
+   * 绝不能因此被永久剔除;永久故障(模型下线、不提供对话端点)才该剔除。
+   * 成功时为 false。
+   */
+  readonly transient: boolean;
+  /** 实际尝试了几次 */
+  readonly attempts: number;
 }
 
 /**
@@ -445,17 +503,59 @@ export interface ModelProbeResult {
  * 「能不能用」只有调过才知道 —— 这正是用户要求的「不要写伪模型」。
  *
  * 探测刻意做得极小:一句话、几个 token,成本可以忽略。
+ *
+ * 临时性失败(排队、限流、超时)会重试 —— 一次堵车不该决定一条路的存废。
+ * 真实教训:deepseek-v4-flash 与 deepseek-v4-pro 都是因为一次排队就被
+ * 永久标记为不可用,用户从此在列表里再也看不到 DeepSeek。
  */
 export async function probeChatModel({
   credentials,
   model,
   timeoutMs,
+  attempts = 3,
+  backoffMs = 1_500,
 }: {
   credentials: ProviderCredentials;
   model: string;
   timeoutMs: number;
+  /** 最多尝试几次(仅临时性失败才重试) */
+  attempts?: number;
+  /** 首次重试前的等待,之后翻倍 */
+  backoffMs?: number;
 }): Promise<ModelProbeResult> {
   const startedAt = Date.now();
+  let last: Omit<ModelProbeResult, "attempts"> | null = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const result = await probeOnce(credentials, model, timeoutMs, startedAt);
+    if (result.ok) return { ...result, attempts: attempt };
+
+    last = result;
+    // 永久性失败没有重试的意义 —— 模型下线了,再试一百次还是下线
+    if (!result.transient || attempt === attempts) break;
+
+    await new Promise((r) => setTimeout(r, backoffMs * 2 ** (attempt - 1)));
+  }
+
+  return {
+    ...(last ?? {
+      model,
+      ok: false,
+      reason: "调用失败",
+      latencyMs: Date.now() - startedAt,
+      transient: true,
+    }),
+    attempts,
+  };
+}
+
+/** 单次探测,不含重试 */
+async function probeOnce(
+  credentials: ProviderCredentials,
+  model: string,
+  timeoutMs: number,
+  startedAt: number,
+): Promise<Omit<ModelProbeResult, "attempts">> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -476,14 +576,16 @@ export async function probeChatModel({
 
     const latencyMs = Date.now() - startedAt;
     if (text.trim() === "") {
+      const reason = explainEmptyResponse(diagnostics);
       return {
         model,
         ok: false,
-        reason: explainEmptyResponse(diagnostics),
+        reason,
         latencyMs,
+        transient: isTransientFailure(undefined, reason),
       };
     }
-    return { model, ok: true, reason: null, latencyMs };
+    return { model, ok: true, reason: null, latencyMs, transient: false };
   } catch (e) {
     const latencyMs = Date.now() - startedAt;
     if (controller.signal.aborted) {
@@ -492,18 +594,23 @@ export async function probeChatModel({
         ok: false,
         reason: `探测超过 ${Math.round(timeoutMs / 1000)} 秒未返回,通常是该模型正在排队`,
         latencyMs,
+        // 超时就是排队的典型表现,是容量问题不是模型问题
+        transient: true,
       };
     }
+    const status = e instanceof ProviderCallError ? e.status : undefined;
+    const reason =
+      e instanceof ProviderCallError
+        ? e.message
+        : e instanceof Error
+          ? e.message
+          : "调用失败";
     return {
       model,
       ok: false,
-      reason:
-        e instanceof ProviderCallError
-          ? e.message
-          : e instanceof Error
-            ? e.message
-            : "调用失败",
+      reason,
       latencyMs,
+      transient: isTransientFailure(status, reason),
     };
   } finally {
     clearTimeout(timer);
