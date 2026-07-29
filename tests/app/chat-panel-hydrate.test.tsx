@@ -21,6 +21,10 @@ import {
  * CSR 渲染测试盖不住这条路径,必须真的「服务端出串 → 客户端水合」跑一遍。
  */
 
+// ChatPanel 引入了对话删除的 server action,后者会连带引入 server-only。
+// 生产环境由 Next.js 特殊处理,测试环境需要显式打桩。
+vi.mock("server-only", () => ({}));
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }));

@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { ThemeToggle } from "@/components/app/ThemeToggle";
 import { Icon, type IconName } from "@/components/icons/Icon";
 import { IconButton } from "@/components/primitives/IconButton";
 import { Avatar } from "@/components/primitives/Avatar";
@@ -142,11 +143,9 @@ export function AppChrome({
       {nav}
 
       <div className="border-divider flex flex-col gap-2 border-t p-4">
-        {organizationName ? (
-          <p className="text-fg-tertiary text-label truncate">
-            {organizationName}
-          </p>
-        ) : (
+        {/* 组织名不再单独占一行 —— 单人使用时它就是个重复的产品名,
+            只在真的没加入组织时提示一次(那是需要用户处理的状态) */}
+        {organizationName === null && (
           <p className="text-fg-tertiary text-label">尚未加入组织</p>
         )}
         <div className="flex items-center gap-2">
@@ -203,6 +202,7 @@ export function AppChrome({
           <h1 className="text-fg text-body min-w-0 flex-1 truncate font-medium">
             {title}
           </h1>
+          <ThemeToggle />
         </header>
 
         <main className="flex-1 overflow-y-auto">{children}</main>

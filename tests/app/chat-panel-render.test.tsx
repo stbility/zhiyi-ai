@@ -18,6 +18,10 @@ import {
  * 白屏是最严重的故障 —— 用户什么都做不了,也看不到任何线索。
  */
 
+// ChatPanel 引入了对话删除的 server action,后者会连带引入 server-only。
+// 生产环境由 Next.js 特殊处理,测试环境需要显式打桩。
+vi.mock("server-only", () => ({}));
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }));

@@ -106,6 +106,46 @@
   );
 }
 
+/* ---------------------------------------------------------------------------
+ * 浅色主题
+ *
+ * 设计系统本身只有深色 —— tokens/colors.css 里没有任何浅色变体。
+ * 长时间使用深色界面确实费眼,所以这里补一套浅色,但**不新增设计决策**:
+ *
+ *   - 底色、表面、边框、正文色直接取设计系统已有的 --paper-* 令牌;
+ *   - 其余层级(surface-2/3/4、三级文字、各类 tint)一律由这些令牌
+ *     经 color-mix 派生,不写任何凭空定的十六进制色值;
+ *   - 品牌色与语义色(成功/警告/错误/信息)保持原值不变 —— 那是品牌识别,
+ *     不该因主题切换而变。
+ *
+ * 只覆盖变量、不碰 tokens/*.css(那是逐字节复制的真值源,有测试守着)。
+ * 若设计系统日后正式发布浅色令牌,这一整块应删除并改为引用官方值。
+ * ------------------------------------------------------------------------- */
+:root[data-theme="light"] {
+  --bg-canvas: var(--paper-bg);
+  --surface-1: var(--paper-surface);
+  --surface-2: color-mix(in srgb, var(--paper-bg) 60%, var(--paper-surface));
+  --surface-3: color-mix(in srgb, var(--paper-border) 35%, var(--paper-surface));
+  --surface-4: color-mix(in srgb, var(--paper-border) 55%, var(--paper-surface));
+
+  --border-default: var(--paper-border);
+  --border-strong: color-mix(in srgb, var(--paper-text-secondary) 35%, var(--paper-border));
+  --divider: color-mix(in srgb, var(--paper-text-primary) 10%, transparent);
+
+  --text-primary: var(--paper-text-primary);
+  --text-secondary: var(--paper-text-secondary);
+  --text-tertiary: color-mix(in srgb, var(--paper-text-secondary) 70%, var(--paper-bg));
+  --text-disabled: color-mix(in srgb, var(--paper-text-secondary) 45%, var(--paper-bg));
+
+  /* 品牌与语义色本身不变,只把 tint 调到浅底上看得见的浓度 */
+  --brand-tint: color-mix(in srgb, var(--brand-primary) 10%, transparent);
+  --brand-focus-ring: color-mix(in srgb, var(--brand-primary) 30%, transparent);
+  --success-tint: color-mix(in srgb, var(--success) 12%, transparent);
+  --warning-tint: color-mix(in srgb, var(--warning) 14%, transparent);
+  --error-tint: color-mix(in srgb, var(--error) 12%, transparent);
+  --info-tint: color-mix(in srgb, var(--info) 12%, transparent);
+}
+
 /* --- Tailwind theme 映射 --------------------------------------------------- */
 @theme inline {
   /* 表面 */

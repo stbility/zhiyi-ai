@@ -420,3 +420,85 @@ export async function testProvider(
 
   return { ok: parts.join("\n") };
 }
+
+const modelSchema = z.object({
+  providerId: z.string().uuid(),
+  modelId: z.string().trim().min(1, "请填写模型标识").max(200),
+});
+
+/**
+ * 手动添加一个模型标识。
+ *
+ * 为什么需要:自动导入只能拿到 /models 返回的东西,而它不总是全的 ——
+ * 服务商目录里明明有、账号也显示可用,列表里却没有。这时用户比系统更清楚
+ * 该填什么,不该被工具挡住。
+ *
+ * 添加后不做预先验证:能不能用由第一次真实调用决定,失败会带上服务商原话
+ * 并自动标记。这比在这里猜一遍更准。
+ */
+export async function addModel(
+  _prev: ProviderActionState,
+  formData: FormData,
+): Promise<ProviderActionState> {
+  const parsed = modelSchema.safeParse({
+    providerId: formData.get("providerId"),
+    modelId: formData.get("modelId"),
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "输入不合法" };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { error: "认证服务未配置。" };
+
+  const { data: provider } = await supabase
+    .from("ai_providers")
+    .select("organization_id")
+    .eq("id", parsed.data.providerId)
+    .maybeSingle();
+  if (!provider) return { error: "未找到该模型服务。" };
+
+  const { modelId } = parsed.data;
+  const { error } = await supabase.from("ai_models").upsert(
+    {
+      provider_id: parsed.data.providerId,
+      organization_id: provider.organization_id as string,
+      model_id: modelId,
+      display_name: modelId.length > 60 ? modelId.slice(0, 60) : modelId,
+      // 手动添加意味着「我确认它存在」,清掉之前的不可用标记,给它一次机会
+      chat_unavailable_reason: null,
+    },
+    { onConflict: "provider_id,model_id" },
+  );
+  if (error) return { error: error.message };
+
+  revalidatePath("/settings/models");
+  revalidatePath("/assistant");
+  return { ok: `已添加 ${modelId}。首次调用时会真实验证,失败会显示服务商原话。` };
+}
+
+/** 删除一个模型 —— 用不上的留在列表里只会干扰选择 */
+export async function deleteModel(
+  _prev: ProviderActionState,
+  formData: FormData,
+): Promise<ProviderActionState> {
+  const parsed = modelSchema.safeParse({
+    providerId: formData.get("providerId"),
+    modelId: formData.get("modelId"),
+  });
+  if (!parsed.success) return { error: "标识无效" };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { error: "认证服务未配置。" };
+
+  const { error } = await supabase
+    .from("ai_models")
+    .delete()
+    .eq("provider_id", parsed.data.providerId)
+    .eq("model_id", parsed.data.modelId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/settings/models");
+  revalidatePath("/assistant");
+  return { ok: `已删除 ${parsed.data.modelId}。` };
+}

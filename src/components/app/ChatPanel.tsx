@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useActionState } from "react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Icon } from "@/components/icons/Icon";
@@ -13,6 +14,10 @@ import {
   describeSkipped,
   type Attachment,
 } from "@/lib/ai/attachments";
+import {
+  deleteConversation,
+  type AssistantActionState,
+} from "@/app/(app)/assistant/actions";
 import { cn } from "@/lib/cn";
 
 export interface ModelOption {
@@ -97,6 +102,10 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+/** 「添加文件夹」的取用规则,按钮提示与表单说明共用同一份文案 */
+const FOLDER_HINT =
+  "添加文件夹:只读取代码与文本类文件(ts/js/py/go/java/md/json/yaml 等),自动跳过 node_modules、.git、dist 等目录及图片压缩包等二进制文件;最多 40 个文件、合计 24 万字符;仅对下一条消息生效。";
+
 function toTurn(t: InitialTurn): Turn {
   const turn: Turn = { id: t.id, role: t.role, content: t.content };
   if (t.error) turn.error = t.error;
@@ -130,6 +139,10 @@ export function ChatPanel({
   initialTurns: readonly InitialTurn[];
 }) {
   const router = useRouter();
+  const [, deleteAction] = useActionState<AssistantActionState, FormData>(
+    deleteConversation,
+    {},
+  );
   const [selected, setSelected] = useState(models[0]?.value ?? "");
   const [turns, setTurns] = useState<Turn[]>(() => initialTurns.map(toTurn));
   const [draft, setDraft] = useState("");
@@ -345,23 +358,42 @@ export function ChatPanel({
               // 设计系统在 Button.tsx 里就写明了这条:导航场景应该渲染真正的 <a>,
               // 否则会丢失新标签页打开、右键菜单;而且 router.push 在同路由
               // 只变查询参数时未必触发重新取数,表现就是「点了没反应」。
-              <Link
-                key={c.id}
-                href={`/assistant?c=${c.id}`}
-                aria-current={active ? "page" : undefined}
-                onClick={() => setSidebarOpen(false)}
-                title={c.title}
-                className={cn(
-                  "rounded-control flex items-center gap-2.5 px-3 py-2.25 text-left text-[14px]",
-                  "transition-colors duration-[var(--duration-hover)] ease-standard",
-                  active
-                    ? "bg-brand-tint text-brand"
-                    : "text-fg-secondary hover:bg-surface-2",
-                )}
-              >
-                <Icon name="assistant" size={15} className="shrink-0" />
-                <span className="min-w-0 truncate">{c.title}</span>
-              </Link>
+              // 删除按钮不能嵌在链接里(嵌套可点元素既不合法也不可访问),
+              // 所以外面套一层 group,按钮与链接是兄弟节点。
+              <div key={c.id} className="group relative">
+                <Link
+                  href={`/assistant?c=${c.id}`}
+                  aria-current={active ? "page" : undefined}
+                  onClick={() => setSidebarOpen(false)}
+                  title={c.title}
+                  className={cn(
+                    "rounded-control flex items-center gap-2.5 py-2.25 pr-8 pl-3 text-left text-[14px]",
+                    "transition-colors duration-[var(--duration-hover)] ease-standard",
+                    active
+                      ? "bg-brand-tint text-brand"
+                      : "text-fg-secondary hover:bg-surface-2",
+                  )}
+                >
+                  <Icon name="assistant" size={15} className="shrink-0" />
+                  <span className="min-w-0 truncate">{c.title}</span>
+                </Link>
+
+                <form
+                  action={deleteAction}
+                  className="absolute top-1/2 right-1 -translate-y-1/2"
+                >
+                  <input type="hidden" name="id" value={c.id} />
+                  <button
+                    type="submit"
+                    aria-label={`删除对话「${c.title}」`}
+                    title="删除这条对话"
+                    // 常态隐藏,免得列表被一排叉号淹没;悬停或键盘聚焦时出现
+                    className="text-fg-tertiary hover:text-error rounded-control cursor-pointer p-1 opacity-0 transition-opacity duration-[var(--duration-hover)] ease-standard group-hover:opacity-100 focus-visible:opacity-100"
+                  >
+                    <Icon name="x" size={13} />
+                  </button>
+                </form>
+              </div>
             );
           })}
         </nav>
@@ -452,7 +484,7 @@ export function ChatPanel({
 
                 <div
                   className={cn(
-                    "text-[14px] leading-[1.7] whitespace-pre-wrap",
+                    "text-[14px] leading-[1.6] whitespace-pre-wrap",
                     turn.role === "user"
                       // 用户消息是气泡,靠右 —— 一眼能和 AI 的回答区分开
                       ? "rounded-bubble bg-brand-tint text-fg max-w-[88%] px-3 py-2.5"
@@ -507,6 +539,11 @@ export function ChatPanel({
           onSubmit={send}
           className="border-divider flex shrink-0 flex-col gap-2 border-t p-3.5"
         >
+          {/* 格式限制提前说明,而不是等用户选完目录才发现大半被跳过 */}
+          {!attachNote && (
+            <p className="text-fg-tertiary text-label">{FOLDER_HINT}</p>
+          )}
+
           {attachNote && (
             <div className="border-border-default bg-surface-2 rounded-control flex flex-wrap items-center gap-2 px-3 py-2">
               <span className="text-fg-secondary text-label">{attachNote}</span>
@@ -573,7 +610,7 @@ export function ChatPanel({
               type="button"
               variant="secondary"
               onClick={() => folderInputRef.current?.click()}
-              title="选择本地项目目录,把其中的文本文件作为本轮上下文"
+              title={FOLDER_HINT}
             >
               <Icon name="folder" size={15} />
               添加文件夹

@@ -8,7 +8,9 @@ import { Button } from "@/components/primitives/Button";
 import { Input } from "@/components/primitives/Input";
 import { Select } from "@/components/primitives/Select";
 import {
+  addModel,
   addProvider,
+  deleteModel,
   deleteProvider,
   testProvider,
   type ProviderActionState,
@@ -58,12 +60,42 @@ function TestStatus({ row }: { row: ProviderRow }) {
  * 用户在服务商控制台明明看得到 Kimi,系统里却无声无息 ——
  * 那只会让人怀疑是系统把模型弄丢了,根本无从排查。
  */
-function ModelList({ models }: { models: readonly ModelRow[] }) {
+function ModelList({
+  providerId,
+  models,
+  canManage,
+}: {
+  providerId: string;
+  models: readonly ModelRow[];
+  canManage: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
-  if (models.length === 0) return null;
+  const [, addAction, adding] = useActionState<ProviderActionState, FormData>(
+    addModel,
+    {},
+  );
+  const [, removeAction] = useActionState<ProviderActionState, FormData>(
+    deleteModel,
+    {},
+  );
 
   const usable = models.filter((m) => m.unavailableReason === null);
   const blocked = models.filter((m) => m.unavailableReason !== null);
+
+  const removeButton = (modelId: string) => (
+    <form action={removeAction} className="shrink-0">
+      <input type="hidden" name="providerId" value={providerId} />
+      <input type="hidden" name="modelId" value={modelId} />
+      <button
+        type="submit"
+        aria-label={`删除模型 ${modelId}`}
+        title="从列表中删除"
+        className="text-fg-tertiary hover:text-error cursor-pointer p-0.5 transition-colors duration-[var(--duration-hover)] ease-standard"
+      >
+        <Icon name="x" size={12} />
+      </button>
+    </form>
+  );
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -82,30 +114,54 @@ function ModelList({ models }: { models: readonly ModelRow[] }) {
       </div>
 
       {expanded && (
-        <ul className="flex flex-col gap-1">
-          {usable.map((m) => (
-            <li
-              key={m.modelId}
-              className="text-fg-secondary text-label flex items-start gap-1.5 font-mono break-all"
-            >
-              <Icon name="check" size={12} className="text-success mt-0.5 shrink-0" />
-              {m.modelId}
-            </li>
-          ))}
-          {blocked.map((m) => (
-            <li key={m.modelId} className="flex items-start gap-1.5">
-              <Icon name="x" size={12} className="text-error mt-1 shrink-0" />
-              <span className="min-w-0">
-                <span className="text-fg-tertiary text-label font-mono break-all">
+        <>
+          <ul className="flex flex-col gap-1">
+            {usable.map((m) => (
+              <li key={m.modelId} className="flex items-start gap-1.5">
+                <Icon
+                  name="check"
+                  size={12}
+                  className="text-success mt-1 shrink-0"
+                />
+                <span className="text-fg-secondary text-label min-w-0 flex-1 font-mono break-all">
                   {m.modelId}
                 </span>
-                <span className="text-fg-tertiary text-label block">
-                  {m.unavailableReason}
+                {canManage && removeButton(m.modelId)}
+              </li>
+            ))}
+            {blocked.map((m) => (
+              <li key={m.modelId} className="flex items-start gap-1.5">
+                <Icon name="x" size={12} className="text-error mt-1 shrink-0" />
+                <span className="min-w-0 flex-1">
+                  <span className="text-fg-tertiary text-label font-mono break-all">
+                    {m.modelId}
+                  </span>
+                  <span className="text-fg-tertiary text-label block">
+                    {m.unavailableReason}
+                  </span>
                 </span>
-              </span>
-            </li>
-          ))}
-        </ul>
+                {canManage && removeButton(m.modelId)}
+              </li>
+            ))}
+          </ul>
+
+          {canManage && (
+            <form action={addAction} className="flex flex-wrap items-end gap-2">
+              <input type="hidden" name="providerId" value={providerId} />
+              <div className="min-w-0 flex-1">
+                <Input
+                  name="modelId"
+                  label="手动添加模型标识"
+                  description="自动导入拿到的是 /models 的返回,不总是全的。服务商目录里有、这里却没有时,可在此补上;能不能用由第一次真实调用决定。"
+                  placeholder="例如 moonshotai/kimi-k2.6"
+                />
+              </div>
+              <Button type="submit" variant="secondary" size="sm" loading={adding}>
+                添加
+              </Button>
+            </form>
+          )}
+        </>
       )}
     </div>
   );
@@ -198,7 +254,11 @@ export function ProviderManager({
                   <p className="text-error text-label">{row.lastTestError}</p>
                 )}
 
-                <ModelList models={modelsByProvider[row.id] ?? []} />
+                <ModelList
+                  providerId={row.id}
+                  models={modelsByProvider[row.id] ?? []}
+                  canManage={canManage}
+                />
 
                 {canManage && (
                   <div className="flex flex-wrap gap-2">
