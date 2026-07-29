@@ -31,6 +31,27 @@ const PROTECTED_PREFIXES = [
 const AUTH_ONLY_PATHS = ["/login", "/register", "/forgot-password"];
 
 export async function proxy(request: NextRequest) {
+  // 统一到正式域名。
+  //
+  // 生产上这个部署挂了三个别名:zhiyi-ai.vercel.app、zhiyi-ai-vivian10.vercel.app、
+  // zhiyi-ai-git-main-vivian10.vercel.app。而 Cookie 是按域名隔离的 ——
+  // 在别名域发起登录,回调却固定跳到正式域,会话 Cookie 就写在了正式域;
+  // 用户回到别名域一看,还是未登录。表现就是「第三方登录成功了却用不了」。
+  //
+  // 与其在每处小心翼翼地对齐域名,不如只留一个域名:一个域名,一份 Cookie。
+  // 只在正式环境做,预览部署各有各的临时域名,不能被卷进来。
+  const canonicalHost = process.env["VERCEL_PROJECT_PRODUCTION_URL"];
+  if (
+    process.env["VERCEL_ENV"] === "production" &&
+    canonicalHost &&
+    request.headers.get("host") !== canonicalHost
+  ) {
+    const target = new URL(request.nextUrl.toString());
+    target.host = canonicalHost;
+    target.protocol = "https:";
+    return NextResponse.redirect(target, 308);
+  }
+
   let response = NextResponse.next({ request });
 
   const url = process.env["NEXT_PUBLIC_SUPABASE_URL"];
@@ -61,9 +82,28 @@ export async function proxy(request: NextRequest) {
 
   const {
     data: { user },
+    error,
   } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
+
+  // 令牌失效时把会话 Cookie 清干净。
+  //
+  // 生产日志里的实况:GoTrue 返回
+  //   400 /token — Invalid Refresh Token: Refresh Token Not Found
+  // 浏览器存着一个服务端已不存在的 refresh token。不清掉的话,之后每一次请求
+  // 都会带着它再撞一次 400 —— 人刚登录成功就被弹回登录页,反复循环,
+  // 等于被挡在门外。
+  //
+  // 清掉之后行为很简单:当作未登录,重新登一次就好。
+  if (error && !user) {
+    for (const c of request.cookies.getAll()) {
+      // supabase-ssr 的会话 Cookie 统一是 sb-<project-ref>-auth-token[.n]
+      if (c.name.startsWith("sb-") && c.name.includes("-auth-token")) {
+        response.cookies.delete(c.name);
+      }
+    }
+  }
 
   if (!user && PROTECTED_PREFIXES.some((p) => path.startsWith(p))) {
     const redirect = request.nextUrl.clone();

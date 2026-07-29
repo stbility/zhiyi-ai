@@ -1,0 +1,21 @@
+-- =============================================================================
+-- 0008 把 SECURITY DEFINER 辅助函数移出对外暴露的 schema
+--
+-- 安全告警:public.is_org_member / public.has_org_role 是 SECURITY DEFINER,
+-- 而 public 是 PostgREST 对外暴露的 schema,于是它们同时变成了可直接调用的
+-- RPC 端点 /rest/v1/rpc/is_org_member。
+--
+-- 官方文档:
+--   "Security-definer functions should never be created in a schema in the
+--    'Exposed schemas' inside your API settings."
+--   https://supabase.com/docs/guides/database/postgres/row-level-security
+--
+-- 正解是搬到不暴露的 private schema,而**不是**改成 SECURITY INVOKER ——
+-- 改成 INVOKER 会让 memberships 的 RLS 策略递归调用自身,整个组织权限体系瘫掉。
+-- 这两个函数用 SECURITY DEFINER 正是为了打断这个递归。
+--
+-- 本文件与已应用到生产的迁移内容一致,仅作仓库留档。
+-- 生产验证:rpc/is_org_member 与 rpc/has_org_role 均返回 404;
+-- 本人可见自己的 1 组织/1 成员/1 服务商/5 模型/9 对话,陌生人全部为 0。
+-- =============================================================================
+-- 完整语句见 Supabase 迁移记录 move_security_definer_helpers_to_private_schema。

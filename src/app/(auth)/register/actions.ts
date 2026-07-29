@@ -1,31 +1,29 @@
 "use server";
 
+import { redirect } from "next/navigation";
 import { z } from "zod";
 
-import { allowUnverifiedSignup, getSiteUrl } from "@/lib/env/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
  * 注册。
  *
- * 为什么要放在服务端而不是直接用浏览器端 signUp:
+ * 设计原则:注册这一步不碰邮件。
  *
- * Supabase 自带的邮件服务是「仅供测试」的,每小时只有几封额度。额度用尽时
- * 注册接口直接返回 429,账号根本不会被创建 —— 表现就是「点了注册,什么都没发生,
- * 也进不去系统」。这不是偶发,是没接自有邮件通道时的常态。
+ * 为什么:此前走「注册 → 发验证邮件 → 点链接 → 才能登录」,而这条链路在本项目上
+ * 根本走不通 ——
+ *   1. Supabase 内置邮件服务官方声明「拒绝投递给非项目团队成员的地址」,
+ *      要接自有 SMTP 就得先有一个已验证的自有域名,而本项目不打算再买域名;
+ *   2. 用已注册过的邮箱重复注册时,Supabase 为防账号枚举会返回一个伪造的
+ *      用户对象且**不发任何邮件**,界面却报「请查收邮件」,人就干等在那里。
+ * 两条加起来的结果是:注册页把用户挡在门外。
  *
- * 因此这里分两条路:
- *   A. 无条件先走标准注册。能不能发信只有真发一次才知道,不能靠环境变量猜 ——
- *      早先用「RESEND_API_KEY 是否存在」判断,导致代码根本不尝试标准注册。
- *   B. 仅当 A 确实因限流或发信失败而失败,且运维显式设置了
- *      ALLOW_UNVERIFIED_SIGNUP=true,才用 service role 直接建号。
+ * 所以现在:直接建号、直接登录、直接进系统,一步到位。
  *
- * B 路默认关闭。它跳过了「邮箱归属权验证」,意味着任何人都能用不属于自己的邮箱
- * 注册并进入系统 —— 这个代价必须由运维显式承担,不能由代码静默降级。
- * 开关关闭时,邮件不可用就如实报错,不偷偷放行。
- *
- * 邮件通道一旦接通,代码自动走回 A 路,无需改动。
+ * 代价说清楚:不验证邮箱归属权,意味着有人可以用不属于自己的邮箱注册。
+ * 这是产品方明确做出的取舍(「不要邮箱验证码」),不是代码擅自降级。
+ * 日后接通邮件通道要恢复验证,只需把 createUser 的 email_confirm 改回 false。
  */
 
 const schema = z.object({
@@ -36,27 +34,13 @@ const schema = z.object({
 export interface RegisterState {
   readonly error?: string;
   readonly hint?: string;
-  /** 注册成功,且已发出验证邮件 */
-  readonly awaitingVerification?: boolean;
-  /** 注册成功,但因邮件通道不可用跳过了邮箱验证 */
-  readonly emailVerificationSkipped?: boolean;
   /**
-   * 该邮箱已被注册,Supabase 不会重复发信。
+   * 该邮箱已被注册。
    *
-   * 措辞上不能直接确认「这个邮箱存在」—— 那正是 Supabase 要防的账号枚举。
+   * 措辞上不直接确认「这个邮箱存在」—— 那正是 Supabase 要防的账号枚举 ——
    * 但必须让用户知道下一步该干什么,不能让他干等一封永远不来的邮件。
    */
   readonly alreadyRegistered?: boolean;
-}
-
-/** Supabase 的限流错误 —— 账号不会被创建 */
-function isRateLimited(message: string): boolean {
-  return /rate limit|over_email_send_rate_limit|429/i.test(message);
-}
-
-/** 邮件发送失败(SMTP 未配置或配置错误)—— 同样导致账号创建失败 */
-function isMailFailure(message: string): boolean {
-  return /error sending|smtp|confirmation (mail|email)/i.test(message);
 }
 
 export async function register(
@@ -82,85 +66,49 @@ export async function register(
     };
   }
 
-  // --- A 路:标准注册 ------------------------------------------------------
-  //
-  // 无条件先走这条。Supabase 自带邮件服务虽有每小时数封的额度限制,但它是可用的;
-  // 之前用「RESEND_API_KEY 是否存在」来判断能否发信是错的 —— 那导致代码根本不去
-  // 尝试标准注册,直接落到兜底分支,而兜底被安全开关关掉后就必然失败。
-  // 能不能发信只有真发一次才知道,不能靠猜。
-  const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-    email,
-    password,
-    options: { emailRedirectTo: `${getSiteUrl()}/auth/callback` },
-  });
-
-  if (!signUpError) {
-    // 「成功」不等于真的注册了。
-    //
-    // 邮箱已被注册时,Supabase 为防止账号枚举会返回一个**伪造的用户对象**:
-    // error 为空、带一个随机 id、identities 为空数组,而且不发任何邮件。
-    // 官方原文:「If you try to create an email account after previously
-    // signing up with OAuth using the same email, you'll receive an obfuscated
-    // user response with no verification email sent.」
-    // https://supabase.com/docs/guides/auth/auth-identity-linking
-    //
-    // 这正是生产上「注册后永远等不到验证邮件」的原因 —— 此前只看 error 是否为空,
-    // 就报「请查收邮件」,而那封信根本不会发出。
-    // 生产实测的伪造响应:id=1abbf59e…(真实用户是 ae257bf8…)、identities=[]。
-    if ((signUpData.user?.identities?.length ?? 0) === 0) {
-      return { alreadyRegistered: true };
-    }
-    return { awaitingVerification: true };
-  }
-
-  // 不是邮件问题(密码太弱、邮箱非法等)—— 如实回报,不要落到兜底
-  if (!isRateLimited(signUpError.message) && !isMailFailure(signUpError.message)) {
-    return { error: translate(signUpError.message) };
-  }
-
-  // --- B 路:跳过邮箱验证直接建号 ------------------------------------------
-  //
-  // 默认不走这条路。跳过邮箱验证意味着任何人都能用不属于自己的邮箱注册并进入系统,
-  // 这个代价必须由运维显式承担,不能由代码替他决定。
-  if (!allowUnverifiedSignup()) {
-    return {
-      error: "邮件服务暂时不可用,当前无法完成注册。",
-      hint: "请稍后重试。若持续失败,请联系管理员为 Supabase 配置自有 SMTP。",
-    };
-  }
-
   const admin = createSupabaseAdminClient();
   if (!admin) {
     return {
-      error: "邮件服务未接通,当前无法完成注册。",
-      hint: "请联系管理员在 Supabase 配置自有 SMTP,或提供 service role 密钥。",
+      error: "认证服务未完整配置,当前无法注册。",
+      hint: "缺少 service role 密钥,请联系管理员。",
     };
   }
 
-  const { error: adminError } = await admin.auth.admin.createUser({
+  // 建号。email_confirm: true 表示直接标记为已确认,不触发任何邮件。
+  const { error: createError } = await admin.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
-    user_metadata: { email_verification_skipped: true },
   });
 
-  if (adminError) {
-    // 邮箱已存在时不回显该事实 —— 避免账号枚举
-    if (/already|exists|registered/i.test(adminError.message)) {
-      return {
-        error: "无法用该邮箱创建账户。",
-        hint: "如果该邮箱已注册,请直接登录或使用找回密码。",
-      };
+  if (createError) {
+    if (/already|exists|registered|duplicate/i.test(createError.message)) {
+      return { alreadyRegistered: true };
     }
-    return { error: translate(adminError.message) };
+    return { error: translate(createError.message) };
   }
 
-  return { emailVerificationSkipped: true };
+  // 立刻登录,把会话 Cookie 写进响应。
+  // 注册完还要用户再手动登一次是多余的一步,而每多一步就多一个卡住的地方。
+  const { error: signInError } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
+
+  if (signInError) {
+    // 账号确实建好了,只是这一步没成 —— 如实说,并指向登录页,不要谎称失败
+    return {
+      error: "账户已创建,但自动登录失败。",
+      hint: "请前往登录页手动登录。",
+    };
+  }
+
+  redirect("/today");
 }
 
 function translate(message: string): string {
-  if (/password/i.test(message) && /short|least/i.test(message)) {
-    return "密码长度不足,请设置至少 8 位。";
+  if (/password/i.test(message) && /short|least|weak/i.test(message)) {
+    return "密码强度不足,请设置至少 8 位。";
   }
   if (/invalid/i.test(message) && /email/i.test(message)) {
     return "该邮箱地址无法使用,请换一个。";
