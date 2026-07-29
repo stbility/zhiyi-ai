@@ -62,6 +62,8 @@ interface Turn {
   attachedFiles?: number;
   /** 上下文被裁剪的说明 */
   trimming?: string;
+  /** 联网检索的说明 */
+  search?: string;
 }
 
 /**
@@ -159,6 +161,13 @@ export function ChatPanel({
   const [attachNote, setAttachNote] = useState<string | null>(null);
   /** 本对话当前关联的项目文件数 —— 附件跨轮保留,不再只作用于一条消息 */
   const [contextFiles, setContextFiles] = useState(initialFileCount);
+  /**
+   * 本轮是否联网。
+   *
+   * 由用户显式开启,不让模型自己决定 —— 模型判断「要不要搜」并不可靠,
+   * 而每次搜索都消耗配额。显式开关让成本和行为都可预期。
+   */
+  const [webSearch, setWebSearch] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   /** 桌面端历史栏是否展开。收起后输出区能多出 224px 宽度 */
   const [historyOpen, setHistoryOpen] = useState(true);
@@ -243,6 +252,7 @@ export function ChatPanel({
           model: modelId,
           content,
           ...(attachments.length > 0 ? { attachments } : {}),
+          ...(webSearch ? { webSearch: true } : {}),
         }),
         signal: controller.signal,
       });
@@ -286,6 +296,7 @@ export function ChatPanel({
                 fallback?: string;
                 trimming?: string;
                 files?: number;
+                search?: string;
               }
             | { text: string }
             | {
@@ -305,6 +316,9 @@ export function ChatPanel({
             if (payload.fallback) patchAssistant({ fallback: payload.fallback });
             // 上下文被裁剪时如实告知 —— 不说的话,用户只会觉得模型「忘了」
             if (payload.trimming) patchAssistant({ trimming: payload.trimming });
+            // 联网与否必须如实显示 —— 否则用户无从判断这个回答是基于
+            // 实时资料还是模型的旧知识
+            if (payload.search) patchAssistant({ search: payload.search });
             if (typeof payload.files === "number") setContextFiles(payload.files);
           } else if (event === "delta" && "text" in payload) {
             text += payload.text;
@@ -659,6 +673,17 @@ export function ChatPanel({
             >
               <Icon name="folder" size={15} />
               添加文件夹
+            </Button>
+
+            <Button
+              type="button"
+              variant={webSearch ? "primary" : "secondary"}
+              onClick={() => setWebSearch((v) => !v)}
+              aria-pressed={webSearch}
+              title="开启后本轮会先联网检索,再让模型基于检索到的材料作答并标注来源"
+            >
+              <Icon name="search" size={15} />
+              {webSearch ? "联网已开启" : "联网"}
             </Button>
 
             <Button type="submit" loading={streaming} className="shrink-0">

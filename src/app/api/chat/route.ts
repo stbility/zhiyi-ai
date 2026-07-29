@@ -60,6 +60,13 @@ const bodySchema = z.object({
   model: z.string().trim().min(1, "请选择模型"),
   content: z.string().trim().min(1, "请输入内容").max(32_000, "内容过长"),
   /**
+   * 本轮是否联网检索。
+   *
+   * 由用户显式开启,而不是让模型自己决定 —— 模型判断「要不要搜」并不可靠,
+   * 而每次搜索都消耗配额。显式开关让成本和行为都可预期。
+   */
+  webSearch: z.boolean().optional(),
+  /**
    * 本轮附带的项目文件。
    *
    * 单独成一个字段而不是拼进 content:用户自己打的字要保持可读、可回看,
@@ -184,6 +191,44 @@ export async function POST(request: NextRequest) {
   // 剩余额度给历史消息,历史从最近往前装。
   // 装不下的如实统计,由界面告知用户 —— 静默截断会让模型看到残缺信息,
   // 给出的建议全是错的,比不带更糟。见 lib/ai/context.ts。
+  // 联网检索。开启时先搜,再把结果连同来源交给模型 ——
+  // 模型本身没有联网能力,平台自带的搜索按钮是平台功能,
+  // 通过 OpenAI 兼容接口调用时拿不到。所以这一步必须我们自己做。
+  //
+  // 搜索失败不中断对话:模型基于既有知识作答并说明没搜到,
+  // 比整轮报错有用。
+  let searchBlock = "";
+  let searchNote: string | null = null;
+  if (parsed.data.webSearch === true) {
+    const { data: integration } = await supabase
+      .from("integrations")
+      .select("kind, credential_cipher, enabled")
+      .eq("organization_id", organizationId)
+      .eq("kind", "tavily")
+      .maybeSingle();
+
+    if (!integration || integration.enabled === false) {
+      searchNote =
+        "未配置搜索集成,本轮未联网。可在「集成」页添加 Tavily 密钥后开启。";
+    } else {
+      const { tavilySearch, renderSearchContext } = await import(
+        "@/lib/integrations/tavily"
+      );
+      const outcome = await tavilySearch({
+        credentialCipher: integration.credential_cipher as string,
+        query: content,
+      });
+      if (outcome.ok && outcome.results.length > 0) {
+        searchBlock = renderSearchContext(content, outcome.results);
+        searchNote = `已联网检索 ${outcome.results.length} 条结果,回答中的来源编号对应这些链接。`;
+      } else {
+        searchNote = outcome.ok
+          ? "本轮联网检索没有找到相关结果,以下回答基于模型既有知识。"
+          : `联网检索失败(${outcome.error ?? "未知原因"}),以下回答基于模型既有知识。`;
+      }
+    }
+  }
+
   const { buildContext, describeTrimming } = await import("@/lib/ai/context");
   const built = buildContext(
     (attachmentRows ?? []).map((r) => ({
@@ -199,7 +244,10 @@ export async function POST(request: NextRequest) {
 
   const messages: ChatMessage[] = [
     ...built.messages,
-    { role: "user" as const, content: `${built.fileBlock}${content}` },
+    {
+      role: "user" as const,
+      content: `${built.fileBlock}${searchBlock}${content}`,
+    },
   ];
 
   // 先落库用户消息 —— 即便后续模型调用失败,用户说过的话也不该丢。
@@ -337,6 +385,7 @@ export async function POST(request: NextRequest) {
   const encoder = new TextEncoder();
   const convId = conversationId;
   const trimming = trimmingNote;
+  const search = searchNote;
   const fileCount = built.stats.filesIncluded;
 
   const body = new ReadableStream<Uint8Array>({
@@ -370,6 +419,9 @@ export async function POST(request: NextRequest) {
         ...(trimming ? { trimming } : {}),
         // 本对话当前关联的项目文件数,让用户知道智能体看得到什么
         ...(fileCount > 0 ? { files: fileCount } : {}),
+        // 联网与否、搜到没搜到,都要如实说 —— 不说的话用户无从判断
+        // 这个回答到底是基于实时资料还是模型的旧知识
+        ...(search ? { search } : {}),
       });
 
       try {
