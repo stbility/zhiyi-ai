@@ -73,6 +73,7 @@ const PATHS = {
     </>
   ),
   chevronRight: <polyline points="9 18 15 12 9 6" />,
+  chevronLeft: <polyline points="15 18 9 12 15 6" />,
   chevronDown: <polyline points="6 9 12 15 18 9" />,
   x: (
     <>

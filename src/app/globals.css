@@ -122,11 +122,18 @@
  * 若设计系统日后正式发布浅色令牌,这一整块应删除并改为引用官方值。
  * ------------------------------------------------------------------------- */
 :root[data-theme="light"] {
+  /*
+   * 层级方向和深色是反的,这点第一版我搞错了。
+   * 深色下越"高"的表面越亮;浅色下画布已经接近白,再往白走就分不出层次 ——
+   * 表现就是对话框和页面背景糊成一片。
+   * 按 --paper-* 的原意:画布是微暖的米白,浮起的卡片是纯白,
+   * 更深的控件表面朝边框色走。
+   */
   --bg-canvas: var(--paper-bg);
   --surface-1: var(--paper-surface);
-  --surface-2: color-mix(in srgb, var(--paper-bg) 60%, var(--paper-surface));
-  --surface-3: color-mix(in srgb, var(--paper-border) 35%, var(--paper-surface));
-  --surface-4: color-mix(in srgb, var(--paper-border) 55%, var(--paper-surface));
+  --surface-2: var(--paper-surface);
+  --surface-3: color-mix(in srgb, var(--paper-border) 30%, var(--paper-surface));
+  --surface-4: color-mix(in srgb, var(--paper-border) 50%, var(--paper-surface));
 
   --border-default: var(--paper-border);
   --border-strong: color-mix(in srgb, var(--paper-text-secondary) 35%, var(--paper-border));
@@ -134,8 +141,12 @@
 
   --text-primary: var(--paper-text-primary);
   --text-secondary: var(--paper-text-secondary);
-  --text-tertiary: color-mix(in srgb, var(--paper-text-secondary) 70%, var(--paper-bg));
-  --text-disabled: color-mix(in srgb, var(--paper-text-secondary) 45%, var(--paper-bg));
+  /*
+   * 三级文字第一版调得太淡,浅底上几乎看不清 —— 附件格式说明那一行尤其明显。
+   * 往正文色多靠一些,保证仍是"次要"但读得出来。
+   */
+  --text-tertiary: color-mix(in srgb, var(--paper-text-secondary) 88%, var(--paper-bg));
+  --text-disabled: color-mix(in srgb, var(--paper-text-secondary) 55%, var(--paper-bg));
 
   /* 品牌与语义色本身不变,只把 tint 调到浅底上看得见的浓度 */
   --brand-tint: color-mix(in srgb, var(--brand-primary) 10%, transparent);

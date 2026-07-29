@@ -153,6 +153,8 @@ export function ChatPanel({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachNote, setAttachNote] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  /** 桌面端历史栏是否展开。收起后输出区能多出 224px 宽度 */
+  const [historyOpen, setHistoryOpen] = useState(true);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -345,8 +347,6 @@ export function ChatPanel({
         </Link>
       </div>
 
-      <p className="text-fg-tertiary text-label px-3 pb-1">历史对话</p>
-
       {conversations.length === 0 ? (
         <p className="text-fg-tertiary text-label px-3">还没有对话记录。</p>
       ) : (
@@ -419,10 +419,34 @@ export function ChatPanel({
     // min-h 是兜底:h-full 依赖祖先链上每一层都有确定高度,
     // 任何一层断掉整块就会塌成 0 —— 表现就是白屏。
     <div className="font-zh flex h-full min-h-[calc(100dvh-3.5rem)] w-full min-w-0">
-      {/* 左侧:历史对话。导航类操作集中在这里 */}
-      <aside className="border-divider hidden w-56 shrink-0 flex-col border-r md:flex">
-        {sidebar}
-      </aside>
+      {/* 左侧:历史对话。可收起 —— 不需要时把宽度全让给输出内容 */}
+      {historyOpen ? (
+        <aside className="border-divider hidden w-56 shrink-0 flex-col border-r md:flex">
+          <div className="flex items-center justify-between px-3 pt-3">
+            <span className="text-fg-tertiary text-label">历史对话</span>
+            <IconButton
+              aria-label="隐藏历史对话"
+              title="隐藏历史对话"
+              onClick={() => setHistoryOpen(false)}
+              size={24}
+            >
+              <Icon name="chevronLeft" size={14} />
+            </IconButton>
+          </div>
+          {sidebar}
+        </aside>
+      ) : (
+        <div className="border-divider hidden shrink-0 flex-col items-center border-r px-2 pt-3 md:flex">
+          <IconButton
+            aria-label="显示历史对话"
+            title="显示历史对话"
+            onClick={() => setHistoryOpen(true)}
+            size={28}
+          >
+            <Icon name="chevronRight" size={16} />
+          </IconButton>
+        </div>
+      )}
 
       {/* 窄屏抽屉,避免挤掉对话本身 */}
       {sidebarOpen && (

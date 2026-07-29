@@ -8,7 +8,6 @@ import { Button } from "@/components/primitives/Button";
 import { Input } from "@/components/primitives/Input";
 import { Select } from "@/components/primitives/Select";
 import {
-  addModel,
   addProvider,
   deleteModel,
   deleteProvider,
@@ -70,10 +69,6 @@ function ModelList({
   canManage: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [, addAction, adding] = useActionState<ProviderActionState, FormData>(
-    addModel,
-    {},
-  );
   const [, removeAction] = useActionState<ProviderActionState, FormData>(
     deleteModel,
     {},
@@ -145,22 +140,6 @@ function ModelList({
             ))}
           </ul>
 
-          {canManage && (
-            <form action={addAction} className="flex flex-wrap items-end gap-2">
-              <input type="hidden" name="providerId" value={providerId} />
-              <div className="min-w-0 flex-1">
-                <Input
-                  name="modelId"
-                  label="手动添加模型标识"
-                  description="自动导入拿到的是 /models 的返回,不总是全的。服务商目录里有、这里却没有时,可在此补上;能不能用由第一次真实调用决定。"
-                  placeholder="例如 moonshotai/kimi-k2.6"
-                />
-              </div>
-              <Button type="submit" variant="secondary" size="sm" loading={adding}>
-                添加
-              </Button>
-            </form>
-          )}
         </>
       )}
     </div>
