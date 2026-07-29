@@ -114,8 +114,17 @@ export function AuthForm({
       const origin =
         typeof window === "undefined" ? siteUrl : window.location.origin;
 
+      // 所有认证回调统一走 /auth/callback,再由它转到目的页。
+      //
+      // 原因是运维现实:Supabase 的重定向白名单被 Supabase–Vercel 集成自动改写,
+      // 手动加的条目会被它不断补充新模式,很难长期维持一份精确清单。
+      // 与其每加一个页面就回后台加一条白名单(还可能被覆盖),不如让整个应用
+      // 只使用**一个**回调地址 —— 它一次进入白名单,之后新增任何页面都不必再动后台。
+      //
+      // /auth/callback 在服务端完成 code 兑换后按 next 参数转跳,
+      // next 经 safeRedirectPath 净化,不构成开放重定向。
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${origin}/reset-password`,
+        redirectTo: `${origin}/auth/callback?next=${encodeURIComponent("/reset-password")}`,
       });
       if (error) {
         setError(translateAuthError(error.message));
