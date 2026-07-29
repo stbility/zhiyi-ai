@@ -69,11 +69,17 @@ const bodySchema = z.object({
     .array(
       z.object({
         path: z.string().trim().min(1).max(400),
-        content: z.string().max(60_000),
+        content: z.string().max(400_000),
       }),
     )
-    .max(40)
-    .optional(),
+    .optional()
+    // 不限文件个数,只约束总量 —— 真实项目动辄上千个文件,
+    // 卡个数只会把源码截断。总量上限来自请求体大小这个物理约束。
+    .refine(
+      (list) =>
+        (list ?? []).reduce((n, a) => n + a.content.length, 0) <= 1_200_000,
+      { message: "附件总量超过上限,请选择更小的目录" },
+    ),
 });
 
 function errorResponse(message: string, status: number) {
@@ -250,12 +256,16 @@ export async function POST(request: NextRequest) {
         wd.reason ??
         (e instanceof ProviderCallError ? e.message : "调用模型服务失败。");
 
-      // 这个模型压根不提供对话端点 → 从可选列表摘掉,同一个坑不该踩第二次。
-      // 只在确定是永久性问题时才标记 —— 排队、限流绝不能让模型被永久剔除。
+      // 只记录失败原因,不再把模型从可选列表里摘掉。
+      //
+      // 早先是「永久性失败即标记不可用」,结果把用户真正需要的模型悄悄拿走了 ——
+      // Kimi 就是这种情况:服务商目录里有、代理编程要用,只是这个账号
+      // 暂时没被授权。系统不该替用户做这个决定。
+      // 本次调用会由下面的降级链换一个模型完成,任务不中断。
       if (indicatesModelUnusable(lastStatus, lastFailure)) {
         await supabase
           .from("ai_models")
-          .update({ chat_unavailable_reason: lastFailure })
+          .update({ last_error: lastFailure })
           .eq("provider_id", providerId)
           .eq("model_id", candidate);
       }

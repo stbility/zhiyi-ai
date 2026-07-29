@@ -365,21 +365,25 @@ export async function testProvider(
       );
     }
 
-    // 确实用不了的直接从库里删掉,不再留一条带红叉的记录。
+    // 探测失败的模型仍然保留在列表里,只记下上次失败的原因。
     //
-    // 之前是「落库并标记原因」,想让用户知道为什么某个模型没出现。但结果是
-    // 列表里长期挂着一堆点开就报错的死条目,反而干扰选择。
-    // 现在改为:不入库,原因写在本次测试的返回文案里说清楚 ——
-    // 该说明的说明了,列表保持干净。
+    // 这条策略反复调整过,最后定在这里,理由是:
+    //   - 自动删除会把用户真正需要的模型悄悄拿走(Kimi 就是这种情况:
+    //     服务商目录里有、代理编程要用,只是这个账号暂时没被授权);
+    //   - 而失败也不该被藏起来,否则用户只会觉得"点了没反应"。
+    // 所以:系统只如实记录,去留由用户自己按删除键决定。
+    // 调用真的失败时,跨厂商降级链会自动换一个模型完成任务,工作流不会中断。
     if (rejected.length > 0) {
-      await supabase
-        .from("ai_models")
-        .delete()
-        .eq("provider_id", parsed.data.id)
-        .in(
-          "model_id",
-          rejected.map((r) => r.model),
-        );
+      await supabase.from("ai_models").upsert(
+        rejected.map((r) => ({
+          provider_id: parsed.data.id,
+          organization_id: provider.organization_id as string,
+          model_id: r.model,
+          display_name: r.model.length > 60 ? r.model.slice(0, 60) : r.model,
+          chat_unavailable_reason: r.reason.slice(0, 300),
+        })),
+        { onConflict: "provider_id,model_id" },
+      );
     }
   }
 

@@ -28,12 +28,27 @@ export interface CollectResult {
   };
 }
 
-/** 最多带多少个文件 */
-export const MAX_FILES = 40;
+/**
+ * 容量上限。
+ *
+ * 原来卡在 40 个文件,是我拍的数,真实项目动辄成百上千个文件,一选就被截断。
+ * 现在不再人为限制文件个数,只保留两个**真实存在**的物理约束:
+ *
+ *   1. 请求体大小 —— Vercel 的 Serverless 函数请求体上限约 4.5MB,
+ *      超了连不上服务端。中文按 UTF-8 最多 3 字节/字,留足余量后取 120 万字符。
+ *   2. 模型上下文 —— 120 万字符大约 30–40 万 token。DeepSeek V4 与 GLM-5.2
+ *      都是 100 万 token 上下文,装得下;换成小上下文的模型会由服务商报错,
+ *      那时错误里会带明确说明。
+ *
+ * 单文件上限保留,但放宽到 40 万字符:超过这个量的单个文件基本是压缩产物、
+ * 打包结果或数据集,读进去只会挤掉真正的源码。
+ */
+/** 文件个数不再限制 —— 由总字符数统一约束 */
+export const MAX_FILES = Number.POSITIVE_INFINITY;
 /** 单个文件最大字符数 —— 超过通常是压缩产物或数据文件 */
-export const MAX_FILE_CHARS = 60_000;
-/** 全部附件合计上限,防止一次把上下文占满 */
-export const MAX_TOTAL_CHARS = 240_000;
+export const MAX_FILE_CHARS = 400_000;
+/** 全部附件合计上限,由请求体大小反推 */
+export const MAX_TOTAL_CHARS = 1_200_000;
 
 /** 明确是文本、且对读代码有意义的扩展名 */
 const TEXT_EXTENSIONS = new Set([
@@ -106,11 +121,6 @@ export async function collectFolderAttachments(
       skipped.tooLarge += 1;
       continue;
     }
-    if (attachments.length >= MAX_FILES) {
-      skipped.overBudget += 1;
-      continue;
-    }
-
     const text = await file.text();
     if (total + text.length > MAX_TOTAL_CHARS) {
       skipped.overBudget += 1;
@@ -130,6 +140,8 @@ export function describeSkipped(skipped: CollectResult["skipped"]): string {
   if (skipped.ignored > 0) parts.push(`${skipped.ignored} 个依赖/构建文件`);
   if (skipped.binary > 0) parts.push(`${skipped.binary} 个非文本文件`);
   if (skipped.tooLarge > 0) parts.push(`${skipped.tooLarge} 个超大文件`);
-  if (skipped.overBudget > 0) parts.push(`${skipped.overBudget} 个超出容量上限`);
+  if (skipped.overBudget > 0) {
+    parts.push(`${skipped.overBudget} 个因总量超出上限未带上`);
+  }
   return parts.length === 0 ? "" : `已跳过 ${parts.join("、")}`;
 }

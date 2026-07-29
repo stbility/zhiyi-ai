@@ -104,7 +104,7 @@ function CopyButton({ text }: { text: string }) {
 
 /** 「添加文件夹」的取用规则,按钮提示与表单说明共用同一份文案 */
 const FOLDER_HINT =
-  "添加文件夹:只读取代码与文本类文件(ts/js/py/go/java/md/json/yaml 等),自动跳过 node_modules、.git、dist 等目录及图片压缩包等二进制文件;最多 40 个文件、合计 24 万字符;仅对下一条消息生效。";
+  "添加文件夹:只读取代码与文本类文件(ts/js/py/go/java/md/json/yaml 等),自动跳过 node_modules、.git、dist 等目录及图片压缩包等二进制文件;不限文件个数,合计上限 120 万字符(约 30–40 万 token);仅对下一条消息生效。";
 
 function toTurn(t: InitialTurn): Turn {
   const turn: Turn = { id: t.id, role: t.role, content: t.content };
