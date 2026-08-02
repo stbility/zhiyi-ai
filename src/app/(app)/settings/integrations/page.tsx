@@ -5,7 +5,13 @@ import {
   IntegrationManager,
   type IntegrationRow,
 } from "@/components/app/IntegrationManager";
+import { GitConnection } from "@/components/app/GitConnection";
 import { isEncryptionAvailable } from "@/lib/crypto/secret-box";
+import {
+  getGitHubAppConfig,
+  installUrl,
+  issueState,
+} from "@/lib/integrations/github";
 import { getMyOrganizations } from "@/lib/db/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -40,7 +46,31 @@ async function loadIntegrations(
   }));
 }
 
-export default async function IntegrationsPage() {
+/** 已连接的 Git 安装。没有就是没有,不编造 */
+async function loadGitInstallation(organizationId: string) {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return null;
+
+  const { data } = await supabase
+    .from("git_installations")
+    .select("installation_id, account_login, created_at")
+    .eq("organization_id", organizationId)
+    .eq("provider", "github")
+    .maybeSingle();
+
+  if (!data) return null;
+  return {
+    installationId: data.installation_id as string,
+    accountLogin: (data.account_login as string | null) ?? null,
+    connectedAt: data.created_at as string,
+  };
+}
+
+export default async function IntegrationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ githubOk?: string; githubError?: string }>;
+}) {
   const organizations = await getMyOrganizations();
   const org = organizations[0];
 
@@ -64,6 +94,15 @@ export default async function IntegrationsPage() {
   const integrations = await loadIntegrations(org.id);
   const canManage = org.role === "owner" || org.role === "admin";
 
+  // App 未配置时不生成任何可点的入口 —— 给一个点了必然失败的按钮,
+  // 和放一个空按钮是同一类问题
+  const appConfig = getGitHubAppConfig();
+  const gitInstallation = await loadGitInstallation(org.id);
+  const installHref = appConfig
+    ? installUrl(appConfig.slug, issueState(org.id))
+    : null;
+  const params = await searchParams;
+
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 md:px-8 md:py-10">
       <header>
@@ -72,6 +111,17 @@ export default async function IntegrationsPage() {
           智能体调用外部能力的入口。凭据加密存储,仅在服务端解密,不会下发到浏览器。
         </p>
       </header>
+
+      <GitConnection
+        configured={appConfig !== null}
+        installation={gitInstallation}
+        installHref={installHref}
+        canManage={canManage}
+        notice={{
+          ...(params.githubOk ? { ok: true } : {}),
+          ...(params.githubError ? { error: params.githubError } : {}),
+        }}
+      />
 
       <IntegrationManager
         organizationId={org.id}

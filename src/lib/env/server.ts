@@ -65,6 +65,18 @@ const serverEnvSchema = z.object({
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: optionalString,
   STRIPE_WEBHOOK_SECRET: optionalString,
 
+  // --- GitHub App(仓库集成)---------------------------------------------
+  /**
+   * App 的 Client ID。签 JWT 时作为 iss —— 官方推荐用它而不是 App ID。
+   * 私钥是完整 PEM;Vercel 的输入框会把换行存成字面量 \n,读取时要还原。
+   * App slug 用于拼安装页地址 https://github.com/apps/<slug>/installations/new
+   */
+  GITHUB_APP_CLIENT_ID: optionalString,
+  GITHUB_APP_PRIVATE_KEY: optionalString,
+  GITHUB_APP_SLUG: optionalString,
+  /** 校验 webhook 签名。没有它就无法确认回调真的来自 GitHub */
+  GITHUB_APP_WEBHOOK_SECRET: optionalString,
+
   // --- Resend(事务邮件)-------------------------------------------------
   RESEND_API_KEY: optionalString,
 
