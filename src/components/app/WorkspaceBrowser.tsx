@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 
 import { Icon } from "@/components/icons/Icon";
 import { Button } from "@/components/primitives/Button";
@@ -46,6 +46,31 @@ export function WorkspaceBrowser({
   );
   /** 预览还是源码。默认预览 —— 用户要的是看到效果,不是读代码 */
   const [mode, setMode] = useState<"preview" | "source">("preview");
+  /**
+   * 全屏阅读。
+   *
+   * 420px 高的预览框放一份周报根本读不完,得在小窗里一直滚 ——
+   * 用户的原话是「工作区输出框无法完整读取内容」。
+   *
+   * 为什么不是「在新标签页打开」:那需要把内容变成 blob: 或 data: URL,
+   * 而 blob 继承创建它的源 —— 等于让模型生成的 HTML 与脚本跑在
+   * 我们自己的域上,能读到登录态 Cookie 与 localStorage。
+   * 全屏用的还是同一个 sandbox iframe,隔离没有任何放松,
+   * 只是把可视区域给足。真要脱离浏览器看,下方有「存为可运行页面」,
+   * 那是 file:// 独立源,同样安全。
+   */
+  const [fullscreen, setFullscreen] = useState(false);
+  // 全屏层是覆盖全屏的,必须能用 Esc 退出 —— 否则键盘用户被困在里面,
+  // 鼠标用户也会下意识按 Esc 然后发现没反应
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
+
   const [, deleteFileAction] = useActionState<WorkspaceActionState, FormData>(
     deleteWorkspaceFile,
     {},
@@ -222,6 +247,19 @@ export function WorkspaceBrowser({
                     </div>
                   )}
 
+                  {previewDoc !== null && mode === "preview" && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setFullscreen(true)}
+                      title="全屏阅读(Esc 退出)"
+                    >
+                      <Icon name="externalLink" size={14} />
+                      全屏
+                    </Button>
+                  )}
+
                   {preview?.kind === "project" && (
                     <Button
                       type="button"
@@ -281,6 +319,39 @@ export function WorkspaceBrowser({
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {/* 全屏阅读层。用的是同一份 previewDoc 与同一套 sandbox,
+          隔离强度不变,只是把高度给足。 */}
+      {fullscreen && open && previewDoc !== null && (
+        <div
+          className="bg-canvas/90 fixed inset-0 z-100 flex flex-col p-4 md:p-8"
+          role="dialog"
+          aria-modal
+          aria-label={`${open.path} 全屏阅读`}
+        >
+          <div className="mb-2 flex shrink-0 items-center justify-between gap-3">
+            <span className="text-fg-secondary text-label min-w-0 flex-1 truncate font-mono">
+              {open.path}
+            </span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setFullscreen(false)}
+            >
+              <Icon name="x" size={14} />
+              退出全屏
+            </Button>
+          </div>
+          <iframe
+            key={`fs-${open.path}`}
+            title={`${open.path} 全屏预览`}
+            srcDoc={previewDoc}
+            sandbox={sandbox}
+            className="bg-paper-surface rounded-card min-h-0 w-full flex-1 border-0"
+          />
         </div>
       )}
 

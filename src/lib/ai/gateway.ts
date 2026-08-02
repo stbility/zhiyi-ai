@@ -126,14 +126,36 @@ async function readUpstreamDetail(response: Response): Promise<string | null> {
   // 擦掉任何形似密钥的串,再截断。宁可少说,不可泄密。
   const safe = detail
     .replace(/\b(nvapi|sk|pk|key)[-_][A-Za-z0-9_-]{8,}/gi, "[已隐去]")
+    // 账号标识与内部函数 ID 对用户毫无意义,只会让报错更吓人。
+    // 英伟达的原话形如
+    //   Function '23d4f03a-…': Not found for account 'AOVVcakqua2…'
+    // 那串 UUID 是它内部的函数编号,那串 account 是账号指纹 —— 都删掉,
+    // 剩下的「Not found for account」才是真正有信息量的部分。
+    .replace(/\bFunction\s+'[0-9a-f-]{16,}'\s*:?\s*/gi, "")
+    .replace(/\baccount\s+'[A-Za-z0-9_-]{16,}'/gi, "account")
     .replace(/\s+/g, " ")
     .trim();
 
   return safe === "" ? null : safe.slice(0, 240);
 }
 
-async function describeFailure(response: Response): Promise<string> {
+/**
+ * 「不是写错了,是没开通」的原话特征。
+ *
+ * 按语义匹配而不是认厂商 —— 各家措辞不同但意思一样,写死某一家的话,
+ * 换个服务商就又回到误导性诊断。
+ */
+const NO_ENTITLEMENT =
+  /not found for account|not authorized|no access to|not entitled|access denied|无权限|未开通|没有权限/i;
+
+/** 导出仅为可测试 —— 错误诊断的措辞直接决定用户去修哪里,必须能被守住 */
+export async function describeFailure(
+  response: Response,
+  /** 出错的模型标识。多个模型并存时不点名等于没说 */
+  model?: string,
+): Promise<string> {
   const status = response.status;
+  const who = model ? `模型 ${model}:` : "";
   // 先把上游原话取出来 —— 之前对 401/403/404/429/5xx 直接返回固定文案,
   // 根本没读响应体,上游对失败的真正解释被整个丢掉。
   // 真实教训:moonshotai/kimi-k2.6 的模型标识与端点都和官方文档一致却报 404,
@@ -142,18 +164,34 @@ async function describeFailure(response: Response): Promise<string> {
   const suffix = detail ? `。服务商原话:${detail}` : "";
 
   if (status === 401 || status === 403) {
-    return `密钥被拒绝(HTTP ${status}),请到「模型服务」检查密钥${suffix}`;
+    return `${who}密钥被拒绝(HTTP ${status}),请到「模型服务」检查密钥${suffix}`;
   }
   if (status === 404) {
-    return `接口或模型不存在(HTTP 404),请检查接口地址与模型名称${suffix}`;
+    // 404 有两种截然不同的成因,给错诊断比不给更糟。
+    //
+    // 一种是真的写错了(地址拼错、模型名打错)。
+    // 另一种是**账号没有开通这个模型** —— 标识和地址都对,服务商也在
+    // /models 里把它列了出来,但这个账号没有调用权限。英伟达对后者返回的
+    // 原话是「Not found for account …」,状态码同样是 404。
+    //
+    // 此前两种一律回一句「请检查接口地址与模型名称」,把用户支使去改
+    // 一个根本没坏的地方,真正该做的事(去服务商控制台开通)一个字没提。
+    if (NO_ENTITLEMENT.test(detail ?? "")) {
+      return (
+        `${who}该模型在你的服务商账号下没有调用权限(HTTP 404)。` +
+        `模型标识与接口地址都没有问题 —— 这是账号侧的开通问题,` +
+        `需要到服务商控制台申请开通该模型,或先改用其它模型${suffix}`
+      );
+    }
+    return `${who}接口或模型不存在(HTTP 404),请检查接口地址与模型名称${suffix}`;
   }
   if (status === 429) {
-    return `服务商限流,请稍后重试${suffix}`;
+    return `${who}服务商限流,请稍后重试${suffix}`;
   }
   if (status >= 500) {
-    return `服务商暂时不可用(HTTP ${status})${suffix}`;
+    return `${who}服务商暂时不可用(HTTP ${status})${suffix}`;
   }
-  return detail ? `HTTP ${status}:${detail}` : `接口返回 HTTP ${status}`;
+  return detail ? `${who}HTTP ${status}:${detail}` : `${who}接口返回 HTTP ${status}`;
 }
 
 /** 逐行读取 SSE 流 */
@@ -212,7 +250,7 @@ async function callOpenAICompatible(
   });
 
   if (!response.ok || !response.body) {
-    throw new ProviderCallError(await describeFailure(response), response.status);
+    throw new ProviderCallError(await describeFailure(response, model), response.status);
   }
 
   const body = response.body;
@@ -342,7 +380,7 @@ async function callAnthropic(
   });
 
   if (!response.ok || !response.body) {
-    throw new ProviderCallError(await describeFailure(response), response.status);
+    throw new ProviderCallError(await describeFailure(response, model), response.status);
   }
 
   const body = response.body;
@@ -423,7 +461,7 @@ async function callGoogle(
   });
 
   if (!response.ok || !response.body) {
-    throw new ProviderCallError(await describeFailure(response), response.status);
+    throw new ProviderCallError(await describeFailure(response, model), response.status);
   }
 
   const body = response.body;
@@ -775,7 +813,7 @@ export async function callWithTools({
   });
 
   if (!response.ok) {
-    throw new ProviderCallError(await describeFailure(response), response.status);
+    throw new ProviderCallError(await describeFailure(response, model), response.status);
   }
 
   const payload = (await response.json()) as {

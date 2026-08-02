@@ -78,3 +78,60 @@ describe("服务商错误翻译", () => {
     expect(text).toContain("排队已满");
   });
 });
+
+/**
+ * HTTP 状态码 → 诊断文案。
+ *
+ * 这里守的是「诊断有没有把人指对方向」。真实教训:英伟达对
+ * 「账号没开通这个模型」返回的也是 404,原话是
+ *   Function '<uuid>': Not found for account '<账号指纹>'
+ * 而我们一律回「请检查接口地址与模型名称」—— 把用户支使去改一个
+ * 根本没坏的地方,真正该做的事(去服务商控制台开通)一个字没提。
+ * 用户因此认为是系统把模型弄坏了。
+ */
+describe("HTTP 失败诊断", () => {
+  function res(status: number, body: unknown) {
+    return new Response(JSON.stringify(body), { status });
+  }
+
+  it("没开通的 404 说清是账号权限,而不是让人去改地址和名称", async () => {
+    const { describeFailure } = await load();
+    const text = await describeFailure(
+      res(404, {
+        detail:
+          "Function '23d4f03a-b8a6-4adb-a183-7daa083a09cc': Not found for account 'AOVVcakqua2HYhK_tMcyp9_gdM'",
+      }),
+      "moonshotai/kimi-k2.6",
+    );
+
+    expect(text).toContain("没有调用权限");
+    expect(text).toContain("开通");
+    // 关键:不能再让用户去改根本没错的东西
+    expect(text).not.toContain("请检查接口地址与模型名称");
+    // 要点名是哪个模型 —— 多模型并存时不点名等于没说
+    expect(text).toContain("moonshotai/kimi-k2.6");
+    // 内部函数编号与账号指纹对用户没有意义,只会让报错更吓人
+    expect(text).not.toContain("23d4f03a");
+    expect(text).not.toContain("AOVVcakqua2HYhK");
+  });
+
+  it("真的写错了的 404 仍然提示检查地址与名称", async () => {
+    const { describeFailure } = await load();
+    const text = await describeFailure(
+      res(404, { error: { message: "The model `gpt-9` does not exist" } }),
+      "gpt-9",
+    );
+    expect(text).toContain("请检查接口地址与模型名称");
+    expect(text).not.toContain("没有调用权限");
+  });
+
+  it("上游原话始终保留,不粉饰", async () => {
+    const { describeFailure } = await load();
+    const text = await describeFailure(
+      res(500, { error: { message: "internal boom" } }),
+      "m1",
+    );
+    expect(text).toContain("internal boom");
+    expect(text).toContain("m1");
+  });
+});
