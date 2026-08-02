@@ -134,7 +134,15 @@ export async function runAgent({
     // 这类换几次都一样,换了只是白白多烧几次配额。
     let turn;
     let lastError: ProviderCallError | null = null;
-    for (const candidate of [model, ...fallbackModels]) {
+    // 从**当前生效的模型**开始,不是从用户最初选的那个开始。
+    //
+    // 原来写的是 [model, ...fallbackModels]:第 1 步降级到 B 之后,
+    // 第 2 步到第 12 步每一步都要先撞一次已知在排队的 A,白白多等一轮。
+    // 更糟的是下面那句 candidate !== activeModel 会因此成立,
+    // 于是把用户自己选的 A 记进「换过的模型」,最后报告
+    // 「运行中主模型不可用,已自动改用:A」—— A 正是他选的那个。
+    const order = [activeModel, ...fallbackModels.filter((m) => m !== activeModel)];
+    for (const candidate of order) {
       try {
         turn = await callWithTools({
           credentials,

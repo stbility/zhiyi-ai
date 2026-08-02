@@ -49,6 +49,15 @@ export interface ChatDiagnostics {
   seenDeltaKeys: string[];
   /** 收到的分片总数 */
   chunkCount: number;
+  /**
+   * 本轮的「正文」其实是思考过程的兜底,不是模型给出的答案。
+   *
+   * 两个需求在这里冲突:给用户不能是空气泡,所以整轮只有思考时会把思考
+   * 当正文交出去;但**探测**必须知道这是兜底 —— 一个从不给出答案、
+   * 只会自言自语的模型不该被判定为可用(「不要写伪模型」)。
+   * 用这个标记把两者分开。
+   */
+  contentIsReasoningFallback: boolean;
 }
 
 /**
@@ -386,6 +395,7 @@ async function callOpenAICompatible(
     // 整轮下来一个字的正文都没有,但有思考过程 —— 把它交出来,并说明这是什么。
     // 给出模型真实产生的内容,比报一句「没有内容」有用得多。
     if (!emittedContent && reasoningBuffer !== "") {
+      diagnostics.contentIsReasoningFallback = true;
       yield {
         kind: "content",
         text: `(本轮没有产出正式回答,以下是模型的思考过程)\n\n${reasoningBuffer}`,
@@ -436,6 +446,9 @@ async function callAnthropic(
   const body = response.body;
 
   return (async function* () {
+    /** 上游明确报的错。必须在 catch 之外抛,否则会被兜底 catch 吃掉 */
+    let fatal: ProviderCallError | null = null;
+
     for await (const line of readSseLines(body)) {
       if (!line.startsWith("data:")) continue;
 
@@ -453,9 +466,15 @@ async function callAnthropic(
           usage.inputTokens = event.message?.usage?.input_tokens ?? null;
         }
         if (event.type === "error") {
-          const detail = "Anthropic 返回流内错误";
-          diagnostics.streamError = detail;
-          throw new ProviderCallError(detail);
+          // 记下来,在 try 之外再抛。
+          //
+          // 原来直接在这里 throw,而它就在下面那个 catch {} 的作用域内 ——
+          // 「单条事件解析失败不中断流」那个兜底把这个 throw 一起吃掉了,
+          // 上游明确报的错就这么消失了。如果错误发生在已经吐出部分内容之后,
+          // 用户拿到的是一段被截断的回答,而且没有任何提示。
+          // 这恰好违背了本文件反复强调的「不吞错」。
+          fatal = new ProviderCallError("Anthropic 返回流内错误");
+          diagnostics.streamError = fatal.message;
         }
         if (event.type === "message_delta") {
           usage.outputTokens = event.usage?.output_tokens ?? usage.outputTokens;
@@ -466,6 +485,8 @@ async function callAnthropic(
       } catch {
         // 同上,单条事件解析失败不中断流
       }
+      // 上游明确报的错必须抛出去,不能被上面的兜底 catch 掉
+      if (fatal) throw fatal;
     }
   })();
 }
@@ -570,6 +591,7 @@ export async function streamChat({
     streamError: null,
     seenDeltaKeys: [],
     chunkCount: 0,
+    contentIsReasoningFallback: false,
   };
 
   const stream = await (credentials.kind === "anthropic"
@@ -680,15 +702,25 @@ async function probeOnce(
       signal: controller.signal,
     });
 
+    // 只认正文。
+    //
+    // 这里曾写成 text += delta,而 delta 是 StreamChunk 对象 ——
+    // 拼出来是 "[object Object]",于是**任何**分片都能让探测判定通过,
+    // 包括纯思考过程的分片。explainEmptyResponse 那条分支永远走不到,
+    // 而它的存在意义正是「不要把跑不通的模型当成可用」。
+    // TypeScript 允许 string += object,所以类型检查和测试全都放过了。
     let text = "";
-    for await (const delta of stream) {
-      text += delta;
-      // 收到内容就够了 —— 探测不需要等模型说完
+    for await (const chunk of stream) {
+      if (chunk.kind !== "content") continue;
+      text += chunk.text;
+      // 收到正文就够了 —— 探测不需要等模型说完
       if (text.trim() !== "") break;
     }
 
     const latencyMs = Date.now() - startedAt;
-    if (text.trim() === "") {
+    // 兜底出来的「正文」其实是思考过程 —— 探测不认它。
+    // 一个只会自言自语、从不给答案的模型,不该出现在可选列表里。
+    if (text.trim() === "" || diagnostics.contentIsReasoningFallback) {
       const reason = explainEmptyResponse(diagnostics);
       return {
         model,
@@ -820,6 +852,21 @@ export interface ToolTurnResult {
 }
 
 /**
+ * 这个服务商协议是否支持本项目的工具调用。
+ *
+ * callWithTools 走的是 OpenAI 的 tools 规范 + /chat/completions 端点,
+ * 而 streamChat 是按 kind 分派的(Anthropic 用 /messages,Google 用
+ * generateContent)。用户配了 Anthropic 再开「智能体」开关,会 POST 到
+ * https://api.anthropic.com/v1/chat/completions 拿到 404,
+ * 报错还指向「接口地址或模型名」—— 把人引去改一个根本没错的配置。
+ *
+ * 与其让它撞上去,不如提前如实说明:这是能力边界,不是配置错误。
+ */
+export function supportsToolCalling(kind: ProviderKind): boolean {
+  return kind !== "anthropic" && kind !== "google";
+}
+
+/**
  * 带工具的一次调用(非流式)。
  *
  * 为什么工具循环用非流式:流式下工具调用参数是分片拼接的,拼错一个字符
@@ -845,6 +892,14 @@ export async function callWithTools({
   tools: readonly unknown[];
   signal: AbortSignal;
 }): Promise<ToolTurnResult> {
+  if (!supportsToolCalling(credentials.kind)) {
+    throw new ProviderCallError(
+      `该服务商的接口协议(${credentials.kind})暂不支持智能体的工具调用 —— ` +
+        `这不是配置错误,是本项目尚未为这套协议实现工具适配。` +
+        `请改用 OpenAI 兼容接口的服务商,或关闭「智能体」开关按普通对话使用。`,
+    );
+  }
+
   const apiKey = decryptSecret(credentials.apiKeyCipher);
   const response = await fetch(`${resolveBaseUrl(credentials)}/chat/completions`, {
     method: "POST",

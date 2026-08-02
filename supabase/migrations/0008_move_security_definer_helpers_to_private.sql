@@ -14,8 +14,61 @@
 -- 改成 INVOKER 会让 memberships 的 RLS 策略递归调用自身,整个组织权限体系瘫掉。
 -- 这两个函数用 SECURITY DEFINER 正是为了打断这个递归。
 --
--- 本文件与已应用到生产的迁移内容一致,仅作仓库留档。
+-- 以下语句是从生产库反向导出补写的。此前本文件只有注释,而这两个函数是
+-- **所有 RLS 策略的基础** —— 缺了它们整个权限体系都建不起来,
+-- 仓库因此无法独立重建数据库。
 -- 生产验证:rpc/is_org_member 与 rpc/has_org_role 均返回 404;
 -- 本人可见自己的 1 组织/1 成员/1 服务商/5 模型/9 对话,陌生人全部为 0。
 -- =============================================================================
 -- 完整语句见 Supabase 迁移记录 move_security_definer_helpers_to_private_schema。
+
+create schema if not exists private;
+
+-- private 不在 PostgREST 的暴露 schema 列表里,所以这两个函数不会变成
+-- 可直接调用的 RPC 端点。策略里引用它们不受影响 —— RLS 在数据库内部求值。
+revoke all on schema private from public, anon, authenticated;
+grant usage on schema private to postgres, service_role;
+
+-- 判断当前用户是不是某组织的在职成员。
+--
+-- 必须是 SECURITY DEFINER:memberships 自己也有 RLS,而那条策略又要调用
+-- 本函数 —— 用 SECURITY INVOKER 会递归调用自身,整个组织权限体系瘫掉。
+-- 这里用 DEFINER 正是为了打断这个递归。
+--
+-- search_path 置空:SECURITY DEFINER 函数必须钉死搜索路径,
+-- 否则调用方可以通过改 search_path 劫持函数里引用的表名。
+create or replace function private.is_org_member(org uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.memberships m
+    where m.organization_id = org
+      and m.user_id = auth.uid()
+      and m.status = 'active'
+  );
+$$;
+
+-- 同上,再多一层角色判断。用于「只有 owner / admin 能改」这类策略。
+create or replace function private.has_org_role(org uuid, roles org_role[])
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.memberships m
+    where m.organization_id = org
+      and m.user_id = auth.uid()
+      and m.status = 'active'
+      and m.role = any(roles)
+  );
+$$;
+
+-- 旧的 public 版本必须删掉 —— 留着就等于那个 RPC 端点还在
+drop function if exists public.is_org_member(uuid);
+drop function if exists public.has_org_role(uuid, org_role[]);

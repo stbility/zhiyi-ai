@@ -124,3 +124,44 @@ describe("推理流", () => {
     ]);
   });
 });
+
+/**
+ * 探测只能认正文。
+ *
+ * 真实回归:改成 StreamChunk 之后,probeChatModel 里仍写着 text += delta,
+ * 而 delta 是对象 —— 拼出来是 "[object Object]",于是**任何**分片都能让
+ * 探测判定通过,包括纯思考过程的分片。explainEmptyResponse 那条分支
+ * 永远走不到,而它的存在意义正是「不要把跑不通的模型当成可用」。
+ * TypeScript 允许 string += object,所以类型检查和 253 个测试全都放过了。
+ */
+describe("模型探测", () => {
+  it("只有思考、没有正文时,判定为不可用", async () => {
+    vi.stubGlobal("fetch", async () =>
+      sse([{ choices: [{ delta: { reasoning_content: "在想…" } }] }]),
+    );
+    const { probeChatModel } = await load();
+    const r = await probeChatModel({
+      credentials: CREDS,
+      model: "m",
+      timeoutMs: 5000,
+      attempts: 1,
+    });
+    expect(r.ok).toBe(false);
+    // 不能出现对象被当字符串拼接的痕迹
+    expect(JSON.stringify(r)).not.toContain("[object Object]");
+  });
+
+  it("有正文时判定为可用", async () => {
+    vi.stubGlobal("fetch", async () =>
+      sse([{ choices: [{ delta: { content: "在的" } }] }]),
+    );
+    const { probeChatModel } = await load();
+    const r = await probeChatModel({
+      credentials: CREDS,
+      model: "m",
+      timeoutMs: 5000,
+      attempts: 1,
+    });
+    expect(r.ok).toBe(true);
+  });
+});

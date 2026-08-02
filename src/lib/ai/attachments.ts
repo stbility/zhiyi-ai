@@ -56,7 +56,7 @@ const TEXT_EXTENSIONS = new Set([
   "py", "rb", "go", "rs", "java", "kt", "swift", "c", "h", "cpp", "hpp", "cs",
   "php", "sh", "bash", "zsh", "sql", "graphql", "gql", "proto",
   "html", "css", "scss", "sass", "less", "vue", "svelte", "astro",
-  "md", "mdx", "txt", "yml", "yaml", "toml", "ini", "conf", "env", "example",
+  "md", "mdx", "txt", "yml", "yaml", "toml", "ini", "conf", "example",
   "gitignore", "dockerignore", "editorconfig", "lock",
 ]);
 
@@ -71,8 +71,35 @@ function isIgnored(path: string): boolean {
   return path.split("/").some((seg) => IGNORED_SEGMENTS.has(seg));
 }
 
+/**
+ * 绝不上传的敏感文件。
+ *
+ * 这些文件按名字判断,不按扩展名 —— 扩展名判断在这里恰好是反的:
+ * 取最后一段的话,`.env.local`、`.env.production` 的扩展名是 "local"、
+ * "production",不在白名单里所以被跳过;而最常见、最要命的那个
+ * **裸 `.env`** 扩展名恰好是 "env",此前正在白名单里,会被原样发给
+ * 第三方模型服务商,并明文存进 conversation_attachments。
+ *
+ * 项目对 API 密钥做了 AES-256-GCM 加密,却把用户整个项目的密钥文件
+ * 明文送出去 —— 这是自相矛盾的。
+ */
+const SECRET_FILE_PATTERNS: readonly RegExp[] = [
+  /^\.env(\..*)?$/i, // .env / .env.local / .env.production …
+  /^\.?(npmrc|netrc|pgpass)$/i,
+  /^id_(rsa|dsa|ecdsa|ed25519)$/i,
+  /\.(pem|key|p12|pfx|keystore|jks)$/i,
+  /^(credentials|secrets?)\.(json|ya?ml|toml)$/i,
+  /^service-account.*\.json$/i,
+];
+
+function isSecretFile(name: string): boolean {
+  return SECRET_FILE_PATTERNS.some((re) => re.test(name));
+}
+
 function isTextFile(path: string): boolean {
   const name = path.split("/").pop() ?? "";
+  // 密钥类文件一律不读,先于任何白名单判断
+  if (isSecretFile(name)) return false;
   // 无扩展名但常见的文本配置文件
   if (!name.includes(".")) {
     return ["Dockerfile", "Makefile", "LICENSE", "README"].includes(name);
@@ -90,7 +117,15 @@ function normalizePath(relativePath: string): string {
 /**
  * 把用户选中的目录读成附件列表。
  *
- * 只在浏览器里跑 —— 文件内容不上传到任何存储,只随本次请求发给模型。
+ * 只在浏览器里跑。
+ *
+ * 注意文件内容的去向,这一点必须说准确:内容会随请求发给模型服务商,
+ * **并且会明文存进 conversation_attachments**(为了后续每轮都能带上,
+ * 见迁移 0015)。此前这里写的是「不上传到任何存储」—— 自迁移 0015 起
+ * 那句话就不成立了,是失真的文档。
+ *
+ * 因此密钥类文件(.env、私钥、凭据 JSON 等)在读取阶段就必须排除,
+ * 见 SECRET_FILE_PATTERNS —— 交给用户「自己注意别选到」是不负责任的。
  */
 export async function collectFolderAttachments(
   files: readonly File[],

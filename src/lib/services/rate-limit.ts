@@ -64,9 +64,25 @@ export async function checkRateLimit(
     });
 
     // 计数本身出错时放行:宁可漏限一次,也不能因为限流组件故障
-    // 就让所有人用不了对话。故障会体现在日志里。
-    if (error) return { allowed: true, reason: null };
+    // 就让所有人用不了对话。
+    //
+    // 但这个取舍目前有个缺口:全站没有结构化日志(pino 装了却零引用),
+    // 所以限流组件一旦故障,生产上不会留下任何痕迹 —— 等于限流静默失效。
+    // 接上日志之前,这里至少要让故障可见。
+    if (error) {
+      console.error("[rate-limit] 计数失败,本次放行", {
+        subject,
+        window: rule.windowSeconds,
+        message: error.message,
+      });
+      return { allowed: true, reason: null };
+    }
 
+    // bump_rate_limit 返回的是**本次计入之后**的累计次数
+    // (函数体里是 `on conflict do update set hits = hits + 1 returning hits`,
+    // 首次调用返回 1)。所以 hits > max 恰好放行 max 次:
+    // 第 max 次 hits == max 放行,第 max+1 次 hits == max+1 被拦。
+    // 这里不是 off-by-one —— 已对照数据库里的函数定义核实过。
     const hits = typeof data === "number" ? data : 0;
     if (hits > rule.max) {
       return {

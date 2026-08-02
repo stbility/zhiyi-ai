@@ -1,4 +1,4 @@
-import { CURRENT_PHASE } from "@/lib/phase";
+import { CURRENT_PHASE, PHASE_STATUS } from "@/lib/phase";
 import {
   getServiceAvailability,
   type ServiceStatus,
@@ -54,6 +54,44 @@ export default function Page() {
           / {services.length} 项。
         </p>
       </header>
+
+      {/* 逐阶段的真实状态。
+          此前这里只有一句「当前处于 Phase 1」,而模型网关、智能体、工作区
+          早已在生产上跑起来 —— 状态页仍显示「产品能力尚未实现」。
+          低报和高报同样是不实:用户据此判断能不能用,低报会让他不去用
+          本来可用的东西。所以逐条列,部分完成的必须写清缺什么。 */}
+      <section className="rounded-card border-border-default bg-surface-2 mb-6 border p-5">
+        <h2 className="text-fg text-body mb-3 font-medium">交付阶段</h2>
+        <ul className="flex flex-col gap-2">
+          {PHASE_STATUS.map((phase) => (
+            <li key={phase.id} className="flex flex-wrap items-start gap-2">
+              <span
+                className={
+                  phase.state === "done"
+                    ? "text-success text-label shrink-0"
+                    : phase.state === "partial"
+                      ? "text-warning text-label shrink-0"
+                      : "text-fg-tertiary text-label shrink-0"
+                }
+              >
+                {phase.state === "done"
+                  ? "已完成"
+                  : phase.state === "partial"
+                    ? "部分完成"
+                    : "未开始"}
+              </span>
+              <span className="text-fg-secondary text-caption min-w-0 flex-1">
+                {phase.label}
+                {phase.missing && (
+                  <span className="text-fg-tertiary text-label block">
+                    {phase.missing}
+                  </span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
 
       <ul className="flex flex-col gap-2">
         {services.map((service) => (

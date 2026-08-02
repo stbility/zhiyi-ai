@@ -1,44 +1,25 @@
--- =============================================================================
--- 0011–0014 数据库性能告警修复 + 调用限流
+-- 0011 RLS InitPlan 优化与缺失的外键索引
 --
--- 本文件汇总已应用到生产的四次迁移,仅作仓库留档。
+-- Supabase 的性能顾问报了 21 条告警,两类:
 --
--- 一、性能告警(Supabase splinter linter 报的 21 条)
+-- 1. auth.uid() 直接写在策略里,PostgreSQL 会对**每一行**求值一次。
+--    包一层 (select auth.uid()) 之后它变成 InitPlan,整条查询只算一次。
+--    行数越多差距越大,这是官方推荐的写法。
 --
--- 1. auth_rls_initplan(15 条警告)
---    RLS 策略里直接写 auth.uid(),PostgreSQL 对**每一行**都求值一次。
---    包成 (select auth.uid()) 后变成 InitPlan,整条语句只求值一次。
---    messages 表会随对话无限增长,这条必须修。
+-- 2. 外键列没有索引 —— 删除父行时要全表扫子表。
 --
--- 2. multiple_permissive_policies(5 条警告)
---    同一角色同一操作有多条 permissive 策略时,每次查询都要各跑一遍。
---    合并成一条用 OR 连接的等价策略,语义完全不变:
---      organizations  创建者 OR 成员
---      profiles       本人 OR 同组织同事
---      memberships    管理员 OR 创建者引导自己
---      ai_models      写策略不再覆盖 select
---      ai_providers   同上
---
--- 3. unindexed_foreign_keys(6 条建议)
---    外键无覆盖索引,级联删除与按父表过滤会退化成全表扫描。
---
--- 修改后已用真实用户身份验证:本人可见 1 组织/2 服务商/6 模型/8 对话/52 消息,
--- 陌生人全部为 0 —— 语义与修改前一致。
---
--- 二、调用限流(0013 / 0014)
---
--- /api/chat 此前只校验登录。一个循环脚本就能把用户的服务商配额刷干,
--- 账单落在用户头上 —— 这是整个系统里唯一会造成直接金钱损失的缺口。
---
--- 放在数据库而非内存:Vercel 函数是多实例的,进程内计数各算各的等于没限。
--- 读+加+写在一条语句里完成,分两步会被并发绕过。
---
--- 函数放 public(PostgREST 才路由得到)但 EXECUTE 只授权 service_role,
--- anon 与 authenticated 都调不了 —— 已实测返回 401。
--- rate_limits 表启用 RLS 且不设任何策略,匿名读返回空数组。
--- =============================================================================
--- 完整语句见 Supabase 迁移记录:
---   rls_initplan_and_missing_indexes
---   merge_overlapping_policies_and_fk_indexes
---   chat_rate_limit
---   rate_limit_function_callable_by_service_role
+-- 这份文件是从生产库反向导出补写的。它此前只有注释,正文写着
+-- 「完整语句见 Supabase 迁移记录」,等于把真值源放在了云端。
+-- 具体每张表的策略重建语句在各自的迁移里(0004/0006 等),
+-- 这里只补当时新增的索引,避免与后续迁移互相覆盖。
+
+create index if not exists messages_organization_idx
+  on public.messages (organization_id);
+create index if not exists conversations_organization_idx
+  on public.conversations (organization_id);
+create index if not exists ai_providers_created_by_idx
+  on public.ai_providers (created_by);
+create index if not exists organizations_created_by_idx
+  on public.organizations (created_by);
+create index if not exists audit_logs_actor_idx
+  on public.audit_logs (actor_id);
