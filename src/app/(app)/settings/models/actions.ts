@@ -453,6 +453,162 @@ export async function testProvider(
   return { ok: parts.join("\n") };
 }
 
+/**
+ * 抓取某个服务商当前可用的对话模型标识。
+ *
+ * 从 testProvider 里抽出来复用 —— 两处都要问同一个问题「你现在有哪些模型」,
+ * 各自写一遍必然会分叉。
+ */
+async function fetchChatModelIds(provider: {
+  kind: string;
+  base_url: string | null;
+  api_key_cipher: string;
+}): Promise<{ ids: readonly string[]; error: string | null }> {
+  const spec = getProviderSpec(provider.kind as ProviderKind);
+  const baseUrl = provider.base_url ?? spec.defaultBaseUrl ?? "";
+  if (!baseUrl) return { ids: [], error: "缺少 Base URL,无法拉取。" };
+
+  try {
+    const { decryptSecret } = await import("@/lib/crypto/secret-box");
+    const apiKey = decryptSecret(provider.api_key_cipher);
+
+    const headers: Record<string, string> =
+      provider.kind === "anthropic"
+        ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01" }
+        : provider.kind === "google"
+          ? {}
+          : { Authorization: `Bearer ${apiKey}` };
+
+    const url =
+      provider.kind === "google"
+        ? `${baseUrl}${spec.testPath}?key=${encodeURIComponent(apiKey)}`
+        : `${baseUrl}${spec.testPath}`;
+
+    const response = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) {
+      // 绝不把响应体原样带出 —— 里面可能回显密钥
+      return { ids: [], error: `接口返回 HTTP ${response.status}` };
+    }
+
+    const payload = (await response.json()) as {
+      data?: { id?: string }[];
+      models?: { name?: string; id?: string }[];
+    };
+    const fromOpenAi = (payload.data ?? [])
+      .map((m) => m.id)
+      .filter((id): id is string => typeof id === "string");
+    const fromGoogle = (payload.models ?? [])
+      .map((m) => m.name ?? m.id)
+      .filter((id): id is string => typeof id === "string")
+      .map((id) => id.replace(/^models\//, ""));
+
+    const { filterChatModels } = await import("@/lib/providers/model-filter");
+    return { ids: filterChatModels([...fromOpenAi, ...fromGoogle]), error: null };
+  } catch (e) {
+    return {
+      ids: [],
+      error:
+        e instanceof Error && e.name === "TimeoutError"
+          ? "连接超时(15 秒)"
+          : "无法连接到该地址",
+    };
+  }
+}
+
+/**
+ * 重新拉取模型列表 —— 增量补齐,绝不动已有的整理结果。
+ *
+ * 为什么必须有这个动作:「测试连接」只在模型数为 0 时才导入,这是为了
+ * 保护用户整理过的清单不被一次点击冲掉。但副作用是走进了死胡同 ——
+ * 服务商后来新上的模型(比如 deepseek-v4-pro)再也进不来,除非把整个
+ * 服务商删掉重建,那又会连带丢掉所有整理。
+ *
+ * 所以拆成两个语义清楚的动作:
+ *   测试连接 —— 只验证,不改动
+ *   重新拉取 —— 只新增,不删除
+ *
+ * 用户删过的模型仍然跳过。删除是他的决定,补齐不该推翻它。
+ */
+export async function syncModels(
+  _prev: ProviderActionState,
+  formData: FormData,
+): Promise<ProviderActionState> {
+  const parsed = idSchema.safeParse({ id: formData.get("id") });
+  if (!parsed.success) return { error: "标识无效" };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { error: "认证服务未配置。" };
+
+  const { data: provider } = await supabase
+    .from("ai_providers")
+    .select("id, kind, base_url, api_key_cipher, organization_id")
+    .eq("id", parsed.data.id)
+    .single();
+  if (!provider) return { error: "未找到该模型服务。" };
+
+  const { ids, error } = await fetchChatModelIds({
+    kind: provider.kind as string,
+    base_url: (provider.base_url as string | null) ?? null,
+    api_key_cipher: provider.api_key_cipher as string,
+  });
+  if (error) return { error: `拉取失败:${error}` };
+  if (ids.length === 0) {
+    return { error: "服务商没有返回任何对话模型。" };
+  }
+
+  const [{ data: existingRows }, { data: exclusionRows }] = await Promise.all([
+    supabase
+      .from("ai_models")
+      .select("model_id")
+      .eq("provider_id", parsed.data.id),
+    supabase
+      .from("ai_model_exclusions")
+      .select("model_id")
+      .eq("provider_id", parsed.data.id),
+  ]);
+  const existing = new Set((existingRows ?? []).map((r) => r.model_id as string));
+  const excluded = new Set(
+    (exclusionRows ?? []).map((r) => r.model_id as string),
+  );
+
+  const toAdd = ids.filter((id) => !existing.has(id) && !excluded.has(id));
+
+  if (toAdd.length === 0) {
+    const skipped = ids.filter((id) => excluded.has(id)).length;
+    return {
+      ok:
+        `列表已是最新,没有新模型。服务商当前有 ${ids.length} 个对话模型,` +
+        `其中 ${existing.size} 个已在列表里` +
+        (skipped > 0 ? `,${skipped} 个是你删除过的(可在下方恢复)` : "") +
+        "。",
+    };
+  }
+
+  const { error: insertError } = await supabase.from("ai_models").upsert(
+    toAdd.map((id) => ({
+      provider_id: parsed.data.id,
+      organization_id: provider.organization_id as string,
+      model_id: id,
+      display_name: id.length > 60 ? id.slice(0, 60) : id,
+      chat_unavailable_reason: null,
+    })),
+    { onConflict: "provider_id,model_id" },
+  );
+  if (insertError) return { error: `写入失败:${insertError.message}` };
+
+  revalidatePath("/settings/models");
+  revalidatePath("/assistant");
+  return {
+    ok:
+      `已新增 ${toAdd.length} 个模型:${toAdd.slice(0, 8).join("、")}` +
+      (toAdd.length > 8 ? ` 等` : "") +
+      `。原有 ${existing.size} 个保持不变,删除过的没有被导回。`,
+  };
+}
+
 const modelSchema = z.object({
   providerId: z.string().uuid(),
   modelId: z.string().trim().min(1, "请填写模型标识").max(200),
@@ -525,6 +681,6 @@ export async function restoreModel(
 
   revalidatePath("/settings/models");
   return {
-    ok: `已恢复 ${parsed.data.modelId},下次测试连接会重新导入。`,
+    ok: `已恢复 ${parsed.data.modelId},点「重新拉取模型列表」即可把它导回。`,
   };
 }

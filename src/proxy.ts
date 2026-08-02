@@ -63,6 +63,31 @@ export async function proxy(request: NextRequest) {
   // 而不是把用户重定向到一个同样不可用的登录页。
   if (!url || !key) return response;
 
+  const path = request.nextUrl.pathname;
+
+  // 没有会话 Cookie 就不必向 Supabase 校验。
+  //
+  // getUser() 是一次真实的网络往返(这正是它比 getSession() 可信的原因),
+  // 而数据库与鉴权服务都在新加坡。匿名访客打开首页时,这次往返的结果
+  // 必然是 null —— 没有 Cookie 就不可能有会话,既没有令牌要刷新,
+  // 也没有身份要校验。为一个已知答案跨洋跑一趟,纯属浪费。
+  //
+  // 安全性不受影响:这里是「无 Cookie ⇒ 视为未登录」,方向是收紧而非放宽。
+  // 伪造 Cookie 仍然过不了下面的 getUser() 校验。
+  const hasSessionCookie = request.cookies
+    .getAll()
+    .some((c) => c.name.startsWith("sb-") && c.name.includes("-auth-token"));
+
+  if (!hasSessionCookie) {
+    if (PROTECTED_PREFIXES.some((p) => path.startsWith(p))) {
+      const redirect = request.nextUrl.clone();
+      redirect.pathname = "/login";
+      redirect.searchParams.set("next", path);
+      return NextResponse.redirect(redirect);
+    }
+    return response;
+  }
+
   const supabase = createServerClient(url, key, {
     cookies: {
       getAll() {
@@ -84,8 +109,6 @@ export async function proxy(request: NextRequest) {
     data: { user },
     error,
   } = await supabase.auth.getUser();
-
-  const path = request.nextUrl.pathname;
 
   // 令牌失效时把会话 Cookie 清干净。
   //
