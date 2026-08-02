@@ -5,6 +5,7 @@ import { useActionState, useState } from "react";
 import { Icon } from "@/components/icons/Icon";
 import { Badge } from "@/components/primitives/Badge";
 import { Button } from "@/components/primitives/Button";
+import { SubmitButton } from "@/components/primitives/SubmitButton";
 import { Input } from "@/components/primitives/Input";
 import {
   addIntegration,
@@ -121,15 +122,19 @@ export function IntegrationManager({
                   <div className="flex flex-wrap gap-2">
                     <form action={testAction}>
                       <input type="hidden" name="id" value={row.id} />
-                      <Button type="submit" variant="secondary" size="sm">
+                      <SubmitButton
+                        variant="secondary"
+                        size="sm"
+                        pendingText="测试中…"
+                      >
                         测试连接
-                      </Button>
+                      </SubmitButton>
                     </form>
                     <form action={deleteAction}>
                       <input type="hidden" name="id" value={row.id} />
-                      <Button type="submit" variant="ghost" size="sm">
+                      <SubmitButton variant="ghost" size="sm" pendingText="删除中…">
                         删除
-                      </Button>
+                      </SubmitButton>
                     </form>
                   </div>
                 )}

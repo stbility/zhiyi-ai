@@ -80,8 +80,11 @@ describe("助手页渲染", () => {
     expect(screen.getByText("第一次对话")).toBeTruthy();
     expect(screen.getByText("新对话")).toBeTruthy();
     // 左下控件
-    expect(screen.getByText("文件夹")).toBeTruthy();
-    expect(screen.getByText("发送")).toBeTruthy();
+    // 控件是纯图标的,可发现性靠 aria-label 与 title
+    expect(screen.getByLabelText("添加文件夹")).toBeTruthy();
+    expect(screen.getByLabelText("联网检索")).toBeTruthy();
+    expect(screen.getByLabelText("智能体")).toBeTruthy();
+    expect(screen.getByLabelText("发送")).toBeTruthy();
   });
 
   it("用户消息靠右成气泡,AI 回答靠左整幅铺开", () => {

@@ -141,7 +141,8 @@ export const COMPATIBLE_PRESETS: readonly {
   {
     label: "Perplexity",
     baseUrl: "https://api.perplexity.ai",
-    docsUrl: "https://docs.perplexity.ai/api-reference/chat-completions",
+    // 旧地址 /api-reference/chat-completions 已 404,现为 -post 结尾
+    docsUrl: "https://docs.perplexity.ai/api-reference/chat-completions-post",
     group: "国际",
   },
 
@@ -212,7 +213,9 @@ export const COMPATIBLE_PRESETS: readonly {
   {
     label: "阶跃星辰",
     baseUrl: "https://api.stepfun.com/v1",
-    docsUrl: "https://platform.stepfun.com/docs/api-reference/chat",
+    // 旧地址缺少语言段,已 404;文档站按 /docs/zh/ 组织
+    docsUrl:
+      "https://platform.stepfun.com/docs/zh/api-reference/chat/chat-completion-create",
     group: "国内",
   },
 

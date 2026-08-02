@@ -9,9 +9,10 @@ import {
   useState,
   useSyncExternalStore,
   type FormEvent,
+  type ReactNode,
 } from "react";
 
-import { Icon } from "@/components/icons/Icon";
+import { Icon, type IconName } from "@/components/icons/Icon";
 import { Button, buttonClasses } from "@/components/primitives/Button";
 import { IconButton } from "@/components/primitives/IconButton";
 import { Select } from "@/components/primitives/Select";
@@ -157,6 +158,90 @@ function usePersistentToggle(
   };
 
   return [value, set];
+}
+
+/**
+ * 把正文里的网址变成可点的链接。
+ *
+ * 此前正文是纯文本(whitespace-pre-wrap),网址只是一串字符 ——
+ * 开了联网检索之后,模型标注的来源全都点不开,只能手动复制粘贴。
+ * 对一个要求「必须标注来源」的功能来说,来源点不开等于没标。
+ *
+ * 只放行 http(s)。正文来自模型,是不可信输入,javascript: 这类伪协议
+ * 绝不能进 href。用 React 元素而不是 innerHTML,天然免疫注入。
+ */
+const URL_PATTERN = /(https?:\/\/[^\s<>()[\]{}"'，。、；：！？]+)/g;
+
+function linkify(text: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+
+  for (const m of text.matchAll(URL_PATTERN)) {
+    const url = m[0];
+    const at = m.index;
+    if (at === undefined) continue;
+    if (at > last) out.push(text.slice(last, at));
+    out.push(
+      <a
+        key={`u${key++}`}
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-brand hover:text-brand-hover underline underline-offset-2 break-all"
+      >
+        {url}
+      </a>,
+    );
+    last = at + url.length;
+  }
+
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+/**
+ * 输入框下方的图标开关。
+ *
+ * 只有图标,没有文字。开启状态用品牌色边框与填色表达 ——
+ * 此前用「联网已开启」这样的变长文案,一开一关整行控件宽度就跳一次,
+ * 而且四个文字标签横排占掉半个输入框的宽度。
+ *
+ * 无文字不等于无标签:aria-label 给读屏,title 给鼠标悬停,
+ * 两者都不能省 —— 图标本身不构成可访问名称。
+ */
+function IconToggle({
+  label,
+  hint,
+  icon,
+  active = false,
+  onClick,
+}: {
+  label: string;
+  hint: string;
+  icon: IconName;
+  active?: boolean | undefined;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      aria-pressed={active}
+      title={`${label} —— ${hint}`}
+      className={cn(
+        "rounded-control flex size-8 shrink-0 cursor-pointer items-center justify-center border",
+        "transition-colors duration-[var(--duration-hover)] ease-standard",
+        "focus-visible:outline-border-focus focus-visible:outline-2 focus-visible:outline-offset-2",
+        active
+          ? "border-brand bg-brand-tint text-brand"
+          : "border-border-default bg-surface-3 text-fg-secondary hover:bg-surface-4",
+      )}
+    >
+      <Icon name={icon} size={15} />
+    </button>
+  );
 }
 
 function toTurn(t: InitialTurn): Turn {
@@ -633,7 +718,7 @@ export function ChatPanel({
                       : "text-fg w-full",
                   )}
                 >
-                  {turn.content}
+                  {linkify(turn.content)}
                   {turn.role === "assistant" &&
                     turn.content === "" &&
                     !turn.error &&
@@ -770,7 +855,7 @@ export function ChatPanel({
               尺寸统一用设计系统的 sm(min-h-8 / text-caption):md 的
               min-h-10 放在输入框下面这一排太重,四个控件横过去很压视线。
               这里是辅助操作区,不该和正文抢注意力。 */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <Select
               value={selected}
               onChange={setSelected}
@@ -792,59 +877,44 @@ export function ChatPanel({
               aria-hidden="true"
               tabIndex={-1}
             />
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
+
+            {/* 纯图标形态。
+                文字标签在这一行是纯干扰 —— 四个控件横排占掉半个输入框宽度,
+                而这些都是低频的开关,不值得一直占着视线。
+                状态由上方提示条负责说清楚,这里只保留图标 + 开启态的边框。
+                每个都有 aria-label 与 title,可访问性与可发现性不受影响。 */}
+            <IconToggle
+              label="添加文件夹"
+              hint={FOLDER_HINT}
+              icon="folder"
               onClick={() => folderInputRef.current?.click()}
-              title={FOLDER_HINT}
-            >
-              <Icon name="folder" size={14} />
-              文件夹
-            </Button>
-
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
+            />
+            <IconToggle
+              label="联网检索"
+              hint="开启后本轮会先联网检索,再让模型基于检索到的材料作答并标注来源"
+              icon="search"
+              active={webSearch}
               onClick={() => setWebSearch((v) => !v)}
-              aria-pressed={webSearch}
-              title="开启后本轮会先联网检索,再让模型基于检索到的材料作答并标注来源"
-              className={webSearch ? "border-brand text-brand" : undefined}
-            >
-              <Icon
-                name={webSearch ? "check" : "search"}
-                size={14}
-                className={webSearch ? "text-brand" : undefined}
-              />
-              联网
-            </Button>
-
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
+            />
+            <IconToggle
+              label="智能体"
+              hint="开启后模型可以连续调用文件工具,产物直接写入工作区,而不是把代码贴在回答里"
+              icon="bot"
+              active={agentMode}
               onClick={() => setAgentMode((v) => !v)}
-              aria-pressed={agentMode}
-              title="开启后模型可以连续调用文件工具,产物直接写入工作区,而不是把代码贴在回答里"
-              className={agentMode ? "border-brand text-brand" : undefined}
-            >
-              <Icon
-                name={agentMode ? "check" : "bot"}
-                size={14}
-                className={agentMode ? "text-brand" : undefined}
-              />
-              智能体
-            </Button>
+            />
+
+            <div className="flex-1" />
 
             <Button
               type="submit"
               size="sm"
               loading={streaming}
-              className="shrink-0"
+              aria-label="发送"
+              title="发送(Enter)"
+              className="shrink-0 px-3"
             >
-              <Icon name="send" size={14} />
-              发送
+              <Icon name="send" size={15} />
             </Button>
           </div>
         </form>

@@ -100,7 +100,12 @@ describe("助手页水合", () => {
 
     // 水合后内容仍在,没有被卸载成空白
     expect(container.textContent).toContain("你好");
-    expect(container.textContent).toContain("文件夹");
+    // 控件是纯图标的,文案只存在于 aria-label —— 断言可访问名称,
+    // 顺带守住「无文字不等于无标签」这条底线
+    expect(
+      container.querySelector('[aria-label="添加文件夹"]'),
+    ).toBeTruthy();
+    expect(container.querySelector('[aria-label="智能体"]')).toBeTruthy();
 
     consoleError.mockRestore();
     await act(async () => root.unmount());

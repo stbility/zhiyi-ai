@@ -5,6 +5,11 @@ import { useActionState, useState } from "react";
 import { Icon } from "@/components/icons/Icon";
 import { Badge } from "@/components/primitives/Badge";
 import { Button } from "@/components/primitives/Button";
+import {
+  SubmitButton,
+  SubmitIconButton,
+  SubmitTextButton,
+} from "@/components/primitives/SubmitButton";
 import { Input } from "@/components/primitives/Input";
 import { Select } from "@/components/primitives/Select";
 import { cn } from "@/lib/cn";
@@ -91,14 +96,12 @@ function ModelList({
     <form action={removeAction} className="shrink-0">
       <input type="hidden" name="providerId" value={providerId} />
       <input type="hidden" name="modelId" value={modelId} />
-      <button
-        type="submit"
+      <SubmitIconButton
+        icon="x"
         aria-label={`删除模型 ${modelId}`}
         title="从列表中删除"
-        className="text-fg-tertiary hover:text-error cursor-pointer p-0.5 transition-colors duration-[var(--duration-hover)] ease-standard"
-      >
-        <Icon name="x" size={12} />
-      </button>
+        className="text-fg-tertiary hover:text-error p-0.5"
+      />
     </form>
   );
 
@@ -180,12 +183,9 @@ function ModelList({
                     <form action={restoreAction} className="shrink-0">
                       <input type="hidden" name="providerId" value={providerId} />
                       <input type="hidden" name="modelId" value={modelId} />
-                      <button
-                        type="submit"
-                        className="text-brand hover:text-brand-hover text-label cursor-pointer"
-                      >
+                      <SubmitTextButton className="text-brand hover:text-brand-hover text-label">
                         恢复
-                      </button>
+                      </SubmitTextButton>
                     </form>
                   )}
                 </div>
@@ -292,15 +292,22 @@ export function ProviderManager({
                   <div className="flex flex-wrap gap-2">
                     <form action={testAction}>
                       <input type="hidden" name="id" value={row.id} />
-                      <Button type="submit" variant="secondary" size="sm">
+                      {/* 这个动作会真的去调服务商接口(15 秒超时 + 逐个探测
+                          模型),必须有进行中反馈 —— 否则用户以为没点上,
+                          反复点,而每次点击都会排队真跑一遍 */}
+                      <SubmitButton
+                        variant="secondary"
+                        size="sm"
+                        pendingText="测试中…"
+                      >
                         测试连接
-                      </Button>
+                      </SubmitButton>
                     </form>
                     <form action={deleteAction}>
                       <input type="hidden" name="id" value={row.id} />
-                      <Button type="submit" variant="ghost" size="sm">
+                      <SubmitButton variant="ghost" size="sm" pendingText="删除中…">
                         删除
-                      </Button>
+                      </SubmitButton>
                     </form>
                   </div>
                 )}

@@ -5,6 +5,10 @@ import { useActionState, useState } from "react";
 import { Icon } from "@/components/icons/Icon";
 import { Button } from "@/components/primitives/Button";
 import {
+  SubmitIconButton,
+  SubmitTextButton,
+} from "@/components/primitives/SubmitButton";
+import {
   deleteWorkspace,
   deleteWorkspaceFile,
   type WorkspaceActionState,
@@ -86,8 +90,14 @@ export function WorkspaceBrowser({
    */
   const sandbox =
     preview?.kind === "markdown" || preview?.kind === "svg"
-      ? ""
-      : "allow-scripts";
+      ? // 必须给 allow-popups,否则 <a target="_blank"> 在沙箱里被直接吞掉 ——
+        // README 里的链接一个都点不开,用户以为链接生成错了。
+        // 配上 allow-popups-to-escape-sandbox,新开的页面不再继承沙箱限制,
+        // 否则打开的外部网站自己也跑不起来。
+        // 仍然不给 allow-same-origin 与 allow-scripts:能跳转,但碰不到我们的
+        // Cookie,也执行不了脚本。
+        "allow-popups allow-popups-to-escape-sandbox"
+      : "allow-scripts allow-popups allow-popups-to-escape-sandbox";
 
   /**
    * 把可运行页面存成本地文件。
@@ -145,13 +155,12 @@ export function WorkspaceBrowser({
           </span>
           <form action={deleteWorkspaceAction}>
             <input type="hidden" name="workspaceId" value={id} />
-            <button
-              type="submit"
-              className="text-fg-tertiary hover:text-error text-label cursor-pointer"
+            <SubmitTextButton
+              className="text-fg-tertiary hover:text-error text-label"
               title="删除整个工作区"
             >
               删除工作区
-            </button>
+            </SubmitTextButton>
           </form>
         </div>
       </div>
@@ -237,14 +246,13 @@ export function WorkspaceBrowser({
                   <form action={deleteFileAction}>
                     <input type="hidden" name="workspaceId" value={id} />
                     <input type="hidden" name="path" value={open.path} />
-                    <button
-                      type="submit"
+                    <SubmitIconButton
+                      icon="x"
+                      size={13}
                       aria-label={`删除 ${open.path}`}
                       title="删除这个文件"
-                      className="text-fg-tertiary hover:text-error cursor-pointer p-1"
-                    >
-                      <Icon name="x" size={13} />
-                    </button>
+                      className="text-fg-tertiary hover:text-error p-1"
+                    />
                   </form>
                 </div>
 
