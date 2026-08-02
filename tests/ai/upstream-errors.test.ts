@@ -135,3 +135,68 @@ describe("HTTP 失败诊断", () => {
     expect(text).toContain("m1");
   });
 });
+
+/**
+ * 403 + Authorization failed:密钥有效但账号没有调用推理端点的权限。
+ *
+ * 真实案例,官方论坛有完全一致的记录:同一把英伟达密钥
+ * GET /v1/models 认证成功、POST /v1/chat/completions 返回 403
+ * {"detail":"Authorization failed"},原因是组织缺少
+ * "Public API Endpoints" 权限,用户在控制台自己改不了。
+ *
+ * 如果只说「请检查密钥」,用户会反复换密钥 —— 换多少次都是同样的 403。
+ * 诊断必须把人指向真正能解决问题的地方。
+ */
+describe("鉴权失败的两种诊断", () => {
+  function res(status: number, body: unknown) {
+    return new Response(JSON.stringify(body), { status });
+  }
+
+  it("403 Authorization failed 说清是账号权限,不是密钥填错", async () => {
+    const { describeFailure } = await load();
+    const text = await describeFailure(
+      res(403, { status: 403, title: "Forbidden", detail: "Authorization failed" }),
+      "z-ai/glm-5.2",
+    );
+    // 两种成因都要列出来,让用户对号入座 —— 替他猜一个反而误导
+    expect(text).toContain("密钥已被吊销或轮换");
+    expect(text).toContain("没有调用推理端点的权限");
+    expect(text).toContain("z-ai/glm-5.2");
+    // 不能再把人支使去反复换密钥
+    expect(text).not.toContain("请到「模型服务」检查密钥");
+  });
+
+  it("普通 401 仍然提示检查密钥", async () => {
+    const { describeFailure } = await load();
+    const text = await describeFailure(
+      res(401, { error: { message: "Invalid API key" } }),
+      "m1",
+    );
+    expect(text).toContain("检查密钥");
+    expect(text).not.toContain("推理端点");
+  });
+});
+
+/**
+ * 鉴权失败不该触发换模型重试。
+ *
+ * 密钥被拒是**整个服务商**级别的问题 —— 同一把密钥换几个模型结果完全一样。
+ * 此前普通对话的降级链无条件往下试,白烧三次调用、多等三个往返,
+ * 最后报错还写着「已依次尝试 3 个模型」,把用户引去怀疑模型。
+ */
+describe("什么算临时性失败", () => {
+  it("401 / 403 不是临时性的 —— 不该换模型重试", async () => {
+    const { isTransientFailure } = await import("@/lib/providers/model-filter");
+    expect(isTransientFailure(401, "Invalid API key")).toBe(false);
+    expect(isTransientFailure(403, "Authorization failed")).toBe(false);
+  });
+
+  it("排队、限流、5xx 是临时性的 —— 换个模型确实可能成功", async () => {
+    const { isTransientFailure } = await import("@/lib/providers/model-filter");
+    expect(isTransientFailure(429, "rate limited")).toBe(true);
+    expect(isTransientFailure(503, "service unavailable")).toBe(true);
+    expect(
+      isTransientFailure(200, "ResourceExhausted: Worker local total request limit reached"),
+    ).toBe(true);
+  });
+});

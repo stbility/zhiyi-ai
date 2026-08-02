@@ -317,14 +317,16 @@ export async function testProvider(
         : "无法连接到该地址";
   }
 
-  await supabase
-    .from("ai_providers")
-    .update({
-      last_tested_at: new Date().toISOString(),
-      last_test_ok: ok,
-      last_test_error: failure,
-    })
-    .eq("id", parsed.data.id);
+  // 注意:这里**先不写**测试结果。
+  //
+  // 因为到这一步为止,ok 只代表「GET /models 能列出模型」——
+  // 而真正决定这个服务商有没有用的是「POST /chat/completions 能不能对话」,
+  // 这是两件事。真实案例:英伟达的密钥能列出全部模型,发起对话却一律
+  // 403 Authorization failed(账号缺少调用推理端点的权限)。
+  // 界面上却挂着绿色的「连接正常」,用户完全不知道对话根本跑不通 ——
+  // 这就是拿「能连上」冒充「能用」。
+  //
+  // 所以下面先做一次真实的对话探测,再据此写 last_test_ok。
 
   // 先入库,再探测。顺序很重要。
   //
@@ -355,6 +357,65 @@ export async function testProvider(
     .select("model_id", { count: "exact", head: true })
     .eq("provider_id", parsed.data.id);
   const alreadyCurated = (existingCount ?? 0) > 0;
+
+  /** 对话是否真的跑得通。null = 没探测过 */
+  let chatOk: boolean | null = null;
+  let chatFailure: string | null = null;
+
+  // 已整理过列表的服务商也必须验证对话 —— 否则「连接正常」只证明了能列表。
+  // 只抽一个模型,一次调用、极少 token,代价可以忽略。
+  if (ok && alreadyCurated) {
+    const { data: sample } = await supabase
+      .from("ai_models")
+      .select("model_id")
+      .eq("provider_id", parsed.data.id)
+      .eq("enabled", true)
+      .limit(1)
+      .maybeSingle();
+
+    if (sample?.model_id) {
+      const { probeChatModel } = await import("@/lib/ai/gateway");
+      const r = await probeChatModel({
+        credentials: {
+          kind: provider.kind as ProviderKind,
+          baseUrl: (provider.base_url as string | null) ?? null,
+          apiKeyCipher: provider.api_key_cipher as string,
+        },
+        model: sample.model_id as string,
+        timeoutMs: PROBE_TIMEOUT_MS,
+        attempts: 1,
+      });
+      if (r.ok) {
+        chatOk = true;
+      } else if (r.transient) {
+        // 排队、限流不代表服务商坏了 —— 不能据此判定连接失败
+        chatOk = null;
+        chatFailure = r.reason ?? null;
+      } else {
+        chatOk = false;
+        chatFailure = r.reason ?? "对话调用被拒绝";
+      }
+    }
+  }
+
+  // 现在才写结果:能列表但不能对话的,一律不算「连接正常」
+  const overallOk = ok && chatOk !== false;
+  await supabase
+    .from("ai_providers")
+    .update({
+      last_tested_at: new Date().toISOString(),
+      last_test_ok: overallOk,
+      last_test_error: overallOk ? null : (failure ?? chatFailure),
+    })
+    .eq("id", parsed.data.id);
+
+  if (ok && chatOk === false) {
+    return {
+      error:
+        `密钥能通过认证、也能列出模型列表,但**发起对话被拒绝**,` +
+        `所以这个服务商目前无法使用:${chatFailure}`,
+    };
+  }
 
   if (ok && candidates.length > 0 && !alreadyCurated) {
     const { error: upsertError } = await supabase.from("ai_models").upsert(
@@ -420,7 +481,10 @@ export async function testProvider(
   if (alreadyCurated) {
     return {
       ok:
-        `连接成功,密钥可用。服务商当前提供 ${allModels.length} 个模型,` +
+        (chatOk === true
+          ? "连接成功,已抽样发起一次真实对话并成功返回。"
+          : "连接成功,密钥可用;抽样对话此刻排队或超时,未能验证,可稍后重试。") +
+        `服务商当前提供 ${allModels.length} 个模型,` +
         `其中 ${candidates.length} 个可用于对话。\n` +
         `你的模型列表已保留,未做改动 —— 测试连接只验证密钥,不会覆盖你整理好的选择。\n` +
         `如需重新拉取完整列表,删除该服务商后重新添加即可。`,

@@ -337,6 +337,8 @@ export async function POST(request: NextRequest) {
   let fallbackNote: string | null = null;
   let lastFailure = "调用模型服务失败。";
   let lastStatus: number | undefined;
+  /** 真正发起过请求的模型 —— 报错文案只能提这些,不能提整条候选链 */
+  const attempted: string[] = [];
 
   for (const candidate of chain) {
     // 总预算是整次请求共享的,不是每个模型各给一份 —— 否则四个模型轮下来
@@ -357,6 +359,7 @@ export async function POST(request: NextRequest) {
       `模型在 ${Math.round(FIRST_CHUNK_TIMEOUT_MS / 1000)} 秒内没有返回任何内容,通常是该模型正在排队。`,
     );
 
+    attempted.push(candidate);
     try {
       result = await streamChat({
         credentials,
@@ -394,15 +397,27 @@ export async function POST(request: NextRequest) {
           .eq("provider_id", providerId)
           .eq("model_id", candidate);
       }
-      // 继续尝试链上的下一个模型
+
+      // 只有临时性失败才值得换模型。
+      //
+      // 密钥被拒(401/403)是**整个服务商**级别的问题,同一把密钥换几个模型
+      // 结果完全一样 —— 白烧三次调用、多等三个往返,最后给出的报错还像是
+      // 模型的问题(「已依次尝试 3 个模型:…」),把用户引去怀疑模型。
+      //
+      // 智能体循环里早就有这个判断,而这条普通对话的链路一直没有 ——
+      // 同一策略只做了一半,两边行为不一致。
+      if (!isTransientFailure(lastStatus, lastFailure)) break;
+      // 临时性失败(排队、限流、5xx)才继续尝试链上的下一个模型
     }
   }
 
   if (result === null || watchdog === null) {
     // 全链路都没成功。留痕时记的是用户原本选的模型 —— 那才是他的意图。
+    // 只有真的轮过多个模型才提「依次尝试」。鉴权失败时我们在第一个就停了,
+    // 却说「已依次尝试 3 个模型」,等于把用户引去怀疑模型 —— 而问题在密钥。
     const message =
-      chain.length > 1
-        ? `${lastFailure}(已依次尝试 ${chain.length} 个模型:${chain.join("、")})`
+      attempted.length > 1
+        ? `${lastFailure}(已依次尝试 ${attempted.length} 个模型:${attempted.join("、")})`
         : lastFailure;
 
     await supabase.from("messages").insert({
