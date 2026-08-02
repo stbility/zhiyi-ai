@@ -38,6 +38,35 @@ function headers(token: string): Record<string, string> {
   };
 }
 
+/**
+ * 安装令牌新格式的按请求开关。
+ *
+ * GitHub 从 2026-04-27 起分批把安装令牌换成无状态格式 ghs_APPID_JWT,
+ * 长度涨到约 520 字符,而且会随内容浮动。官方明确警告:
+ * 「Apps with hardcoded length assumptions may break」。
+ *
+ * 我们这边没有任何长度或前缀假设 —— 令牌只是原样存进内存缓存再原样发出去,
+ * 唯一的 slice(0, 300) 是截断**错误响应体**用的,和令牌无关。
+ * 所以理论上不受影响。
+ *
+ * 但「理论上不受影响」不等于验证过。官方提供了按请求覆盖的头,
+ * 可以在正式推到我们之前先用新格式实测一遍;万一真出问题,
+ * 也能临时切回旧格式争取修复时间。
+ *
+ *   enabled  —— 强制返回新的无状态令牌(用来提前验证)
+ *   disabled —— 强制返回旧的不透明令牌(出问题时的退路)
+ *   不设置    —— 跟随官方灰度节奏
+ *
+ * 其它值会被 GitHub 静默忽略,所以这里只放行这两个,写错了当没设。
+ *
+ * 来源:https://github.blog/changelog/2026-05-15-github-app-installation-tokens-per-request-override-header/
+ */
+function statelessTokenHeader(): Record<string, string> {
+  const mode = process.env["GITHUB_APP_STATELESS_TOKENS"];
+  if (mode !== "enabled" && mode !== "disabled") return {};
+  return { "X-GitHub-Stateless-S2S-Token": mode };
+}
+
 export interface GitHubAppConfig {
   readonly clientId: string;
   readonly privateKey: string;
@@ -155,7 +184,7 @@ export async function getInstallationToken(
       `${API}/app/installations/${encodeURIComponent(installationId)}/access_tokens`,
       {
         method: "POST",
-        headers: headers(jwt),
+        headers: { ...headers(jwt), ...statelessTokenHeader() },
         signal: AbortSignal.timeout(15_000),
       },
     );

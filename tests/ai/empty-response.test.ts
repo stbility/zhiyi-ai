@@ -16,12 +16,30 @@ async function load() {
   return import("@/lib/ai/gateway");
 }
 
-const base = {
-  finishReason: null,
+const base = diagnostics({ finishReason: null,
   streamError: null,
   seenDeltaKeys: [] as string[],
-  chunkCount: 0,
-};
+  chunkCount: 0 });
+
+/**
+ * 造一个诊断对象。
+ *
+ * 用工厂而不是在每个用例里手写字面量:ChatDiagnostics 每加一个字段,
+ * 手写的地方就要全部跟着改 —— contentIsReasoningFallback 那次就是这样,
+ * 本地 typecheck 被我用 grep 过滤掉了没看见,CI 一跑十几个报错。
+ */
+function diagnostics(
+  over: Partial<import("@/lib/ai/gateway").ChatDiagnostics> = {},
+): import("@/lib/ai/gateway").ChatDiagnostics {
+  return {
+    finishReason: null,
+    streamError: null,
+    seenDeltaKeys: [],
+    chunkCount: 0,
+    contentIsReasoningFallback: false,
+    ...over,
+  };
+}
 
 describe("空回复的原因解释", () => {
   it("流内错误优先原样报出", async () => {

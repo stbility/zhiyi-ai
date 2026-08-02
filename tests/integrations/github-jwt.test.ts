@@ -184,3 +184,82 @@ describe("安装 state", () => {
     );
   });
 });
+
+/**
+ * 新的无状态令牌格式不能把我们打挂。
+ *
+ * GitHub 从 2026-04-27 起分批把安装令牌换成 ghs_APPID_JWT,长度涨到
+ * 约 520 字符且随内容浮动。官方警告:「Apps with hardcoded length
+ * assumptions may break」。
+ *
+ * 我们这边理论上不受影响 —— 令牌只是原样存、原样发。但「理论上」不等于
+ * 验证过,所以这里用一个真实长度的新格式令牌跑一遍。
+ *
+ * 来源:https://github.blog/changelog/2026-04-24-notice-about-upcoming-new-format-for-github-app-installation-tokens/
+ */
+describe("安装令牌格式变更", () => {
+  /** 官方说约 520 字符,这里造一个更长的,确保不是刚好卡在边界上过的 */
+  const LONG_TOKEN = `ghs_Iv1.abc_${"A1b2C3d4-_.".repeat(52)}`;
+
+  function stubConfig() {
+    vi.stubEnv("GITHUB_APP_CLIENT_ID", CONFIG.clientId);
+    vi.stubEnv("GITHUB_APP_PRIVATE_KEY", privateKey);
+    vi.stubEnv("GITHUB_APP_SLUG", CONFIG.slug);
+  }
+
+  it("超长的新格式令牌被原样保留,不截断不校验长度", async () => {
+    stubConfig();
+    expect(LONG_TOKEN.length).toBeGreaterThan(520);
+
+    vi.stubGlobal("fetch", async () =>
+      new Response(
+        JSON.stringify({
+          token: LONG_TOKEN,
+          expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const { getInstallationToken } = await import("@/lib/integrations/github");
+    const r = await getInstallationToken("999");
+
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      // 一个字符都不能少 —— 截断的话后续所有请求都会 401
+      expect(r.token).toBe(LONG_TOKEN);
+      expect(r.token.length).toBe(LONG_TOKEN.length);
+    }
+  });
+
+  it("官方推荐的正则能匹配新格式 —— 确认我们造的样本是真实形状", () => {
+    // 官方给的匹配式:ghs_[A-Za-z0-9\.\-_]{36,}
+    expect(/^ghs_[A-Za-z0-9.\-_]{36,}$/.test(LONG_TOKEN)).toBe(true);
+  });
+
+  it("覆盖开关只放行官方定义的两个值", async () => {
+    stubConfig();
+    const seen: Record<string, string>[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      seen.push(init.headers as Record<string, string>);
+      return new Response(JSON.stringify({ token: "ghs_x", expires_at: null }), {
+        status: 200,
+      });
+    });
+
+    const { getInstallationToken } = await import("@/lib/integrations/github");
+
+    vi.stubEnv("GITHUB_APP_STATELESS_TOKENS", "enabled");
+    await getInstallationToken("a");
+    expect(seen.at(-1)?.["X-GitHub-Stateless-S2S-Token"]).toBe("enabled");
+
+    vi.stubEnv("GITHUB_APP_STATELESS_TOKENS", "disabled");
+    await getInstallationToken("b");
+    expect(seen.at(-1)?.["X-GitHub-Stateless-S2S-Token"]).toBe("disabled");
+
+    // 官方明确:其它值会被静默忽略。那就干脆不发,免得看起来像设置生效了
+    vi.stubEnv("GITHUB_APP_STATELESS_TOKENS", "true");
+    await getInstallationToken("c");
+    expect(seen.at(-1)?.["X-GitHub-Stateless-S2S-Token"]).toBeUndefined();
+  });
+});

@@ -17,6 +17,26 @@ async function load() {
   return import("@/lib/ai/gateway");
 }
 
+/**
+ * 造一个诊断对象。
+ *
+ * 用工厂而不是在每个用例里手写字面量:ChatDiagnostics 每加一个字段,
+ * 手写的地方就要全部跟着改 —— contentIsReasoningFallback 那次就是这样,
+ * 本地 typecheck 被我用 grep 过滤掉了没看见,CI 一跑十几个报错。
+ */
+function diagnostics(
+  over: Partial<import("@/lib/ai/gateway").ChatDiagnostics> = {},
+): import("@/lib/ai/gateway").ChatDiagnostics {
+  return {
+    finishReason: null,
+    streamError: null,
+    seenDeltaKeys: [],
+    chunkCount: 0,
+    contentIsReasoningFallback: false,
+    ...over,
+  };
+}
+
 describe("服务商错误翻译", () => {
   it("容量耗尽 → 建议换模型或稍后重试", async () => {
     const { translateUpstreamError } = await load();
@@ -69,12 +89,10 @@ describe("服务商错误翻译", () => {
 
   it("空回复解释会复用同一套翻译", async () => {
     const { explainEmptyResponse } = await load();
-    const text = explainEmptyResponse({
-      finishReason: null,
+    const text = explainEmptyResponse(diagnostics({ finishReason: null,
       streamError: "ResourceExhausted: Worker local total request limit reached",
       seenDeltaKeys: [],
-      chunkCount: 1,
-    });
+      chunkCount: 1 }));
     expect(text).toContain("排队已满");
   });
 });

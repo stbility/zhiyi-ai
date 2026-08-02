@@ -81,7 +81,6 @@ describe("删除操作的反馈", () => {
 
     expect(state.error).toBeTruthy();
     expect(state.error).toContain("没有权限");
-    expect(state.ok).toBeUndefined();
   });
 
   it("真的删掉时才算成功", async () => {

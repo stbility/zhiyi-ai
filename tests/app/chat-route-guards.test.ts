@@ -1,3 +1,4 @@
+import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -64,8 +65,15 @@ vi.mock("@/lib/ai/credentials", () => ({
   loadIntegrationCipher: async () => "cipher",
 }));
 
-function post(body: unknown): Request {
-  return new Request("https://x.test/api/chat", {
+/**
+ * 造一个 NextRequest。
+ *
+ * 路由签名要的是 NextRequest 而不是 Request —— 它多了 cookies / nextUrl。
+ * 用 new NextRequest 而不是把 Request 强转:强转能骗过类型检查,
+ * 但真跑起来路由访问 request.nextUrl 时会炸,那样的测试等于没测。
+ */
+function post(body: unknown): NextRequest {
+  return new NextRequest("https://x.test/api/chat", {
     method: "POST",
     body: JSON.stringify(body),
     headers: { "Content-Type": "application/json" },
