@@ -1,5 +1,7 @@
 import "server-only";
 
+import { logger } from "@/lib/log";
+
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -36,6 +38,22 @@ export const CHAT_LIMITS: readonly RateLimitRule[] = [
   { windowSeconds: 3600, max: 300, label: "每小时最多 300 次" },
 ];
 
+/**
+ * 注册的限额。
+ *
+ * 注册走的是 admin.auth.admin.createUser(service role 建号),
+ * 这条路径**绕过了 Supabase 自身的注册限流** —— 而产品又明确不要邮箱验证,
+ * 于是没有任何东西挡在前面:一个脚本可以无限刷号,把 auth.users 撑爆,
+ * 也会把每个新号自动建的组织与审计记录一起灌进来。
+ *
+ * 不验证邮箱是产品方明示的取舍,可以接受;无限流叠加 service-role 绕过
+ * 是另一回事。这里按来源 IP 限,数值比真人注册强度高一截。
+ */
+export const REGISTER_LIMITS: readonly RateLimitRule[] = [
+  { windowSeconds: 600, max: 5, label: "每 10 分钟最多 5 次注册" },
+  { windowSeconds: 86_400, max: 20, label: "每天最多 20 次注册" },
+];
+
 export interface RateLimitResult {
   readonly allowed: boolean;
   /** 被拒绝时的说明,可直接展示给用户 */
@@ -70,11 +88,10 @@ export async function checkRateLimit(
     // 所以限流组件一旦故障,生产上不会留下任何痕迹 —— 等于限流静默失效。
     // 接上日志之前,这里至少要让故障可见。
     if (error) {
-      console.error("[rate-limit] 计数失败,本次放行", {
-        subject,
-        window: rule.windowSeconds,
-        message: error.message,
-      });
+      logger.error(
+        { subject, window: rule.windowSeconds, dbError: error.message },
+        "限流计数失败,本次放行",
+      );
       return { allowed: true, reason: null };
     }
 

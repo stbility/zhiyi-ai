@@ -8,6 +8,11 @@ import {
   type ChatMessage,
 } from "@/lib/ai/gateway";
 import { buildFallbackChain, describeFallback } from "@/lib/ai/fallback";
+import { logDbFailure, logger } from "@/lib/log";
+import {
+  loadIntegrationCipher,
+  loadProviderCipher,
+} from "@/lib/ai/credentials";
 import { createStallWatchdog } from "@/lib/ai/stall-watchdog";
 import type { ProviderKind } from "@/lib/providers/registry";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -112,6 +117,33 @@ function errorResponse(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
 }
 
+/**
+ * 落库一条助手消息,失败时留痕。
+ *
+ * 这几处写入发生在模型调用**之后** —— 钱已经花了,撤不回来,所以不能
+ * 像前面那样直接失败。但也绝不能像此前那样静默:RLS 拒绝时什么都没存下,
+ * 用户下次进来发现回答不见了,而日志里一个字都没有,根本无从排查。
+ * 而且 messages 是用量计费的唯一依据,丢一条就是账目对不上。
+ *
+ * 返回是否成功,让调用方决定要不要在回复里如实说明。
+ */
+async function insertAssistantMessage(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  row: Record<string, unknown>,
+): Promise<boolean> {
+  if (!supabase) return false;
+  const { error } = await supabase.from("messages").insert(row);
+  if (error) {
+    logDbFailure("messages.insert(assistant)", error, {
+      conversationId: row["conversation_id"],
+      organizationId: row["organization_id"],
+      model: row["model_id"],
+    });
+    return false;
+  }
+  return true;
+}
+
 export async function POST(request: NextRequest) {
   const supabase = await createSupabaseServerClient();
   if (!supabase) return errorResponse("认证服务未配置。", 503);
@@ -138,10 +170,11 @@ export async function POST(request: NextRequest) {
 
   const { providerId, model, content } = parsed.data;
 
-  // 读取 Provider —— 走用户身份客户端,RLS 保证只能读到自己组织的
+  // 读取 Provider —— 走用户身份客户端,RLS 保证只能读到自己组织的。
+  // 密文列不在这里取:迁移 0018 之后它对 authenticated 不可读了。
   const { data: provider } = await supabase
     .from("ai_providers")
-    .select("id, kind, base_url, api_key_cipher, organization_id, enabled")
+    .select("id, kind, base_url, organization_id, enabled")
     .eq("id", providerId)
     .maybeSingle();
 
@@ -150,10 +183,43 @@ export async function POST(request: NextRequest) {
     return errorResponse("该模型服务已停用。", 400);
   }
 
+  // 上面这一行能读到,就说明 RLS 认可此人有权访问这个服务商 ——
+  // 授权判断完成之后,才用 service_role 取密文。顺序不能颠倒:
+  // 反过来先取密文再判断,等于把 RLS 架空。
+  const apiKeyCipher = await loadProviderCipher(providerId);
+  if (!apiKeyCipher) {
+    return errorResponse("无法读取该模型服务的密钥,请重新填写。", 500);
+  }
+
   const organizationId = provider.organization_id as string;
 
   // 找到或新建对话
   let conversationId = parsed.data.conversationId;
+
+  // 客户端传来的对话 id 必须校验归属。
+  //
+  // RLS 只保证「用户能看到自己的对话」,不保证「这个对话和这次用的服务商
+  // 属于同一个组织」。而下面写 messages 时,organization_id 取自 provider、
+  // conversation_id 取自客户端 —— 两者不一致的话,消息会带着 B 组织的
+  // organization_id 落进 A 组织的对话里。
+  // messages 正是「后续做用量计费与权益控制的唯一依据」(迁移 0006 原话),
+  // 归属错了等于计费依据被污染。
+  if (conversationId) {
+    const { data: conv } = await supabase
+      .from("conversations")
+      .select("id, organization_id")
+      .eq("id", conversationId)
+      .maybeSingle();
+
+    if (!conv) return errorResponse("未找到该对话。", 404);
+    if (conv.organization_id !== organizationId) {
+      return errorResponse(
+        "这个对话与所选模型服务不属于同一个组织,已拒绝。",
+        400,
+      );
+    }
+  }
+
   if (!conversationId) {
     const { data: created, error } = await supabase
       .from("conversations")
@@ -178,16 +244,36 @@ export async function POST(request: NextRequest) {
   // 挂在对话上后,每个文件只存一份,而且每一轮都看得到。
   const incoming = parsed.data.attachments ?? [];
   if (incoming.length > 0) {
-    await supabase.from("conversation_attachments").upsert(
-      incoming.map((a) => ({
-        conversation_id: conversationId,
-        organization_id: organizationId,
-        path: a.path,
-        content: a.content,
-        size_chars: a.content.length,
-      })),
-      { onConflict: "conversation_id,path" },
-    );
+    const { error: attachError } = await supabase
+      .from("conversation_attachments")
+      .upsert(
+        incoming.map((a) => ({
+          conversation_id: conversationId,
+          organization_id: organizationId,
+          path: a.path,
+          content: a.content,
+          size_chars: a.content.length,
+        })),
+        { onConflict: "conversation_id,path" },
+      );
+
+    // 存不下就别往下走。
+    //
+    // 此前这里不检查错误:RLS 拒绝时静默失败,但模型照常被调用、
+    // 配额照常消耗,而用户以为项目文件已经带上了 —— 得到的却是
+    // 一个没看过代码的回答。宁可当场失败,也不能让人拿到看似正常
+    // 实则缺了上下文的结果。
+    if (attachError) {
+      logDbFailure("conversation_attachments.upsert", attachError, {
+        conversationId,
+        organizationId,
+        count: incoming.length,
+      });
+      return errorResponse(
+        `项目文件未能保存,已中止本次调用(避免让你拿到一个没看过这些文件的回答):${attachError.message}`,
+        500,
+      );
+    }
   }
 
   const [{ data: attachmentRows }, { data: history }] = await Promise.all([
@@ -221,7 +307,7 @@ export async function POST(request: NextRequest) {
   if (parsed.data.webSearch === true) {
     const { data: integration } = await supabase
       .from("integrations")
-      .select("kind, credential_cipher, enabled")
+      .select("id, kind, enabled")
       .eq("organization_id", organizationId)
       .eq("kind", "tavily")
       .maybeSingle();
@@ -233,10 +319,15 @@ export async function POST(request: NextRequest) {
       const { tavilySearch, renderSearchContext } = await import(
         "@/lib/integrations/tavily"
       );
-      const outcome = await tavilySearch({
-        credentialCipher: integration.credential_cipher as string,
-        query: content,
-      });
+      // 同样是先判权(上面那次查询过了 RLS)再取密文
+      const cipher = await loadIntegrationCipher(integration.id as string);
+      const outcome = cipher
+        ? await tavilySearch({ credentialCipher: cipher, query: content })
+        : {
+            ok: false,
+            results: [],
+            error: "无法读取检索服务的密钥,请到「集成」页重新填写。",
+          };
       if (outcome.ok && outcome.results.length > 0) {
         searchBlock = renderSearchContext(content, outcome.results);
         searchNote = `已联网检索 ${outcome.results.length} 条结果,回答中的来源编号对应这些链接。`;
@@ -271,12 +362,25 @@ export async function POST(request: NextRequest) {
 
   // 先落库用户消息 —— 即便后续模型调用失败,用户说过的话也不该丢。
   // 存的是用户自己打的字,不含附件正文。
-  await supabase.from("messages").insert({
+  const { error: userMsgError } = await supabase.from("messages").insert({
     conversation_id: conversationId,
     organization_id: organizationId,
     role: "user",
     content,
   });
+
+  // 用户消息都存不下,说明这次请求的写权限有问题 —— 继续调用模型只会
+  // 让对话记录出现「有回答没有提问」的断裂,而且钱照花。当场失败。
+  if (userMsgError) {
+    logDbFailure("messages.insert(user)", userMsgError, {
+      conversationId,
+      organizationId,
+    });
+    return errorResponse(
+      `消息未能保存,已中止本次调用:${userMsgError.message}`,
+      500,
+    );
+  }
 
   // --- 智能体模式 -----------------------------------------------------------
   //
@@ -294,7 +398,7 @@ export async function POST(request: NextRequest) {
       credentials: {
         kind: provider.kind as ProviderKind,
         baseUrl: (provider.base_url as string | null) ?? null,
-        apiKeyCipher: provider.api_key_cipher as string,
+        apiKeyCipher,
       },
       userMessage: `${built.fileBlock}${searchBlock}${content}`,
       history: built.messages,
@@ -306,7 +410,7 @@ export async function POST(request: NextRequest) {
   const credentials = {
     kind: provider.kind as ProviderKind,
     baseUrl: (provider.base_url as string | null) ?? null,
-    apiKeyCipher: provider.api_key_cipher as string,
+    apiKeyCipher,
   };
 
   // 取当前可选模型,排出降级链。
@@ -390,6 +494,20 @@ export async function POST(request: NextRequest) {
       // Kimi 就是这种情况:服务商目录里有、代理编程要用,只是这个账号
       // 暂时没被授权。系统不该替用户做这个决定。
       // 本次调用会由下面的降级链换一个模型完成,任务不中断。
+      // 模型调用失败是最需要事后排查的一类:用户只会说「模型不工作」,
+      // 而真正的原因(密钥被吊销、账号没开通、上游排队)全在这条日志里。
+      // 此前全站没有日志,每次都只能靠翻数据库里的 error_message 反推。
+      logger.warn(
+        {
+          model: candidate,
+          providerId,
+          organizationId,
+          status: lastStatus,
+          reason: lastFailure,
+        },
+        "模型调用失败",
+      );
+
       if (indicatesModelUnusable(lastStatus, lastFailure)) {
         await supabase
           .from("ai_models")
@@ -420,7 +538,7 @@ export async function POST(request: NextRequest) {
         ? `${lastFailure}(已依次尝试 ${attempted.length} 个模型:${attempted.join("、")})`
         : lastFailure;
 
-    await supabase.from("messages").insert({
+    await insertAssistantMessage(supabase, {
       conversation_id: conversationId,
       organization_id: organizationId,
       role: "assistant",
@@ -513,7 +631,7 @@ export async function POST(request: NextRequest) {
         if (full === "") {
           const reason = explainEmptyResponse(chosen.diagnostics);
 
-          await supabase.from("messages").insert({
+          await insertAssistantMessage(supabase, {
             conversation_id: convId,
             organization_id: organizationId,
             role: "assistant",
@@ -528,7 +646,7 @@ export async function POST(request: NextRequest) {
           return;
         }
 
-        await supabase.from("messages").insert({
+        const saved = await insertAssistantMessage(supabase, {
           conversation_id: convId,
           organization_id: organizationId,
           role: "assistant",
@@ -539,6 +657,15 @@ export async function POST(request: NextRequest) {
           output_tokens: chosen.usage.outputTokens,
           latency_ms: Date.now() - startedAt,
         });
+
+        // 存不下就当场说清楚。用户刚看着这段回答生成出来,
+        // 下次进来却发现它不见了 —— 那比一开始就报错更让人无法理解。
+        if (!saved) {
+          send("error", {
+            message:
+              "这条回答没能保存到对话记录里(刷新后会看不到)。内容还在上面,需要的话请先自行复制。",
+          });
+        }
 
         // 这次真的成功了,清掉上次的失败留痕 ——
         // 否则一条早已过时的报错会一直挂在模型旁边,与事实相反。
@@ -565,7 +692,7 @@ export async function POST(request: NextRequest) {
         // 留痕失败(比如连不上数据库)不能再把兜底路径本身炸掉 ——
         // 否则用户连错误提示都收不到,只会看到连接莫名断开。
         try {
-          await supabase.from("messages").insert({
+          await insertAssistantMessage(supabase, {
             conversation_id: convId,
             organization_id: organizationId,
             role: "assistant",

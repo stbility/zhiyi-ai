@@ -34,12 +34,18 @@ export async function deleteWorkspaceFile(
   const supabase = await createSupabaseServerClient();
   if (!supabase) return { error: "认证服务未配置。" };
 
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("workspace_files")
-    .delete()
+    .delete({ count: "exact" })
     .eq("workspace_id", parsed.data.workspaceId)
     .eq("path", parsed.data.path);
   if (error) return { error: error.message };
+  // 0 行被删 = RLS 把这次操作拦下了(PostgREST 在 0 行匹配时**不返回错误**)。
+  // 此前只判 error,于是越权删除会得到一句「已删除。」—— 反馈与事实相反,
+  // 用户以为删掉了,刷新一看还在。
+  if ((count ?? 0) === 0) {
+    return { error: "没有权限删除,或该记录已不存在。" };
+  }
 
   revalidatePath("/workspace");
   return {};
@@ -60,11 +66,17 @@ export async function deleteWorkspace(
   const supabase = await createSupabaseServerClient();
   if (!supabase) return { error: "认证服务未配置。" };
 
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("workspaces")
-    .delete()
+    .delete({ count: "exact" })
     .eq("id", parsed.data.workspaceId);
   if (error) return { error: error.message };
+  // 0 行被删 = RLS 把这次操作拦下了(PostgREST 在 0 行匹配时**不返回错误**)。
+  // 此前只判 error,于是越权删除会得到一句「已删除。」—— 反馈与事实相反,
+  // 用户以为删掉了,刷新一看还在。
+  if ((count ?? 0) === 0) {
+    return { error: "没有权限删除,或该记录已不存在。" };
+  }
 
   revalidatePath("/workspace");
   return {};

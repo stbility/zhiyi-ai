@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+
+import { loadProviderCipher } from "@/lib/ai/credentials";
 import { z } from "zod";
 
 import { encryptSecret, isEncryptionAvailable, maskApiKey } from "@/lib/crypto/secret-box";
@@ -178,12 +180,18 @@ export async function deleteProvider(
   const supabase = await createSupabaseServerClient();
   if (!supabase) return { error: "认证服务未配置。" };
 
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("ai_providers")
-    .delete()
+    .delete({ count: "exact" })
     .eq("id", parsed.data.id);
 
   if (error) return { error: error.message };
+  // 0 行被删 = RLS 把这次操作拦下了(PostgREST 在 0 行匹配时**不返回错误**)。
+  // 此前只判 error,于是越权删除会得到一句「已删除。」—— 反馈与事实相反,
+  // 用户以为删掉了,刷新一看还在。
+  if ((count ?? 0) === 0) {
+    return { error: "没有权限删除,或该记录已不存在。" };
+  }
 
   revalidatePath("/settings/models");
   return { ok: "已删除。" };
@@ -207,7 +215,9 @@ export async function testProvider(
 
   const { data: provider, error: loadError } = await supabase
     .from("ai_providers")
-    .select("id, kind, base_url, api_key_cipher, organization_id")
+    // 密文不在这里取:迁移 0018 之后它对 authenticated 不可读。
+    // 这一行能读到就说明 RLS 认可访问权,之后才用 service_role 取密文。
+    .select("id, kind, base_url, organization_id")
     .eq("id", parsed.data.id)
     .single();
 
@@ -230,6 +240,9 @@ export async function testProvider(
     (exclusionRows ?? []).map((r) => r.model_id as string),
   );
 
+  // 探测与真实调用都要用到密文,统一在这里取一次(已通过上面的 RLS 判权)
+  const providerCipher = (await loadProviderCipher(parsed.data.id)) ?? "";
+
   let ok = false;
   let failure: string | null = null;
   /** 服务商真实返回的全部模型标识 */
@@ -239,7 +252,9 @@ export async function testProvider(
 
   try {
     const { decryptSecret } = await import("@/lib/crypto/secret-box");
-    const apiKey = decryptSecret(provider.api_key_cipher as string);
+    const cipher = await loadProviderCipher(parsed.data.id);
+    if (!cipher) throw new Error("无法读取密钥密文");
+    const apiKey = decryptSecret(cipher);
 
     // 各家鉴权头不同,按 Provider 类型分派
     const headers: Record<string, string> =
@@ -379,7 +394,7 @@ export async function testProvider(
         credentials: {
           kind: provider.kind as ProviderKind,
           baseUrl: (provider.base_url as string | null) ?? null,
-          apiKeyCipher: provider.api_key_cipher as string,
+          apiKeyCipher: providerCipher,
         },
         model: sample.model_id as string,
         timeoutMs: PROBE_TIMEOUT_MS,
@@ -439,7 +454,7 @@ export async function testProvider(
     const credentials = {
       kind: provider.kind as ProviderKind,
       baseUrl: (provider.base_url as string | null) ?? null,
-      apiKeyCipher: provider.api_key_cipher as string,
+      apiKeyCipher: providerCipher,
     };
 
     // 分批并发:串行太慢,全量并发会触发限流把好模型判成坏的。
@@ -543,12 +558,18 @@ export async function deleteModel(
     .maybeSingle();
   if (!provider) return { error: "未找到该模型服务。" };
 
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("ai_models")
-    .delete()
+    .delete({ count: "exact" })
     .eq("provider_id", parsed.data.providerId)
     .eq("model_id", parsed.data.modelId);
   if (error) return { error: error.message };
+  // 0 行被删 = RLS 把这次操作拦下了(PostgREST 在 0 行匹配时**不返回错误**)。
+  // 此前只判 error,于是越权删除会得到一句「已删除。」—— 反馈与事实相反,
+  // 用户以为删掉了,刷新一看还在。
+  if ((count ?? 0) === 0) {
+    return { error: "没有权限删除,或该记录已不存在。" };
+  }
 
   // 记住这个决定,否则下次「测试连接」又把它导回来 —— 用户删了它,
   // 就是不想再看到它,不该被自动导入推翻。
@@ -587,12 +608,18 @@ export async function restoreModel(
     .maybeSingle();
   if (!provider) return { error: "未找到该模型服务。" };
 
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("ai_model_exclusions")
-    .delete()
+    .delete({ count: "exact" })
     .eq("provider_id", parsed.data.providerId)
     .eq("model_id", parsed.data.modelId);
   if (error) return { error: error.message };
+  // 0 行被删 = RLS 把这次操作拦下了(PostgREST 在 0 行匹配时**不返回错误**)。
+  // 此前只判 error,于是越权删除会得到一句「已删除。」—— 反馈与事实相反,
+  // 用户以为删掉了,刷新一看还在。
+  if ((count ?? 0) === 0) {
+    return { error: "没有权限删除,或该记录已不存在。" };
+  }
 
   // 直接放回列表,而不是让用户再去点别的按钮。
   //

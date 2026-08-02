@@ -3,7 +3,13 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
+import { headers } from "next/headers";
+
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import {
+  REGISTER_LIMITS,
+  checkRateLimit,
+} from "@/lib/services/rate-limit";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
@@ -64,6 +70,19 @@ export async function register(
       error: "认证服务未配置,当前无法注册。",
       hint: "缺少 Supabase 地址或公开密钥,请联系管理员。",
     };
+  }
+
+  // 注册限流。
+  //
+  // 下面用的是 service role 建号,那条路径绕过了 Supabase 自身的注册限流;
+  // 而产品又明确不要邮箱验证 —— 两者叠加等于门口没人看着,
+  // 一个脚本可以无限刷号。按来源 IP 限,数值比真人注册强度高一截。
+  const ip =
+    (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "unknown";
+  const limit = await checkRateLimit(`register:${ip}`, REGISTER_LIMITS);
+  if (!limit.allowed) {
+    return { error: limit.reason ?? "注册过于频繁,请稍后再试。" };
   }
 
   const admin = createSupabaseAdminClient();

@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+
+import { loadIntegrationCipher } from "@/lib/ai/credentials";
 import { z } from "zod";
 
 import {
@@ -107,11 +109,17 @@ export async function deleteIntegration(
   const supabase = await createSupabaseServerClient();
   if (!supabase) return { error: "认证服务未配置。" };
 
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("integrations")
-    .delete()
+    .delete({ count: "exact" })
     .eq("id", parsed.data.id);
   if (error) return { error: error.message };
+  // 0 行被删 = RLS 把这次操作拦下了(PostgREST 在 0 行匹配时**不返回错误**)。
+  // 此前只判 error,于是越权删除会得到一句「已删除。」—— 反馈与事实相反,
+  // 用户以为删掉了,刷新一看还在。
+  if ((count ?? 0) === 0) {
+    return { error: "没有权限删除,或该记录已不存在。" };
+  }
 
   revalidatePath("/settings/integrations");
   revalidatePath("/assistant");
@@ -136,10 +144,15 @@ export async function testIntegration(
 
   const { data: row } = await supabase
     .from("integrations")
-    .select("id, kind, credential_cipher")
+    // 密文不在这里取,理由同 models/actions.ts
+    .select("id, kind")
     .eq("id", parsed.data.id)
     .maybeSingle();
   if (!row) return { error: "未找到该集成。" };
+
+  // 上一行读得到就说明 RLS 认可访问权 —— 之后才取密文
+  const cipher = await loadIntegrationCipher(parsed.data.id);
+  if (!cipher) return { error: "无法读取该集成的凭据,请重新填写。" };
 
   let ok = false;
   let failure: string | null = null;
@@ -148,7 +161,7 @@ export async function testIntegration(
   if (row.kind === "tavily") {
     const { tavilySearch } = await import("@/lib/integrations/tavily");
     const outcome = await tavilySearch({
-      credentialCipher: row.credential_cipher as string,
+      credentialCipher: cipher,
       query: "今天的日期",
       maxResults: 3,
     });
