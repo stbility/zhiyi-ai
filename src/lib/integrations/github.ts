@@ -241,6 +241,51 @@ async function readError(response: Response): Promise<string> {
   }
 }
 
+export interface InstallationInfo {
+  /** 装在谁名下,纯展示用 —— 让用户认得出连的是哪个账号 */
+  readonly accountLogin: string | null;
+  /** all 或 selected。用户在 GitHub 界面上选的范围 */
+  readonly repositorySelection: string | null;
+}
+
+/**
+ * 读取安装的详情。
+ *
+ * 上一版把 account_login 建了列却从没写入,repository_selection 存的是
+ * URL 里的 setup_action —— 那个值是 "install" / "update",表示这次动作
+ * 是安装还是更新,和「授权了哪些仓库」完全无关。库里存着字段名与内容
+ * 对不上的数据,比不存更糟:后来的人会照着字段名去用它。
+ *
+ * 真实数据只能问 GitHub 要。
+ */
+export async function getInstallation(
+  installationId: string,
+): Promise<InstallationInfo> {
+  const config = getGitHubAppConfig();
+  if (!config) return { accountLogin: null, repositorySelection: null };
+
+  try {
+    const jwt = signAppJwt(config);
+    const response = await fetch(
+      `${API}/app/installations/${encodeURIComponent(installationId)}`,
+      { headers: headers(jwt), signal: AbortSignal.timeout(15_000) },
+    );
+    if (!response.ok) return { accountLogin: null, repositorySelection: null };
+
+    const payload = (await response.json()) as {
+      account?: { login?: string };
+      repository_selection?: string;
+    };
+    return {
+      accountLogin: payload.account?.login ?? null,
+      repositorySelection: payload.repository_selection ?? null,
+    };
+  } catch {
+    // 取不到不影响连接本身 —— 这两个字段只是展示用
+    return { accountLogin: null, repositorySelection: null };
+  }
+}
+
 export interface RepoSummary {
   readonly fullName: string;
   readonly defaultBranch: string;
@@ -254,40 +299,52 @@ export async function listRepositories(
   const auth = await getInstallationToken(installationId);
   if (!auth.ok) return auth;
 
+  // 必须翻页。
+  //
+  // 上一版只取 ?per_page=100 的第一页就返回,授权超过 100 个仓库时
+  // 后面的会被**静默丢掉** —— 用户在 GitHub 上明明勾了,系统里却说
+  // 「不在授权范围内」,而且没有任何迹象表明是被截断了。
+  // 白名单少一个仓库不是小事:它直接决定智能体能不能碰那个项目。
+  const repos: RepoSummary[] = [];
+  const MAX_PAGES = 20; // 2000 个仓库,足够;同时防止分页出错时无限循环
+
   try {
-    const response = await fetch(
-      `${API}/installation/repositories?per_page=100`,
-      { headers: headers(auth.token), signal: AbortSignal.timeout(15_000) },
-    );
-    if (!response.ok) {
-      return {
-        ok: false,
-        error: `读取仓库列表失败(HTTP ${response.status})${await readError(response)}`,
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const response = await fetch(
+        `${API}/installation/repositories?per_page=100&page=${page}`,
+        { headers: headers(auth.token), signal: AbortSignal.timeout(15_000) },
+      );
+      if (!response.ok) {
+        return {
+          ok: false,
+          error: `读取仓库列表失败(HTTP ${response.status})${await readError(response)}`,
+        };
+      }
+
+      const payload = (await response.json()) as {
+        total_count?: number;
+        repositories?: {
+          full_name?: string;
+          default_branch?: string;
+          private?: boolean;
+        }[];
       };
+
+      const batch = payload.repositories ?? [];
+      for (const r of batch) {
+        if (!r.full_name) continue;
+        repos.push({
+          fullName: r.full_name,
+          defaultBranch: r.default_branch ?? "main",
+          private: r.private ?? true,
+        });
+      }
+
+      // 取满一页说明可能还有下一页;不满就到头了
+      if (batch.length < 100) break;
     }
 
-    const payload = (await response.json()) as {
-      repositories?: {
-        full_name?: string;
-        default_branch?: string;
-        private?: boolean;
-      }[];
-    };
-
-    return {
-      ok: true,
-      repos: (payload.repositories ?? []).flatMap((r) =>
-        r.full_name
-          ? [
-              {
-                fullName: r.full_name,
-                defaultBranch: r.default_branch ?? "main",
-                private: r.private ?? true,
-              },
-            ]
-          : [],
-      ),
-    };
+    return { ok: true, repos };
   } catch {
     return { ok: false, error: "无法连接 GitHub。" };
   }
@@ -583,15 +640,23 @@ export async function commitFiles(
   });
 
   if (!created.ok) {
-    // 422 通常是分支已存在 —— 那就更新它,而不是报错让整次工作白做
-    const updated = await api(
-      installationId,
-      `/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(options.branch)}`,
-      { method: "PATCH", body: JSON.stringify({ sha: commitSha, force: false }) },
-    );
-    if (!updated.ok) {
-      return { ok: false, error: `更新分支失败:${updated.error}` };
-    }
+    // 分支已存在时**直接拒绝**,不去快进它。
+    //
+    // 上一版这里改成 PATCH ... force:false,想的是「别让整次工作白做」。
+    // 但那样会破掉这条链路的核心承诺:改动一律以 PR 的形式交给用户审阅。
+    // 如果模型挑中的是一个已有分支(staging、release、某个同事正在用的
+    // 特性分支),而它恰好还没和默认分支分叉,快进就会成功 ——
+    // 改动直接落到了用户的已有分支上,PR 是事后才开的,中间没有任何
+    // 人工确认的机会。默认分支被挡住了,其它分支却从这里漏了过去。
+    //
+    // 所以:分支必须由本次创建。撞名了就换一个,那点重试成本远小于
+    // 「悄悄改了用户正在用的分支」。
+    return {
+      ok: false,
+      error:
+        `分支 ${options.branch} 已存在。为避免改动落到别人正在用的分支上,` +
+        `每次提交都必须使用新分支 —— 请换一个分支名重试。`,
+    };
   }
 
   return { ok: true, commitSha };

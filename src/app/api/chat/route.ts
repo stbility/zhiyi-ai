@@ -49,6 +49,25 @@ export const maxDuration = 300;
 const FIRST_CHUNK_TIMEOUT_MS = 45_000;
 /** 流中途卡住的上限 —— 已经在输出了,给宽一些 */
 const STALL_TIMEOUT_MS = 60_000;
+
+/**
+ * 吞吐下限:观察 90 秒后,产出低于 200 个字符就判定这个模型此刻不可用。
+ *
+ * 为什么光有停滞检测不够 —— 这是生产上实测到的:
+ *   NVIDIA 上的 deepseek-v4-flash,284 秒产出 18 个 token(88 个字),
+ *   平均 15 秒挤一个字。而看门狗只要收到**任何**分片就重新计时,
+ *   于是这种「一直在动、但等于没动」的情况永远触发不了停滞超时,
+ *   用户老老实实等满 5 分钟,拿到 88 个字。
+ *
+ * 同一时刻 DeepSeek 官方的同名模型是 65 秒 6353 个 token —— 差了两个数量级。
+ * 这不是模型慢,是服务商此刻的容量塌了,而我们应该换一个,
+ * 而不是把用户的 5 分钟耗光。
+ *
+ * 阈值定得很宽松:200 字符 / 90 秒 ≈ 每秒 2 个字,比任何正常模型都慢得多,
+ * 不会误伤真在认真思考的推理模型(它们的思考过程现在也计入产出)。
+ */
+const THROUGHPUT_GRACE_MS = 90_000;
+const THROUGHPUT_MIN_CHARS = 200;
 /**
  * 总预算。
  *
@@ -387,6 +406,22 @@ export async function POST(request: NextRequest) {
   // 与普通问答的根本区别:模型能连续调用工具改变工作区,而不只是输出文本。
   // 这是「智能体」和「聊天助手」的分界线。
   if (parsed.data.agent === true) {
+    // 挡在入口,而不是等跑到第一步再失败。
+    //
+    // callWithTools 里已经有这道判断,但那时智能体循环已经启动、
+    // 用户已经在等一个「正在思考」的界面 —— 一个必然失败的任务不该被开始。
+    // 更要紧的是:能力边界要说清楚是能力边界,不能让用户以为是配置错了。
+    const { supportsToolCalling } = await import("@/lib/ai/gateway");
+    const providerKind = provider.kind as ProviderKind;
+    if (!supportsToolCalling(providerKind)) {
+      return errorResponse(
+        `该服务商用的是 ${providerKind} 协议,本项目尚未为它实现工具调用适配,` +
+          `所以智能体模式暂时用不了 —— 这不是你的配置有问题。` +
+          `请改用 OpenAI 兼容接口的服务商,或关掉「智能体」按普通对话使用。`,
+        400,
+      );
+    }
+
     const { runAgentTurn } = await import("@/lib/ai/agent-turn");
     return runAgentTurn({
       supabase,
@@ -604,7 +639,28 @@ export async function POST(request: NextRequest) {
       });
 
       try {
+        /** 收到的全部字符,思考过程也算 —— 它同样证明模型在真的产出 */
+        let producedChars = 0;
+        const streamStartedAt = Date.now();
+
         for await (const chunk of chosen.stream) {
+          producedChars += chunk.text.length;
+
+          // 吞吐太低就当这个模型此刻不可用,交给降级链换一个。
+          // 抛的是可重试错误,外层的 for 循环会接住并试下一个模型。
+          const elapsed = Date.now() - streamStartedAt;
+          if (
+            elapsed > THROUGHPUT_GRACE_MS &&
+            producedChars < THROUGHPUT_MIN_CHARS
+          ) {
+            throw new ProviderCallError(
+              `模型 ${usedModel} 在 ${Math.round(elapsed / 1000)} 秒内只产出了 ` +
+                `${producedChars} 个字符,吞吐远低于可用水平 —— 通常是该服务商此刻` +
+                `容量不足或排队严重。已中止,换一个模型重试。`,
+              503,
+            );
+          }
+
           if (chunk.kind === "reasoning") {
             // 思考过程实时推给前端,但**不计入正文** ——
             // 它证明模型在工作,却不是给用户的答案。

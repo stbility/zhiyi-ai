@@ -99,11 +99,12 @@ export async function register(
   }
 
   // 建号。email_confirm: true 表示直接标记为已确认,不触发任何邮件。
-  const { error: createError } = await admin.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-  });
+  const { data: createdUser, error: createError } =
+    await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+    });
 
   if (createError) {
     if (/already|exists|registered|duplicate/i.test(createError.message)) {
@@ -139,7 +140,9 @@ export async function register(
   //
   // 失败不阻断注册:账号已经建好了,让他进去看到「需要先创建组织」
   // 也比在注册页报一个他无法理解的错误好 —— 前者还能自己动手,后者是死路。
-  await createPersonalOrganization(admin, email);
+  if (createdUser?.user?.id) {
+    await createPersonalOrganization(admin, email, createdUser.user.id);
+  }
 
   redirect("/today");
 }
@@ -167,6 +170,7 @@ function translate(message: string): string {
 async function createPersonalOrganization(
   admin: SupabaseClient,
   email: string,
+  userId: string,
 ): Promise<void> {
   const local = email.split("@")[0] ?? "user";
   // 组织标识只允许小写字母、数字、连字符。邮箱前缀里可能有点和加号,
@@ -176,7 +180,15 @@ async function createPersonalOrganization(
 
   const { data: org, error } = await admin
     .from("organizations")
-    .insert({ name: `${local} 的空间`, slug })
+    .insert({
+      name: `${local} 的空间`,
+      slug,
+      // organizations.created_by 是 NOT NULL(迁移 0001)。
+      // 上一版漏了这个字段,于是每次注册都撞 23502、走进下面的 error 分支
+      // 静默返回 —— 「新用户注册即可用」这个功能从来没有生效过,
+      // 而且因为失败被设计成不阻断注册,没有任何用户可见的迹象。
+      created_by: userId,
+    })
     .select("id")
     .single();
 
@@ -185,16 +197,15 @@ async function createPersonalOrganization(
     return;
   }
 
-  const { data: created } = await admin.auth.admin.listUsers();
-  const user = created?.users.find((u) => u.email === email);
-  if (!user) {
-    logger.error({ slug }, "自动创建组织后找不到刚建的用户");
-    return;
-  }
-
+  // user id 直接来自 createUser 的返回值。
+  //
+  // 上一版是调 listUsers() 再按邮箱找 —— 那个接口默认每页 50 条,
+  // 平台用户超过 50 之后新用户就不在第一页里,找不到 → 不建成员关系,
+  // 而且那条分支不回滚已建的组织,库里会留下一个谁都看不见的孤儿组织。
+  // createUser 本来就返回 user.id,根本不必去翻全站用户表。
   const { error: memberError } = await admin.from("memberships").insert({
     organization_id: org.id,
-    user_id: user.id,
+    user_id: userId,
     role: "owner",
     status: "active",
   });

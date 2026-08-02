@@ -64,3 +64,24 @@ describe("外部字体不得阻塞首屏", () => {
     expect(zh).toContain("Microsoft YaHei");
   });
 });
+
+/**
+ * README 与代码里的阶段声明不得脱节。
+ *
+ * 真实问题:phase.ts 已经改成 Phase 4 并逐条写清缺什么,而 README 一字未动,
+ * 首页仍写着「Phase 1 已完成…模型网关均未交付」—— 同时与代码和 phase.ts 矛盾。
+ *
+ * 这个项目把「如实呈现状态」写进红线,自述文件失真是最不该发生的一类问题。
+ */
+describe("进度自述一致性", () => {
+  it("README 的阶段与 phase.ts 声明的一致", async () => {
+    const { CURRENT_PHASE } = await import("@/lib/phase");
+    const readme = readFileSync(
+      resolve(__dirname, "../../README.md"),
+      "utf8",
+    );
+    expect(readme).toContain(`Phase ${CURRENT_PHASE.id}`);
+    // 早年那句「模型网关均未交付」现在与事实相反
+    expect(readme).not.toContain("模型网关均未交付");
+  });
+});

@@ -115,6 +115,46 @@ describe("默认分支写保护", () => {
   });
 });
 
+describe("已有分支不得被快进", () => {
+  it("分支已存在时拒绝,不去改它", async () => {
+    calls.length = 0;
+    vi.resetModules();
+    vi.doMock("@/lib/integrations/github", () => ({
+      parseRepo: (full: string) => {
+        const [owner, repo] = full.split("/");
+        return owner && repo ? { owner, repo } : null;
+      },
+      commitFiles: async () => {
+        calls.push("commit");
+        return { ok: false, error: "分支 staging 已存在。请换一个分支名重试。" };
+      },
+      openPullRequest: async () => {
+        calls.push("pr");
+        return { ok: true, pr: { number: 1, url: "u" } };
+      },
+      listRepoFiles: async () => ({ ok: true, entries: [] }),
+      readRepoFile: async () => ({ ok: false, error: "x" }),
+    }));
+
+    const { executeGitTool } = await import("@/lib/ai/git-tools");
+    const r = await executeGitTool(
+      call("git_propose_changes", {
+        repo: "me/app",
+        branch: "staging",
+        title: "t",
+        files: [{ path: "a.ts", content: "x" }],
+      }),
+      CTX,
+    );
+
+    expect(r.ok).toBe(false);
+    expect(r.content).toContain("已存在");
+    // 提交失败后绝不能继续开 PR —— 那会让用户以为改动已经提上去了
+    expect(calls).not.toContain("pr");
+    vi.doUnmock("@/lib/integrations/github");
+  });
+});
+
 describe("参数校验", () => {
   it("路径穿越被拒绝", async () => {
     const { executeGitTool } = await import("@/lib/ai/git-tools");

@@ -2,7 +2,11 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { getCurrentUser } from "@/lib/supabase/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getGitHubAppConfig, getInstallationToken } from "@/lib/integrations/github";
+import {
+  getGitHubAppConfig,
+  getInstallation,
+  getInstallationToken,
+} from "@/lib/integrations/github";
 import { logger } from "@/lib/log";
 
 /**
@@ -102,13 +106,19 @@ export async function GET(request: NextRequest) {
   const supabase = await createSupabaseServerClient();
   if (!supabase) return back(request, { githubError: "认证服务未配置。" });
 
+  // 账号名与授权范围只能问 GitHub 要。
+  // 上一版把 URL 里的 setup_action 当成了 repository_selection ——
+  // 那个值是 "install" / "update",表示这次动作是安装还是更新,
+  // 和「授权了哪些仓库」完全无关。字段名与内容对不上的数据比不存更糟。
+  const info = await getInstallation(installationId);
+
   const { error } = await supabase.from("git_installations").upsert(
     {
       organization_id: checked.organizationId,
       provider: "github",
       installation_id: installationId,
-      repository_selection:
-        request.nextUrl.searchParams.get("setup_action") ?? null,
+      account_login: info.accountLogin,
+      repository_selection: info.repositorySelection,
       connected_by: user.id,
       updated_at: new Date().toISOString(),
     },
