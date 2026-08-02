@@ -3,6 +3,7 @@ import "server-only";
 import { ProviderCallError, callWithTools } from "@/lib/ai/gateway";
 import { isTransientFailure } from "@/lib/providers/model-filter";
 import type { ProviderCredentials } from "@/lib/ai/gateway";
+import { GIT_TOOLS, executeGitTool, type GitToolContext } from "@/lib/ai/git-tools";
 import {
   AGENT_SYSTEM_PROMPT,
   FILE_TOOLS,
@@ -78,6 +79,7 @@ export async function runAgent({
   userMessage,
   history,
   toolContext,
+  gitContext,
   signal,
   limits = DEFAULT_LIMITS,
   reporter,
@@ -95,6 +97,12 @@ export async function runAgent({
   userMessage: string;
   history: readonly { role: "user" | "assistant"; content: string }[];
   toolContext: ToolContext;
+  /**
+   * Git 仓库工具的上下文。未连接仓库时为 undefined ——
+   * 那种情况下**根本不把这几个工具交给模型**,而不是给了再拒绝。
+   * 给一个必然失败的工具,模型会反复尝试并把步数耗光。
+   */
+  gitContext?: GitToolContext | undefined;
   signal: AbortSignal;
   limits?: AgentLimits;
   reporter?: AgentReporter;
@@ -148,7 +156,7 @@ export async function runAgent({
           credentials,
           model: candidate,
           messages,
-          tools: FILE_TOOLS,
+          tools: gitContext ? [...FILE_TOOLS, ...GIT_TOOLS] : FILE_TOOLS,
           signal,
         });
         if (candidate !== activeModel) {
@@ -209,7 +217,19 @@ export async function runAgent({
 
     const results: ToolResult[] = [];
     for (const call of turn.toolCalls) {
-      const result = await executeTool(call, toolContext);
+      // 按工具名分派:Git 工具走仓库,其余走工作区。
+      // 两套工具的失败语义一致 —— 都返回观察结果而不抛错。
+      const result = call.name.startsWith("git_")
+        ? gitContext
+          ? await executeGitTool(call, gitContext)
+          : {
+              callId: call.id,
+              name: call.name,
+              ok: false,
+              content:
+                "尚未连接 Git 仓库,无法使用仓库工具。请先到「集成」页连接 GitHub。",
+            }
+        : await executeTool(call, toolContext);
       results.push(result);
       messages.push({
         role: "tool",

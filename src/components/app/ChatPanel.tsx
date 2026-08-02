@@ -611,14 +611,38 @@ export function ChatPanel({
   );
 
   if (models.length === 0) {
+    // 空状态必须能直接走下一步。
+    //
+    // 此前这里只有一句「请先到模型服务添加密钥」,既没有链接也没说去哪申请 ——
+    // 新用户注册进来看到的就是一个说不清怎么办的死页面。
+    // 说明「还差什么」的同时必须给出「怎么补」,否则等于把人挡在门外。
     return (
-      <div className="font-zh w-full p-[18px]">
+      <div className="font-zh mx-auto w-full max-w-2xl p-[18px]">
         <div className="border-border-default bg-surface-2 rounded-card border p-5">
-          <p className="text-fg text-body mb-1 font-medium">还没有可用的模型</p>
-          <p className="text-fg-secondary text-caption">
-            请先到「模型服务」添加您的 API
-            密钥,并点击「测试连接」——连接成功后可用模型会自动导入。
+          <p className="text-fg text-body mb-1 font-medium">还差一步:选一个模型服务</p>
+          <p className="text-fg-secondary text-caption mb-4">
+            智一 AI 不绑定任何一家服务商,模型由你自己接入 ——
+            密钥加密存储、只在服务端解密,不会下发到浏览器。
           </p>
+
+          <ol className="text-fg-secondary text-caption mb-4 flex flex-col gap-1.5 pl-4">
+            <li className="list-decimal">
+              去服务商官网申请一个 API 密钥。多家有免费额度,
+              下面的预设里有官方文档直达链接。
+            </li>
+            <li className="list-decimal">
+              到「模型服务」粘贴密钥并保存 —— 可用模型会自动导入。
+            </li>
+            <li className="list-decimal">回到这里就能开始对话。</li>
+          </ol>
+
+          <Link
+            href="/settings/models"
+            className={buttonClasses({ size: "sm" })}
+          >
+            <Icon name="settings" size={14} />
+            去配置模型服务
+          </Link>
         </div>
       </div>
     );

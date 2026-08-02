@@ -3,6 +3,9 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { DEFAULT_LIMITS, runAgent, summarizeRun } from "@/lib/ai/agent";
+import type { GitToolContext } from "@/lib/ai/git-tools";
+import { listRepositories } from "@/lib/integrations/github";
+import { logger } from "@/lib/log";
 import { buildFallbackChain } from "@/lib/ai/fallback";
 import type { AgentStep } from "@/lib/ai/agent";
 import { ProviderCallError } from "@/lib/ai/gateway";
@@ -57,6 +60,11 @@ export async function runAgentTurn({
     conversationId,
   );
 
+  // Git 上下文。没连仓库就是 undefined —— 那种情况下根本不把仓库工具
+  // 交给模型,而不是给了再拒绝:给一个必然失败的工具,模型会反复尝试
+  // 并把有限的步数耗光。
+  const gitContext = await loadGitContext(supabase, organizationId);
+
   // 备用模型:智能体一跑十几步,中途撞限流是常态。
   // 没有备用的话,第 11 步一个 503 就把前 10 步打死。
   const { data: availableRows } = await supabase
@@ -98,6 +106,7 @@ export async function runAgentTurn({
           userMessage,
           history,
           toolContext,
+          gitContext,
           signal,
           limits: DEFAULT_LIMITS,
           reporter: {
@@ -287,5 +296,51 @@ function createWorkspaceTools(
         sizeChars: (r.size_chars as number | null) ?? 0,
       }));
     },
+  };
+}
+
+/**
+ * 装配 Git 工具上下文。
+ *
+ * **授权仓库列表实时从 GitHub 拉,不缓存在我们库里。**
+ *
+ * 这一点很要紧:用户随时可能在 GitHub 侧把某个仓库移出授权范围,
+ * 甚至整个卸载应用。把列表缓存下来意味着我们会拿着一份过期的白名单
+ * 继续放行 —— 虽然 GitHub 那边最终会拒绝,但我们在自己这一层就该
+ * 反映真实的授权状态,而不是让用户看到一个已经无权访问的仓库还在列表里。
+ *
+ * 代价是每次智能体运行多一次 GitHub 往返。相对于「权限判断基于过期数据」
+ * 这个风险,这点开销完全值得。
+ */
+async function loadGitContext(
+  supabase: SupabaseClient,
+  organizationId: string,
+): Promise<GitToolContext | undefined> {
+  const { data } = await supabase
+    .from("git_installations")
+    .select("installation_id")
+    .eq("organization_id", organizationId)
+    .eq("provider", "github")
+    .maybeSingle();
+
+  const installationId = data?.installation_id as string | undefined;
+  if (!installationId) return undefined;
+
+  const repos = await listRepositories(installationId);
+  if (!repos.ok) {
+    logger.warn(
+      { organizationId, reason: repos.error },
+      "读取授权仓库列表失败,本轮不提供 Git 工具",
+    );
+    return undefined;
+  }
+  if (repos.repos.length === 0) return undefined;
+
+  return {
+    installationId,
+    allowedRepos: repos.repos.map((r) => r.fullName),
+    defaultBranches: Object.fromEntries(
+      repos.repos.map((r) => [r.fullName, r.defaultBranch]),
+    ),
   };
 }

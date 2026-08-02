@@ -152,7 +152,11 @@ describe("助手页渲染", () => {
         initialFileCount={0}
       />,
     );
-    expect(screen.getByText("还没有可用的模型")).toBeTruthy();
+    // 空状态不能只说「没有」——必须给出可点的下一步。
+    // 新用户注册进来第一眼看到的就是这个页面,说不清怎么办等于把人挡在门外。
+    expect(screen.getByText(/还差一步/)).toBeTruthy();
+    const link = screen.getByRole("link", { name: /去配置模型服务/ });
+    expect(link.getAttribute("href")).toBe("/settings/models");
   });
 
   it("失败留痕的消息(内容为空、带错误)不会让整页崩掉", () => {

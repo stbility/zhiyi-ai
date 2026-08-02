@@ -3,7 +3,12 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
+import { randomUUID } from "node:crypto";
+
 import { headers } from "next/headers";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { logger } from "@/lib/log";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
@@ -122,6 +127,20 @@ export async function register(
     };
   }
 
+  // 自动建一个个人组织。
+  //
+  // 「组织」是权限与计费的容器,数据模型上必须有。但对一个刚注册的个人用户来说,
+  // 一进门就被要求填「组织名称」「组织标识」是纯粹的门槛 —— 他想用的是 AI 助手,
+  // 不是来做组织管理的。此前的实际表现:注册完进去,今日页是一张创建组织表单,
+  // AI 助手页写着「需要先创建组织」,工作区也一样,整个产品都是锁的。
+  //
+  // 所以这里替他建好。名字用邮箱前缀,标识用不会撞车的随机后缀。
+  // 用户之后想改名随时可以改,但不该在第一步就被卡住。
+  //
+  // 失败不阻断注册:账号已经建好了,让他进去看到「需要先创建组织」
+  // 也比在注册页报一个他无法理解的错误好 —— 前者还能自己动手,后者是死路。
+  await createPersonalOrganization(admin, email);
+
   redirect("/today");
 }
 
@@ -133,4 +152,56 @@ function translate(message: string): string {
     return "该邮箱地址无法使用,请换一个。";
   }
   return message;
+}
+
+/**
+ * 给新用户建一个个人组织并把他设为 owner。
+ *
+ * 走 service role 而不是用户身份客户端:此刻会话 Cookie 刚写进响应、
+ * 还没回到浏览器,服务端这一侧拿不到已登录的用户身份 ——
+ * 用用户身份客户端会被 RLS 挡下。
+ *
+ * 这是 service role 的正当用途:用户身份客户端在这个时点确实做不到。
+ * 范围也严格限定 —— 只建一个组织、只给这一个用户一条成员关系。
+ */
+async function createPersonalOrganization(
+  admin: SupabaseClient,
+  email: string,
+): Promise<void> {
+  const local = email.split("@")[0] ?? "user";
+  // 组织标识只允许小写字母、数字、连字符。邮箱前缀里可能有点和加号,
+  // 而且不同邮箱可能撞出同一个前缀 —— 带一个随机后缀避开唯一约束冲突。
+  const base = local.toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 30);
+  const slug = `${base || "user"}-${randomUUID().slice(0, 6)}`;
+
+  const { data: org, error } = await admin
+    .from("organizations")
+    .insert({ name: `${local} 的空间`, slug })
+    .select("id")
+    .single();
+
+  if (error || !org) {
+    logger.error({ dbError: error?.message, slug }, "自动创建个人组织失败");
+    return;
+  }
+
+  const { data: created } = await admin.auth.admin.listUsers();
+  const user = created?.users.find((u) => u.email === email);
+  if (!user) {
+    logger.error({ slug }, "自动创建组织后找不到刚建的用户");
+    return;
+  }
+
+  const { error: memberError } = await admin.from("memberships").insert({
+    organization_id: org.id,
+    user_id: user.id,
+    role: "owner",
+    status: "active",
+  });
+
+  if (memberError) {
+    // 留下一个谁都看不见的组织比没有更糟 —— 回滚
+    await admin.from("organizations").delete().eq("id", org.id);
+    logger.error({ dbError: memberError.message }, "自动建立成员关系失败,已回滚");
+  }
 }

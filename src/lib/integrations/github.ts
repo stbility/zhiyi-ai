@@ -323,3 +323,306 @@ export function issueState(organizationId: string, now = Date.now()): string {
 export function installUrl(slug: string, state: string): string {
   return `https://github.com/apps/${encodeURIComponent(slug)}/installations/new?state=${encodeURIComponent(state)}`;
 }
+
+
+// ---------------------------------------------------------------------------
+// 仓库读写
+//
+// 只用 REST 的 Contents / Git Data API,不做本地 clone ——
+// 无服务器函数没有可持久化的磁盘,而且一个大仓库 clone 下来就撞上
+// 300 秒的函数时限了。按需读单个文件、按需提交,才是这个运行环境里
+// 能真正跑通的做法。
+// ---------------------------------------------------------------------------
+
+export interface RepoRef {
+  readonly owner: string;
+  readonly repo: string;
+  readonly ref?: string | undefined;
+}
+
+/** 把 "owner/repo" 拆开。格式不对时如实返回 null,不猜 */
+export function parseRepo(fullName: string): { owner: string; repo: string } | null {
+  const parts = fullName.split("/");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  return { owner: parts[0], repo: parts[1] };
+}
+
+interface Fetched {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly body: unknown;
+  readonly error: string;
+}
+
+async function api(
+  installationId: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<Fetched> {
+  const auth = await getInstallationToken(installationId);
+  if (!auth.ok) {
+    return { ok: false, status: 0, body: null, error: auth.error };
+  }
+
+  try {
+    const response = await fetch(`${API}${path}`, {
+      ...init,
+      headers: { ...headers(auth.token), ...(init.headers ?? {}) },
+      signal: AbortSignal.timeout(20_000),
+    });
+
+    const text = await response.text();
+    const body = text ? JSON.parse(text) : null;
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      body,
+      error: response.ok
+        ? ""
+        : `GitHub 返回 HTTP ${response.status}${
+            (body as { message?: string } | null)?.message
+              ? `:${(body as { message?: string }).message}`
+              : ""
+          }`,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      status: 0,
+      body: null,
+      error:
+        e instanceof Error && e.name === "TimeoutError"
+          ? "GitHub 请求超时(20 秒)。"
+          : "无法连接 GitHub。",
+    };
+  }
+}
+
+export interface RepoFile {
+  readonly path: string;
+  readonly content: string;
+  /** 覆盖写时必须带上,GitHub 用它做乐观锁 */
+  readonly sha: string;
+}
+
+/**
+ * 读一个文件。
+ *
+ * 目录、二进制、超大文件都会如实拒绝而不是返回一堆乱码 ——
+ * 让模型看到 base64 噪音只会让它据此编造内容。
+ */
+export async function readRepoFile(
+  installationId: string,
+  ref: RepoRef,
+  path: string,
+): Promise<{ ok: true; file: RepoFile } | { ok: false; error: string }> {
+  const query = ref.ref ? `?ref=${encodeURIComponent(ref.ref)}` : "";
+  const r = await api(
+    installationId,
+    `/repos/${ref.owner}/${ref.repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}${query}`,
+  );
+
+  if (!r.ok) {
+    if (r.status === 404) return { ok: false, error: `仓库里没有 ${path}。` };
+    return { ok: false, error: r.error };
+  }
+
+  const payload = r.body as {
+    type?: string;
+    encoding?: string;
+    content?: string;
+    sha?: string;
+  };
+
+  if (Array.isArray(r.body)) {
+    return { ok: false, error: `${path} 是一个目录,不是文件。` };
+  }
+  if (payload.type !== "file" || !payload.sha) {
+    return { ok: false, error: `${path} 不是普通文件。` };
+  }
+  // 超过 1MB 时 GitHub 不返回内容,只给元数据 —— 必须如实说明
+  if (payload.encoding !== "base64" || payload.content === undefined) {
+    return {
+      ok: false,
+      error: `${path} 太大或不是文本文件,无法通过接口读取内容。`,
+    };
+  }
+
+  return {
+    ok: true,
+    file: {
+      path,
+      content: Buffer.from(payload.content, "base64").toString("utf8"),
+      sha: payload.sha,
+    },
+  };
+}
+
+/** 列出某个目录下的条目 —— 让模型先看清结构,而不是凭猜去读文件 */
+export async function listRepoFiles(
+  installationId: string,
+  ref: RepoRef,
+  path = "",
+): Promise<
+  | { ok: true; entries: { path: string; type: "file" | "dir"; size: number }[] }
+  | { ok: false; error: string }
+> {
+  const query = ref.ref ? `?ref=${encodeURIComponent(ref.ref)}` : "";
+  const r = await api(
+    installationId,
+    `/repos/${ref.owner}/${ref.repo}/contents/${path}${query}`,
+  );
+  if (!r.ok) return { ok: false, error: r.error };
+
+  const rows = Array.isArray(r.body) ? r.body : [r.body];
+  return {
+    ok: true,
+    entries: (rows as { path?: string; type?: string; size?: number }[]).flatMap(
+      (e) =>
+        e.path
+          ? [
+              {
+                path: e.path,
+                type: e.type === "dir" ? ("dir" as const) : ("file" as const),
+                size: e.size ?? 0,
+              },
+            ]
+          : [],
+    ),
+  };
+}
+
+
+/**
+ * 提交一批文件到指定分支。
+ *
+ * **不允许直接写默认分支** —— 这是硬规则,不是可配置项。
+ *
+ * 理由很实际:模型会犯错,而且它犯的错往往看起来很合理。让它直接推
+ * main 意味着一次误判就能覆盖用户的代码,而且没有中间环节可以拦。
+ * 走分支 + PR 之后,用户在合并前一定会看到 diff —— 那道人工确认
+ * 是整条链路里唯一不能省的一环。
+ *
+ * 用 Git Data API 手工造树而不是逐个调 Contents API:
+ * 后者每个文件一次提交,改 5 个文件就是 5 个提交、5 个往返,
+ * 而且中途失败会留下半吊子状态。造一棵树一次提交是原子的。
+ */
+export async function commitFiles(
+  installationId: string,
+  ref: RepoRef,
+  options: {
+    branch: string;
+    baseBranch: string;
+    message: string;
+    files: readonly { path: string; content: string }[];
+  },
+): Promise<{ ok: true; commitSha: string } | { ok: false; error: string }> {
+  const { owner, repo } = ref;
+  if (options.files.length === 0) {
+    return { ok: false, error: "没有要提交的文件。" };
+  }
+
+  // 1. 取基线分支的最新提交
+  const baseRef = await api(
+    installationId,
+    `/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(options.baseBranch)}`,
+  );
+  if (!baseRef.ok) {
+    return { ok: false, error: `读取基线分支失败:${baseRef.error}` };
+  }
+  const baseSha = (baseRef.body as { object?: { sha?: string } }).object?.sha;
+  if (!baseSha) return { ok: false, error: "基线分支没有提交。" };
+
+  // 2. 取基线提交的树
+  const baseCommit = await api(
+    installationId,
+    `/repos/${owner}/${repo}/git/commits/${baseSha}`,
+  );
+  if (!baseCommit.ok) return { ok: false, error: baseCommit.error };
+  const baseTree = (baseCommit.body as { tree?: { sha?: string } }).tree?.sha;
+  if (!baseTree) return { ok: false, error: "读取基线树失败。" };
+
+  // 3. 造一棵新树。content 直接内联,GitHub 会自动建 blob
+  const tree = await api(installationId, `/repos/${owner}/${repo}/git/trees`, {
+    method: "POST",
+    body: JSON.stringify({
+      base_tree: baseTree,
+      tree: options.files.map((f) => ({
+        path: f.path,
+        mode: "100644",
+        type: "blob",
+        content: f.content,
+      })),
+    }),
+  });
+  if (!tree.ok) return { ok: false, error: `创建文件树失败:${tree.error}` };
+  const treeSha = (tree.body as { sha?: string }).sha;
+  if (!treeSha) return { ok: false, error: "创建文件树失败。" };
+
+  // 4. 造提交
+  const commit = await api(installationId, `/repos/${owner}/${repo}/git/commits`, {
+    method: "POST",
+    body: JSON.stringify({
+      message: options.message,
+      tree: treeSha,
+      parents: [baseSha],
+    }),
+  });
+  if (!commit.ok) return { ok: false, error: `创建提交失败:${commit.error}` };
+  const commitSha = (commit.body as { sha?: string }).sha;
+  if (!commitSha) return { ok: false, error: "创建提交失败。" };
+
+  // 5. 指向新提交。分支不存在就建,存在就快进
+  const created = await api(installationId, `/repos/${owner}/${repo}/git/refs`, {
+    method: "POST",
+    body: JSON.stringify({
+      ref: `refs/heads/${options.branch}`,
+      sha: commitSha,
+    }),
+  });
+
+  if (!created.ok) {
+    // 422 通常是分支已存在 —— 那就更新它,而不是报错让整次工作白做
+    const updated = await api(
+      installationId,
+      `/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(options.branch)}`,
+      { method: "PATCH", body: JSON.stringify({ sha: commitSha, force: false }) },
+    );
+    if (!updated.ok) {
+      return { ok: false, error: `更新分支失败:${updated.error}` };
+    }
+  }
+
+  return { ok: true, commitSha };
+}
+
+export interface PullRequestResult {
+  readonly number: number;
+  readonly url: string;
+}
+
+/** 开一个 PR。合并与否永远由人决定 —— 我们只负责把改动摆到台面上 */
+export async function openPullRequest(
+  installationId: string,
+  ref: RepoRef,
+  options: { head: string; base: string; title: string; body: string },
+): Promise<{ ok: true; pr: PullRequestResult } | { ok: false; error: string }> {
+  const r = await api(installationId, `/repos/${ref.owner}/${ref.repo}/pulls`, {
+    method: "POST",
+    body: JSON.stringify({
+      title: options.title,
+      body: options.body,
+      head: options.head,
+      base: options.base,
+    }),
+  });
+
+  if (!r.ok) return { ok: false, error: `创建 PR 失败:${r.error}` };
+
+  const payload = r.body as { number?: number; html_url?: string };
+  if (!payload.number || !payload.html_url) {
+    return { ok: false, error: "GitHub 未返回 PR 信息。" };
+  }
+  return { ok: true, pr: { number: payload.number, url: payload.html_url } };
+}
