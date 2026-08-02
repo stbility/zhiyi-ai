@@ -1,6 +1,7 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { ThemeToggle } from "@/components/app/ThemeToggle";
@@ -54,7 +55,6 @@ export function AppChrome({
   children,
 }: AppChromeProps) {
   const pathname = usePathname();
-  const router = useRouter();
 
   // 顶栏标题由当前路由推导。此前由布局写死成「今日」,于是每个页面顶部
   // 都显示「今日」—— 在 AI 助手页尤其明显,顶栏说「今日」、内容是对话,
@@ -103,16 +103,22 @@ export function AppChrome({
         }
 
         return (
-          <button
+          // 必须是真正的链接,不能是 button + router.push。
+          //
+          // 这是「导航按钮要点很多下才生效」的根因,有三层:
+          //   1. 水合完成前 <button onClick> 完全是死的 —— 事件还没挂上。
+          //      <Link> 渲染成 <a href>,零 JavaScript 也能跳。
+          //   2. <Link> 会预取目标页面;router.push 是点击那一刻才开始请求。
+          //      这些页面是 force-dynamic,一次要跑好几个数据库查询 ——
+          //      点下去一两秒内屏幕毫无变化,用户当然会再点。
+          //   3. 中键、Cmd+点击、右键「在新标签页打开」在 button 上全部失效。
+          <Link
             key={item.key}
-            type="button"
+            href={item.href}
             aria-current={active ? "page" : undefined}
-            onClick={() => {
-              // 关抽屉发生在用户点击这一刻,而不是「观察到路由变了再补关闭」——
-              // 后者是把用户操作的结果当成需要同步的外部状态,会触发级联渲染
-              setDrawerOpen(false);
-              router.push(item.href);
-            }}
+            // 关抽屉发生在用户点击这一刻,而不是「观察到路由变了再补关闭」——
+            // 后者是把用户操作的结果当成需要同步的外部状态,会触发级联渲染
+            onClick={() => setDrawerOpen(false)}
             className={cn(
               "rounded-control flex cursor-pointer items-center gap-2.5 px-3 py-2.25 text-left text-[14px]",
               "transition-colors duration-[var(--duration-hover)] ease-standard",
@@ -124,7 +130,7 @@ export function AppChrome({
           >
             <Icon name={item.icon} size={17} className="shrink-0" />
             {item.label}
-          </button>
+          </Link>
         );
       })}
     </nav>
