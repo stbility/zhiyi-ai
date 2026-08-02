@@ -67,6 +67,14 @@ interface Turn {
   fallback?: string;
   /** 本轮附带的文件数,让回看时知道当时给了模型什么 */
   attachedFiles?: number;
+  /**
+   * 推理模型的思考过程。实时显示,但不是答案。
+   *
+   * 不显示它的后果很具体:这类模型可能思考几分钟才吐第一个正文字,
+   * 期间界面一个字都不动 —— 用户只能判断为「模型不工作」。
+   * 显示出来,等待就从「死机」变成「看得见的进行中」。
+   */
+  reasoning?: string;
   /** 上下文被裁剪的说明 */
   trimming?: string;
   /** 联网检索的说明 */
@@ -414,6 +422,7 @@ export function ChatPanel({
       const decoder = new TextDecoder();
       let buffer = "";
       let text = "";
+      let reasoning = "";
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -473,6 +482,9 @@ export function ChatPanel({
           } else if (event === "delta" && "text" in payload) {
             text += payload.text;
             patchAssistant({ content: text });
+          } else if (event === "reasoning" && "text" in payload) {
+            reasoning += payload.text;
+            patchAssistant({ reasoning });
           } else if (event === "done" && "latencyMs" in payload) {
             patchAssistant({
               meta: {
@@ -703,6 +715,23 @@ export function ChatPanel({
                   </span>
                 ) : null}
 
+                {/* 思考过程。放在答案上方,因为它先发生。
+                    生成中默认展开 —— 那正是用户最需要看到「在动」的时刻;
+                    生成完成后折叠起来,答案才是主角。 */}
+                {turn.role === "assistant" && turn.reasoning ? (
+                  <details
+                    open={streaming && turn.content === ""}
+                    className="border-divider bg-surface-2 rounded-control w-full border px-3 py-2"
+                  >
+                    <summary className="text-fg-tertiary text-label cursor-pointer select-none">
+                      思考过程({turn.reasoning.length} 字)
+                    </summary>
+                    <div className="text-fg-tertiary text-label mt-2 max-h-64 overflow-auto whitespace-pre-wrap">
+                      {turn.reasoning}
+                    </div>
+                  </details>
+                ) : null}
+
                 <div
                   className={cn(
                     "text-[14px] leading-[1.6] whitespace-pre-wrap",
@@ -723,7 +752,9 @@ export function ChatPanel({
                     turn.content === "" &&
                     !turn.error &&
                     streaming && (
-                      <span className="text-fg-tertiary">正在生成…</span>
+                      <span className="text-fg-tertiary">
+                        {turn.reasoning ? "正在思考…" : "正在生成…"}
+                      </span>
                     )}
                 </div>
 

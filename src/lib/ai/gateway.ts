@@ -51,9 +51,26 @@ export interface ChatDiagnostics {
   chunkCount: number;
 }
 
+/**
+ * 流里的一个增量。
+ *
+ * 必须区分正文与思考过程,不能都当字符串往外吐:
+ *   content   —— 给用户的答案,要计入最终存库的正文
+ *   reasoning —— 推理模型的思考过程,要实时显示但不属于答案
+ *
+ * 此前思考过程被整段缓冲、只在「完全没有正文」时才吐出来。后果有二:
+ *   1. 模型思考的几分钟里前端一个字都收不到,界面看起来是死的
+ *   2. 看门狗只在收到增量时重新计时 —— 推理模型正常工作却被判定
+ *      「45 秒没有返回任何内容」而掐断
+ */
+export interface StreamChunk {
+  readonly kind: "content" | "reasoning";
+  readonly text: string;
+}
+
 export interface ChatStreamResult {
-  /** 逐段产出的文本增量 */
-  readonly stream: AsyncGenerator<string, void, unknown>;
+  /** 逐段产出的增量,区分正文与思考过程 */
+  readonly stream: AsyncGenerator<StreamChunk, void, unknown>;
   /** 流结束后才有值 —— 用量通常在最后一个事件里 */
   readonly usage: ChatUsage;
   /** 流结束后才有值 —— 用于解释「为什么没有内容」 */
@@ -258,7 +275,7 @@ async function callOpenAICompatible(
   usage: ChatUsage,
   diagnostics: ChatDiagnostics,
   signal: AbortSignal,
-): Promise<AsyncGenerator<string, void, unknown>> {
+): Promise<AsyncGenerator<StreamChunk, void, unknown>> {
   const apiKey = decryptSecret(creds.apiKeyCipher);
   const response = await fetch(`${resolveBaseUrl(creds)}/chat/completions`, {
     method: "POST",
@@ -346,7 +363,7 @@ async function callOpenAICompatible(
         const text = delta["content"];
         if (typeof text === "string" && text !== "") {
           emittedContent = true;
-          yield text;
+          yield { kind: "content", text } as const;
         }
 
         // 但也要把思考过程留着。有些推理模型(英伟达上的 deepseek-v4-pro
@@ -359,6 +376,9 @@ async function callOpenAICompatible(
         const reasoning = delta["reasoning_content"];
         if (typeof reasoning === "string" && reasoning !== "") {
           reasoningBuffer += reasoning;
+          // 实时吐出去。它不是答案,但它证明模型正在工作 ——
+          // 前端据此显示「思考中」,看门狗据此知道没有卡住。
+          yield { kind: "reasoning", text: reasoning } as const;
         }
       }
     }
@@ -366,7 +386,10 @@ async function callOpenAICompatible(
     // 整轮下来一个字的正文都没有,但有思考过程 —— 把它交出来,并说明这是什么。
     // 给出模型真实产生的内容,比报一句「没有内容」有用得多。
     if (!emittedContent && reasoningBuffer !== "") {
-      yield `(以下为模型的思考过程 —— 本轮没有产出正式回答)\n\n${reasoningBuffer}`;
+      yield {
+        kind: "content",
+        text: `(本轮没有产出正式回答,以下是模型的思考过程)\n\n${reasoningBuffer}`,
+      } as const;
     }
   })();
 }
@@ -379,7 +402,7 @@ async function callAnthropic(
   usage: ChatUsage,
   diagnostics: ChatDiagnostics,
   signal: AbortSignal,
-): Promise<AsyncGenerator<string, void, unknown>> {
+): Promise<AsyncGenerator<StreamChunk, void, unknown>> {
   const apiKey = decryptSecret(creds.apiKeyCipher);
 
   // Anthropic 的 system 提示是独立字段,不放在 messages 里
@@ -438,7 +461,7 @@ async function callAnthropic(
           usage.outputTokens = event.usage?.output_tokens ?? usage.outputTokens;
         }
         if (event.type === "content_block_delta" && event.delta?.text) {
-          yield event.delta.text;
+          yield { kind: "content", text: event.delta.text } as const;
         }
       } catch {
         // 同上,单条事件解析失败不中断流
@@ -455,7 +478,7 @@ async function callGoogle(
   usage: ChatUsage,
   diagnostics: ChatDiagnostics,
   signal: AbortSignal,
-): Promise<AsyncGenerator<string, void, unknown>> {
+): Promise<AsyncGenerator<StreamChunk, void, unknown>> {
   const apiKey = decryptSecret(creds.apiKeyCipher);
 
   const systemText = messages
@@ -516,7 +539,7 @@ async function callGoogle(
         }
 
         const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) yield text;
+        if (text) yield { kind: "content", text } as const;
       } catch {
         // 同上
       }

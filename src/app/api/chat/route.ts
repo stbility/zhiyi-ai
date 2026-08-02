@@ -486,10 +486,21 @@ export async function POST(request: NextRequest) {
       });
 
       try {
-        for await (const delta of chosen.stream) {
-          full += delta;
-          send("delta", { text: delta });
-          // 有内容进来就重新计时 —— 只有「卡住不动」才该被掐断
+        for await (const chunk of chosen.stream) {
+          if (chunk.kind === "reasoning") {
+            // 思考过程实时推给前端,但**不计入正文** ——
+            // 它证明模型在工作,却不是给用户的答案。
+            //
+            // 此前它被整段缓冲、只在完全没有正文时才吐出来,后果是:
+            // 推理模型思考的几分钟里前端一个字都收不到,界面看起来是死的;
+            // 而看门狗只在收到增量时重新计时,于是模型正常思考却被判成
+            // 「45 秒没有返回任何内容」直接掐断。
+            send("reasoning", { text: chunk.text });
+          } else {
+            full += chunk.text;
+            send("delta", { text: chunk.text });
+          }
+          // 思考也算「在动」—— 正在推理的模型不该被当成卡住
           wd.arm(
             STALL_TIMEOUT_MS,
             `模型输出中途停滞超过 ${Math.round(STALL_TIMEOUT_MS / 1000)} 秒,已中止。上面是已生成的部分。`,

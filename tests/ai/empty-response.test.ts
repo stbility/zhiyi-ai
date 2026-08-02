@@ -153,13 +153,21 @@ describe("只有思考过程时的处理", () => {
       signal: new AbortController().signal,
     });
 
-    let text = "";
-    for await (const d of stream) text += d;
+    // 思考过程现在是实时产出的独立通道;整轮没有正文时,
+    // 它会作为正文交出去 —— 但必须标明这是思考过程,不能冒充正式回答
+    let content = "";
+    let reasoning = "";
+    for await (const c of stream) {
+      if (c.kind === "content") content += c.text;
+      else reasoning += c.text;
+    }
 
-    expect(text).toContain("先分析需求");
-    expect(text).toContain("再考虑边界");
-    // 必须说明这是思考过程,不能冒充正式回答
-    expect(text).toContain("思考过程");
+    // 实时流里就应该看得到思考 —— 这正是「界面看起来死了」的解药
+    expect(reasoning).toContain("先分析需求");
+    expect(reasoning).toContain("再考虑边界");
+
+    expect(content).toContain("先分析需求");
+    expect(content).toContain("没有产出正式回答");
     vi.unstubAllGlobals();
   });
 
@@ -188,11 +196,18 @@ describe("只有思考过程时的处理", () => {
       signal: new AbortController().signal,
     });
 
-    let text = "";
-    for await (const d of stream) text += d;
+    let content = "";
+    let reasoning = "";
+    for await (const c of stream) {
+      if (c.kind === "content") content += c.text;
+      else reasoning += c.text;
+    }
 
-    expect(text).toBe("答案是 42。");
-    expect(text).not.toContain("内部推演");
+    // 答案里绝不能掺进思考过程
+    expect(content).toBe("答案是 42。");
+    expect(content).not.toContain("内部推演");
+    // 但思考过程本身要实时流出来,让用户看得到模型在动
+    expect(reasoning).toContain("内部推演");
     vi.unstubAllGlobals();
   });
 });
