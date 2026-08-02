@@ -100,7 +100,7 @@ describe("助手页水合", () => {
 
     // 水合后内容仍在,没有被卸载成空白
     expect(container.textContent).toContain("你好");
-    expect(container.textContent).toContain("添加文件夹");
+    expect(container.textContent).toContain("文件夹");
 
     consoleError.mockRestore();
     await act(async () => root.unmount());

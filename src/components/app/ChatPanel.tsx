@@ -686,21 +686,30 @@ export function ChatPanel({
           onSubmit={send}
           className="border-divider flex shrink-0 flex-col gap-2 border-t p-3.5"
         >
-          {/* 智能体模式是「这一条会怎么执行」,必须在发送前就看得见。
-              此前只有一个次要按钮的边框变色,太容易忽略 ——
-              用户开了一次,重挂后被重置回普通对话,自己完全不知道。 */}
-          {agentMode && (
-            <div className="border-brand bg-brand-tint rounded-control flex flex-wrap items-center gap-2 border px-3 py-2">
-              <Icon name="bot" size={14} className="text-brand shrink-0" />
-              <span className="text-brand text-label">
-                智能体模式:代码会写入工作区,不会贴在回答里
-              </span>
-              <a
-                href="/workspace"
-                className="text-brand hover:text-brand-hover text-label underline"
-              >
-                查看工作区
-              </a>
+          {/* 「这一条会怎么执行」必须在发送前就看得见。
+              状态集中放在这里说,按钮标签就能一直保持短 ——
+              标签跟着状态变长会把整行控件撑开,反而更难扫。 */}
+          {(agentMode || webSearch) && (
+            <div className="border-brand bg-brand-tint rounded-control flex flex-wrap items-center gap-x-3 gap-y-1 border px-3 py-1.5">
+              {webSearch && (
+                <span className="text-brand text-label flex items-center gap-1.5">
+                  <Icon name="search" size={13} className="shrink-0" />
+                  联网:先检索再作答,并标注来源
+                </span>
+              )}
+              {agentMode && (
+                <span className="text-brand text-label flex items-center gap-1.5">
+                  <Icon name="bot" size={13} className="shrink-0" />
+                  智能体:代码写入
+                  <a
+                    href="/workspace"
+                    className="hover:text-brand-hover underline"
+                  >
+                    工作区
+                  </a>
+                  ,不贴在回答里
+                </span>
+              )}
             </div>
           )}
 
@@ -756,7 +765,11 @@ export function ChatPanel({
           {/* 一行里只有「发送」是主操作。
               此前「联网已开启」也用 primary,两个同等强调的按钮并排,
               用户一眼分不出哪个才是提交。开启状态改用边框与图标表达,
-              不靠提升按钮层级。三个控件统一 min-h-10,高度一致。 */}
+              不靠提升按钮层级。
+
+              尺寸统一用设计系统的 sm(min-h-8 / text-caption):md 的
+              min-h-10 放在输入框下面这一排太重,四个控件横过去很压视线。
+              这里是辅助操作区,不该和正文抢注意力。 */}
           <div className="flex flex-wrap items-center gap-2">
             <Select
               value={selected}
@@ -765,7 +778,7 @@ export function ChatPanel({
                 value: m.value,
                 label: `${m.providerName} · ${m.modelId}`,
               }))}
-              className="min-h-10 min-w-0 max-w-full py-0"
+              className="text-caption min-h-8 min-w-0 max-w-full px-2.5 py-0"
             />
 
             <input
@@ -782,16 +795,18 @@ export function ChatPanel({
             <Button
               type="button"
               variant="secondary"
+              size="sm"
               onClick={() => folderInputRef.current?.click()}
               title={FOLDER_HINT}
             >
-              <Icon name="folder" size={15} />
-              添加文件夹
+              <Icon name="folder" size={14} />
+              文件夹
             </Button>
 
             <Button
               type="button"
               variant="secondary"
+              size="sm"
               onClick={() => setWebSearch((v) => !v)}
               aria-pressed={webSearch}
               title="开启后本轮会先联网检索,再让模型基于检索到的材料作答并标注来源"
@@ -799,15 +814,16 @@ export function ChatPanel({
             >
               <Icon
                 name={webSearch ? "check" : "search"}
-                size={15}
+                size={14}
                 className={webSearch ? "text-brand" : undefined}
               />
-              {webSearch ? "联网已开启" : "联网"}
+              联网
             </Button>
 
             <Button
               type="button"
               variant="secondary"
+              size="sm"
               onClick={() => setAgentMode((v) => !v)}
               aria-pressed={agentMode}
               title="开启后模型可以连续调用文件工具,产物直接写入工作区,而不是把代码贴在回答里"
@@ -815,14 +831,19 @@ export function ChatPanel({
             >
               <Icon
                 name={agentMode ? "check" : "bot"}
-                size={15}
+                size={14}
                 className={agentMode ? "text-brand" : undefined}
               />
-              {agentMode ? "智能体已开启" : "智能体"}
+              智能体
             </Button>
 
-            <Button type="submit" loading={streaming} className="shrink-0">
-              <Icon name="send" size={16} />
+            <Button
+              type="submit"
+              size="sm"
+              loading={streaming}
+              className="shrink-0"
+            >
+              <Icon name="send" size={14} />
               发送
             </Button>
           </div>

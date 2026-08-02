@@ -22,12 +22,28 @@ const TOKENS_DIR = resolve(SRC, "styles");
  */
 const BRAND_MARKS = resolve(SRC, "components/auth/BrandMarks.tsx");
 
+/**
+ * 第二处豁免:生成沙箱 iframe 文档的两个模块。
+ *
+ * 它们产出的是**独立文档**,跑在 sandbox 不给 allow-same-origin 的
+ * 不透明源里,拿不到我们站点的任何样式表,自然也读不到 --token 变量。
+ * 这些颜色不属于产品界面,而是那份独立文档自己的排版样式。
+ *
+ * 豁免严格限定到这两个文件。它们本身也不允许出现在产品界面里 ——
+ * 任何组件想用颜色,仍然只能走 token。
+ */
+const SANDBOX_DOCS = [
+  resolve(SRC, "lib/workspace/bundle.ts"),
+  resolve(SRC, "lib/workspace/markdown.ts"),
+];
+
 function collectFiles(dir: string, exts: readonly string[]): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (full.startsWith(TOKENS_DIR)) continue;
     if (full === BRAND_MARKS) continue;
+    if (SANDBOX_DOCS.includes(full)) continue;
     if (statSync(full).isDirectory()) {
       out.push(...collectFiles(full, exts));
     } else if (exts.some((e) => full.endsWith(e))) {

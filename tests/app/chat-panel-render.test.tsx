@@ -80,7 +80,7 @@ describe("助手页渲染", () => {
     expect(screen.getByText("第一次对话")).toBeTruthy();
     expect(screen.getByText("新对话")).toBeTruthy();
     // 左下控件
-    expect(screen.getByText("添加文件夹")).toBeTruthy();
+    expect(screen.getByText("文件夹")).toBeTruthy();
     expect(screen.getByText("发送")).toBeTruthy();
   });
 

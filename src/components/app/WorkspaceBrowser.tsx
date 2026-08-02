@@ -10,7 +10,9 @@ import {
   type WorkspaceActionState,
 } from "@/app/(app)/workspace/actions";
 import { cn } from "@/lib/cn";
-import { decidePreview } from "@/lib/workspace/preview";
+import { decidePreview, pickDefaultFile } from "@/lib/workspace/preview";
+import { buildProjectPreview } from "@/lib/workspace/bundle";
+import { markdownDocument } from "@/lib/workspace/markdown";
 
 export interface WorkspaceFile {
   path: string;
@@ -34,8 +36,9 @@ export function WorkspaceBrowser({
   name: string;
   files: readonly WorkspaceFile[];
 }) {
-  const [openPath, setOpenPath] = useState<string | null>(
-    files[0]?.path ?? null,
+  // 默认落在能看到效果的入口上,而不是字母序第一个(往往是 README)
+  const [openPath, setOpenPath] = useState<string | null>(() =>
+    pickDefaultFile(files.map((f) => f.path)),
   );
   /** 预览还是源码。默认预览 —— 用户要的是看到效果,不是读代码 */
   const [mode, setMode] = useState<"preview" | "source">("preview");
@@ -52,6 +55,58 @@ export function WorkspaceBrowser({
   const preview = open
     ? decidePreview(open.path, open.content, files.map((f) => f.path))
     : null;
+
+  /**
+   * 送进 iframe 的文档。按类别现做:
+   *   project —— 整个工作区打包成能现场编译的页面
+   *   markdown —— 排版后的文档
+   *   html / svg —— 文件本身就是可渲染文档
+   */
+  const previewDoc = (() => {
+    if (!open || !preview) return null;
+    switch (preview.kind) {
+      case "project":
+        return buildProjectPreview(open.content, files).html;
+      case "markdown":
+        return markdownDocument(open.content);
+      case "html":
+      case "svg":
+        return open.content;
+      default:
+        return null;
+    }
+  })();
+
+  /**
+   * 沙箱权限按需给足,但绝不给 allow-same-origin。
+   *
+   * 它和 allow-scripts 一起加等于没有沙箱 —— 模型生成的代码就能读我们的
+   * Cookie 与 localStorage。内容永远当不可信代码对待。
+   * Markdown 与 SVG 不需要脚本,连 allow-scripts 也不给。
+   */
+  const sandbox =
+    preview?.kind === "markdown" || preview?.kind === "svg"
+      ? ""
+      : "allow-scripts";
+
+  /**
+   * 把可运行页面存成本地文件。
+   *
+   * 存盘而不是 window.open(blob):blob URL 继承创建者的源,直接开新标签
+   * 等于让模型生成的代码跑在我们自己的域上,能碰到登录态。存成文件后
+   * 用浏览器打开走的是 file:// 独立源,天然隔离。
+   */
+  function downloadRunnable() {
+    if (!open || previewDoc === null) return;
+    const url = URL.createObjectURL(
+      new Blob([previewDoc], { type: "text/html;charset=utf-8" }),
+    );
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(open.path.split("/").pop() ?? "preview").replace(/\.[^.]+$/, "")}-可运行.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   function downloadAll() {
     // 不引入打包库:把所有文件拼成一份带路径分隔的纯文本。
@@ -137,7 +192,7 @@ export function WorkspaceBrowser({
                   </span>
 
                   {/* 能预览就默认给预览 —— 用户要看的是效果,不是代码 */}
-                  {preview?.kind === "html" && (
+                  {previewDoc !== null && (
                     <div className="border-border-default rounded-control flex overflow-hidden border">
                       {(["preview", "source"] as const).map((m) => (
                         <button
@@ -156,6 +211,18 @@ export function WorkspaceBrowser({
                         </button>
                       ))}
                     </div>
+                  )}
+
+                  {preview?.kind === "project" && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={downloadRunnable}
+                      title="存成单个 HTML,用浏览器打开即可运行,不需要 npm 与构建"
+                    >
+                      存为可运行页面
+                    </Button>
                   )}
 
                   <Button
@@ -181,16 +248,14 @@ export function WorkspaceBrowser({
                   </form>
                 </div>
 
-                {preview?.kind === "html" && mode === "preview" ? (
-                  /*
-                   * 沙箱只给 allow-scripts,**不给** allow-same-origin。
-                   * 这两个一起加等于没有沙箱 —— 页面就能读我们的 Cookie 与
-                   * localStorage。内容是模型生成的,必须当成不可信代码对待。
-                   */
+                {previewDoc !== null && mode === "preview" ? (
                   <iframe
+                    // key 带上路径:换文件时必须重建 iframe,
+                    // 否则上一个页面的脚本还活着,状态会串
+                    key={open.path}
                     title={`${open.path} 预览`}
-                    srcDoc={open.content}
-                    sandbox="allow-scripts"
+                    srcDoc={previewDoc}
+                    sandbox={sandbox}
                     className="bg-paper-surface h-[420px] w-full border-0"
                   />
                 ) : (
