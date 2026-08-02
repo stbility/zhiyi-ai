@@ -13,7 +13,6 @@ import {
   deleteModel,
   restoreModel,
   deleteProvider,
-  syncModels,
   testProvider,
   type ProviderActionState,
 } from "@/app/(app)/settings/models/actions";
@@ -222,10 +221,6 @@ export function ProviderManager({
     testProvider,
     {},
   );
-  const [syncState, syncAction, syncing] = useActionState<
-    ProviderActionState,
-    FormData
-  >(syncModels, {});
   const [deleteState, deleteAction] = useActionState<
     ProviderActionState,
     FormData
@@ -237,8 +232,8 @@ export function ProviderManager({
 
   // 错误优先于成功显示 —— 出了问题必须先看见问题
   const feedback =
-    [addState, testState, syncState, deleteState].find((s) => s.error) ??
-    [addState, testState, syncState, deleteState].find((s) => s.ok) ??
+    [addState, testState, deleteState].find((s) => s.error) ??
+    [addState, testState, deleteState].find((s) => s.ok) ??
     deleteState;
 
   return (
@@ -299,24 +294,6 @@ export function ProviderManager({
                       <input type="hidden" name="id" value={row.id} />
                       <Button type="submit" variant="secondary" size="sm">
                         测试连接
-                      </Button>
-                    </form>
-                    {/* 两个动作语义必须分清:
-                        测试连接 —— 只验证,不改动列表
-                        重新拉取 —— 只新增,不删除已有整理
-                        此前只有前者,而它在列表非空时不导入 ——
-                        结果是服务商新上的模型永远进不来,
-                        除非删掉整个服务商重建,那又会丢掉全部整理。 */}
-                    <form action={syncAction}>
-                      <input type="hidden" name="id" value={row.id} />
-                      <Button
-                        type="submit"
-                        variant="secondary"
-                        size="sm"
-                        loading={syncing}
-                        title="向服务商重新查询可用模型,只补充列表里没有的,不会删除或覆盖你已整理的模型"
-                      >
-                        重新拉取模型列表
                       </Button>
                     </form>
                     <form action={deleteAction}>

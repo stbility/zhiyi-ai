@@ -1,2 +1,23 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
-/* PingFang SC is called as an Apple system font only — never bundled, self-hosted, or copied into this project. */
+/*
+ * webfont 的加载已从这里移到 src/app/layout.tsx,改为非阻塞方式引入。
+ *
+ * 原本这里是一行 @import url('https://fonts.googleapis.com/css2?...')。
+ * 那一行是「网页很慢、按钮点很多下才生效」的根因:
+ *
+ *   1. CSS 的 @import 阻塞渲染 —— 浏览器必须先拿到它才继续
+ *   2. fonts.googleapis.com 在中国大陆不通,请求会一直等到 TCP 超时
+ *   3. 于是首屏渲染和脚本执行被一起卡住,水合迟迟完不成,
+ *      按钮看着能点却没接上事件
+ *
+ * 而且这个 webfont 对中文其实是多余的:--font-zh 的第一顺位是
+ * "PingFang SC"(苹果系统字体)、第二三顺位覆盖 Windows,
+ * Noto Sans SC 排在后面,只在极少数系统上才会用到 ——
+ * 为它付出阻塞整个首屏的代价完全不划算。
+ *
+ * 现在的做法:layout.tsx 里用 media="print" 挂上,页面加载完成后再切成
+ * media="all"。字体能取到时照常生效,取不到时页面一秒都不等,
+ * 直接用系统字体渲染。
+ *
+ * PingFang SC is called as an Apple system font only — never bundled,
+ * self-hosted, or copied into this project.
+ */
