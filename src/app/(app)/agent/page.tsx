@@ -6,6 +6,7 @@ import {
   loadConversations,
   loadModels,
   loadTurns,
+  loadWorkspaceForConversation,
 } from "@/lib/db/conversations";
 import { getMyOrganizations } from "@/lib/db/queries";
 
@@ -91,7 +92,15 @@ export default async function AgentPage({
         conversations[0] ??
         null);
 
-  const initialTurns = active ? await loadTurns(active.id) : [];
+  const [initialTurns, workspace] = active
+    ? await Promise.all([
+        loadTurns(active.id),
+        // 产物不铺在页面上,只在**点开时**弹出来 —— 见 ChatPanel 的
+        // workspace 属性说明。所以这里只是把文件取来备用,
+        // 不占页面上任何宽度。
+        loadWorkspaceForConversation(active.id),
+      ])
+    : [[], null];
 
   return (
     // 和 AI 助手页面同一种外壳:整幅、不滚动,只有消息区滚动。
@@ -100,6 +109,7 @@ export default async function AgentPage({
       <ChatPanel
         key={active?.id ?? "new"}
         channel="agent"
+        {...(workspace ? { workspace } : {})}
         models={models}
         conversations={conversations}
         activeConversationId={active?.id ?? null}

@@ -19,6 +19,10 @@ import { IconButton } from "@/components/primitives/IconButton";
 import { Select } from "@/components/primitives/Select";
 import { Tag } from "@/components/primitives/Tag";
 import {
+  WorkspaceBrowser,
+  type WorkspaceFile,
+} from "@/components/app/WorkspaceBrowser";
+import {
   collectFolderAttachments,
   describeSkipped,
   type Attachment,
@@ -254,6 +258,7 @@ function toTurn(t: InitialTurn): Turn {
  */
 export function ChatPanel({
   channel,
+  workspace,
   models,
   conversations,
   activeConversationId,
@@ -274,6 +279,21 @@ export function ChatPanel({
    * 分开的是执行形态,不是消息列表长什么样。
    */
   channel: "chat" | "agent";
+  /**
+   * 这条会话的工作区产物。只有智能体通道会传。
+   *
+   * 用来给对话流里的工具行加一个触发:智能体写完 index.html,
+   * 那一行可以点开 —— 全屏预览弹出来,Esc 关掉,**对话区一寸都不让**。
+   *
+   * 为什么是弹出层而不是右边一块常驻的栏:Claude Code 桌面版的预览
+   * 就是需要时弹出来的,不是钉死在侧边。我按「钉死在右边」抄过两版,
+   * 两版都把对话区挤窄了(第二版更窄,因为忘了侧栏本身就占 224px)。
+   */
+  workspace?: {
+    id: string;
+    name: string;
+    files: readonly WorkspaceFile[];
+  } | undefined;
   models: readonly ModelOption[];
   conversations: readonly ConversationSummary[];
   activeConversationId: string | null;
@@ -313,6 +333,23 @@ export function ChatPanel({
    * 而它其实正常工作着,只是慢。
    */
   const [waitedMs, setWaitedMs] = useState(0);
+  /**
+   * 产物预览是否打开。
+   *
+   * 弹出层而不是常驻侧栏 —— 对话区一寸都不让。见 workspace 那个属性的说明。
+   */
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  // 覆盖全屏的层必须能用 Esc 退出,否则键盘用户被困在里面,
+  // 鼠标用户也会下意识按 Esc 然后发现没反应
+  useEffect(() => {
+    if (!previewOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPreviewOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewOpen]);
 
   // 归零放在 send() 里(事件处理器),不在 effect 体内直接 setState ——
   // 那会被 react-hooks/set-state-in-effect 挡下,而且确实是多余的一次渲染
@@ -790,26 +827,54 @@ export function ChatPanel({
                     这里一个字的叙述都没有。 */}
                 {turn.tools && turn.tools.length > 0 ? (
                   <ul className="flex w-full flex-col gap-1">
-                    {turn.tools.map((t, i) => (
-                      <li key={i} className="flex items-start gap-2">
-                        <Icon
-                          name={t.ok ? "check" : "x"}
-                          size={12}
-                          className={cn(
-                            "mt-1 shrink-0",
-                            t.ok ? "text-success" : "text-error",
-                          )}
-                        />
-                        <span className="min-w-0 flex-1">
-                          <code className="text-fg-secondary text-label font-mono">
-                            {t.name}
-                          </code>
-                          <span className="text-fg-tertiary text-label ml-2 break-all">
-                            {t.content}
+                    {turn.tools.map((t, i) => {
+                      // 成功写入的那一行可以点开 —— 产物就在工作区里,
+                      // 点一下全屏看,不必切页面去找。
+                      // 工作区还没取到(刚写完、页面尚未刷新)时不给点,
+                      // 点开一个空层比不能点更糟。
+                      const 可预览 =
+                        t.ok &&
+                        t.name === "write_file" &&
+                        (workspace?.files.length ?? 0) > 0;
+                      const 行 = (
+                        <>
+                          <Icon
+                            name={t.ok ? "check" : "x"}
+                            size={12}
+                            className={cn(
+                              "mt-1 shrink-0",
+                              t.ok ? "text-success" : "text-error",
+                            )}
+                          />
+                          <span className="min-w-0 flex-1 text-left">
+                            <code className="text-fg-secondary text-label font-mono">
+                              {t.name}
+                            </code>
+                            <span className="text-fg-tertiary text-label ml-2 break-all">
+                              {t.content}
+                            </span>
                           </span>
-                        </span>
-                      </li>
-                    ))}
+                        </>
+                      );
+                      return (
+                        <li key={i}>
+                          {可预览 ? (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewOpen(true)}
+                              title="打开预览"
+                              className="hover:bg-surface-2 rounded-control -mx-1.5 flex w-[calc(100%+0.75rem)] cursor-pointer items-start gap-2 border-0 bg-transparent px-1.5 py-0.5 text-left transition-colors duration-[var(--duration-hover)] ease-standard"
+                            >
+                              {行}
+                            </button>
+                          ) : (
+                            <span className="flex items-start gap-2 px-1.5 py-0.5">
+                              {行}
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 ) : null}
 
@@ -952,17 +1017,21 @@ export function ChatPanel({
 
               开着还是关着,看填色就知道;要关掉,再点一下同一个东西 ——
               不必另设一个「关闭」按钮,也不必在上方再挂一条状态带。 */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Select
-              value={selected}
-              onChange={setSelected}
-              options={models.map((m) => ({
-                value: m.value,
-                label: `${m.providerName} · ${m.modelId}`,
-              }))}
-              className="text-caption min-h-8 min-w-0 max-w-[15rem] px-2.5 py-0"
-            />
+          {/* 底部工具条的分区照 Claude 的 composer:
+              **左边是行为开关**(附件、联网 —— 这一轮怎么做),
+              **右边是「谁来回答」**(模型选择)加发送。
+              官方的说法是「+ on the left and model on the right keep
+              behavioral toggles separate from which model answers」——
+              把工具选择和模型选择分开,免得两者互相抢注意力。
 
+              此前模型选择框排在最左边,和文件夹、联网挤成一排,
+              四个东西谁也不比谁重要,反而看不出哪个决定了什么。
+
+              控件一律用设计系统的原生组件,不自己拼装:
+              Tag 本来就是「可点击的状态标签」(active 填品牌色、
+              可点击时渲染成真 button),模式开关正是这个语义;
+              添加文件夹是一次性**动作**不是模式,所以用 IconButton。 */}
+          <div className="flex flex-wrap items-center gap-1.5">
             <input
               ref={folderInputRef}
               type="file"
@@ -975,8 +1044,6 @@ export function ChatPanel({
               tabIndex={-1}
             />
 
-            {/* 添加文件夹是一次性**动作**,不是模式 —— 用 IconButton,
-                不能混进下面那两个 Tag 里,否则「点了会一直生效吗」说不清 */}
             <IconButton
               aria-label="添加文件夹"
               title={FOLDER_HINT}
@@ -997,19 +1064,70 @@ export function ChatPanel({
 
             <div className="flex-1" />
 
-            <Button
-              type="submit"
-              size="sm"
-              loading={streaming}
-              aria-label="发送"
-              title="发送(Enter)"
-              className="shrink-0 px-3"
-            >
-              <Icon name="send" size={15} />
-            </Button>
+            <Select
+              value={selected}
+              onChange={setSelected}
+              options={models.map((m) => ({
+                value: m.value,
+                label: `${m.providerName} · ${m.modelId}`,
+              }))}
+              className="text-caption min-h-8 min-w-0 max-w-[15rem] px-2.5 py-0"
+            />
+
+            {/* 发送按钮**有东西可发才出现**。
+                Claude 的做法:「The send button appears only once there is
+                something to ship」—— 用出现与否本身当作「这条可以发了」的
+                信号。生成中要留着,那时它是「停止」的位置。 */}
+            {(draft.trim() !== "" || streaming) && (
+              <Button
+                type="submit"
+                size="sm"
+                loading={streaming}
+                aria-label="发送"
+                title="发送(Enter)"
+                className="shrink-0 px-3"
+              >
+                <Icon name="send" size={15} />
+              </Button>
+            )}
           </div>
         </form>
       </div>
+
+      {/* 产物预览。**弹出层,不是常驻侧栏。**
+          Claude Code 桌面版的预览就是需要时弹出来的 —— 我按「钉死在右边」
+          抄过两版,两版都在从对话区里割肉(第二版更窄,因为忘了会话侧栏
+          本身就占 224px)。弹出层的好处很直接:对话区一寸都不让。
+
+          里面装的就是「工作区」页面那个 WorkspaceBrowser,原样复用 ——
+          文件列表、HTML 预览、源码、下载全在里面,不另起一套。 */}
+      {previewOpen && workspace && (
+        <div
+          className="bg-canvas/90 fixed inset-0 z-100 flex flex-col p-4 md:p-8"
+          role="dialog"
+          aria-modal
+          aria-label="工作区产物"
+        >
+          <div className="mb-2 flex shrink-0 items-center justify-end">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setPreviewOpen(false)}
+            >
+              <Icon name="x" size={14} />
+              关闭(Esc)
+            </Button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <WorkspaceBrowser
+              id={workspace.id}
+              name={workspace.name}
+              files={workspace.files}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

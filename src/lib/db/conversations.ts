@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { WorkspaceFile } from "@/components/app/WorkspaceBrowser";
 import type {
   ConversationSummary,
   InitialTurn,
@@ -108,4 +109,54 @@ export async function loadTurns(
     latencyMs: (row.latency_ms as number | null) ?? null,
     error: (row.error_message as string | null) ?? null,
   }));
+}
+
+/**
+ * 这条会话产出的工作区文件。
+ *
+ * 给智能体页面的**产物预览弹出层**用:对话流里写文件那一行可以点开,
+ * 全屏看完 Esc 关掉,对话区一寸都不让。
+ *
+ * (这个函数上一轮被删过一次 —— 当时右侧常驻产物栏被撤掉,它成了死代码。
+ *  现在回来是因为有了真实用途:弹出层需要文件内容。)
+ *
+ * 工作区是用到时才建的(见 agent-turn.ts),所以没有工作区是正常状态,
+ * 不是错误 —— 它只意味着这条会话还没有产出过文件。
+ */
+export async function loadWorkspaceForConversation(
+  conversationId: string,
+): Promise<{ id: string; name: string; files: WorkspaceFile[] } | null> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return null;
+
+  const { data: conv } = await supabase
+    .from("conversations")
+    .select("workspace_id")
+    .eq("id", conversationId)
+    .maybeSingle();
+
+  const workspaceId = conv?.workspace_id as string | null | undefined;
+  if (!workspaceId) return null;
+
+  const [{ data: ws }, { data: files }] = await Promise.all([
+    supabase.from("workspaces").select("id, name").eq("id", workspaceId).maybeSingle(),
+    supabase
+      .from("workspace_files")
+      .select("path, content, size_chars, updated_at")
+      .eq("workspace_id", workspaceId)
+      .order("path"),
+  ]);
+
+  if (!ws) return null;
+
+  return {
+    id: ws.id as string,
+    name: ws.name as string,
+    files: (files ?? []).map((f) => ({
+      path: f.path as string,
+      content: (f.content as string | null) ?? "",
+      sizeChars: (f.size_chars as number | null) ?? 0,
+      updatedAt: f.updated_at as string,
+    })),
+  };
 }

@@ -46,18 +46,7 @@ export function GitConnection({
     <section className="bg-surface-2 border-border-default rounded-card font-zh border p-5">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <h3 className="text-fg text-body font-medium">Git 仓库</h3>
-        {/* slug 没查证过就必须说出来。
-          安装地址是 https://github.com/apps/<slug>/... —— slug 错了
-          用户看到的是 GitHub 的 404,不是我们的报错,完全无从排查。
-          把 GitHub 的原始报错摆出来,他才知道该去改哪个配置。 */}
-      {configured && slugSource !== "github" && slugError && (
-        <p className="border-warning bg-warning-tint text-warning rounded-control text-caption mb-3 p-3">
-          未能向 GitHub 查证应用地址{slugSource === "env" ? "(下面用的是环境变量里填的值,可能不对)" : ""}:
-          <span className="mt-1 block">{slugError}</span>
-        </p>
-      )}
-
-      {!configured ? (
+        {!configured ? (
           <Badge>未配置</Badge>
         ) : installation ? (
           <Badge tone="success">已连接</Badge>
@@ -82,10 +71,14 @@ export function GitConnection({
         </p>
       )}
 
-      {/* slug 没查证过就必须说出来。
-          安装地址是 https://github.com/apps/<slug>/... —— slug 错了
-          用户看到的是 GitHub 的 404,不是我们的报错,完全无从排查。
-          把 GitHub 的原始报错摆出来,他才知道该去改哪个配置。 */}
+      {/* slug 没查证过就必须说出来 —— 而且此时**不会有连接按钮**。
+          安装地址是 https://github.com/apps/<slug>/...:slug 错了,
+          用户点下去看到的是 GitHub 的 404,不是我们的报错,完全无从排查。
+          把 GitHub 的原始报错摆出来,他才知道该去改哪个配置。
+
+          这段曾经在这个文件里出现两次,其中一份还被插进了上面标题的
+          flex 容器里 —— 一个警告段落被当成 flex 子项排在标题旁边,
+          标题行的布局跟着一起坏掉。 */}
       {configured && slugSource !== "github" && slugError && (
         <p className="border-warning bg-warning-tint text-warning rounded-control text-caption mb-3 p-3">
           未能向 GitHub 查证应用地址{slugSource === "env" ? "(下面用的是环境变量里填的值,可能不对)" : ""}:
@@ -132,8 +125,12 @@ export function GitConnection({
           // 拼不出安装地址时不给可点的按钮。
           // 此前这里是 href={installHref ?? "#"} —— 取不到地址仍然渲染一个
           // 看起来能点的按钮,点下去要么原地不动,要么跳到 404。
+          //
+          // 不写「请稍后重试」:401 这类是配置问题,重试一万次也一样,
+          // 那句话只会让人白等。真实原因由上面那块警告里 GitHub 的原话给出。
           <p className="text-fg-tertiary text-caption">
-            暂时取不到应用的安装地址(向 GitHub 查询失败),请稍后重试。
+            未能向 GitHub 查证应用地址,因此这里不提供连接入口 ——
+            按一个地址未经查证的链接过去,只会落在 GitHub 的 404 页面上。
           </p>
         )
       ) : (

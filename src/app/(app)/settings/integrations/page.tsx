@@ -140,9 +140,26 @@ export default async function IntegrationsPage({
   const slugResult = appConfig
     ? await getAppSlug()
     : { slug: null, source: "none" as const, error: null };
-  const installHref = slugResult.slug
-    ? installUrl(slugResult.slug, issueState(org.id))
-    : null;
+
+  // **只有向 GitHub 查证过的 slug 才拿来拼链接。**
+  //
+  // 上面那段注释一直写着「取不到就不生成链接」,但代码没有兑现:
+  // getAppSlug() 在查询失败时会回退到环境变量里的 GITHUB_APP_SLUG,
+  // 并把它当作结果返回(source: "env")。于是 slugResult.slug 非空,
+  // 链接照样生成 —— 指向一个 slug 可能根本不对的地址。
+  //
+  // 用户实际撞到的就是这个:点「连接 GitHub」跳到 GitHub 的 404。
+  // 而 404 页面上没有任何线索指向「是我们这边的环境变量填错了」,
+  // 他只会以为是这个功能坏了。
+  //
+  // 环境变量里那个值是人手填的,没有任何东西保证它和真实的 App 对得上;
+  // /app 接口返回的才是 GitHub 自己认的那个 slug。
+  // 查不到就不给按钮,由卡片把 GitHub 的原始报错摆出来 ——
+  // 一个必然 404 的按钮,比没有按钮更糟。
+  const installHref =
+    slugResult.slug && slugResult.source === "github"
+      ? installUrl(slugResult.slug, issueState(org.id))
+      : null;
   const params = await searchParams;
   const mcpTokens = await loadMcpTokens(org.id);
 

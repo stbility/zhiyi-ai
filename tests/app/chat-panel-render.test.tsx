@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -86,11 +86,14 @@ describe("助手页渲染", () => {
     // 比此前那版纯图标 + aria-label 更好:看得见的标签和读屏念出来的
     // 是同一个东西,不会对不上。
     //
-    // 「添加文件夹」是一次性动作不是模式,仍用 IconButton + aria-label;
-    // 「发送」同理。
+    // 「添加文件夹」是一次性动作不是模式,仍用 IconButton + aria-label。
     expect(screen.getByLabelText("添加文件夹")).toBeTruthy();
     expect(screen.getByRole("button", { name: "联网" })).toBeTruthy();
-    expect(screen.getByLabelText("发送")).toBeTruthy();
+
+    // 发送按钮**空输入时不出现** —— 照 Claude 的 composer:
+    // 「The send button appears only once there is something to ship」。
+    // 用出现与否本身当作「这条可以发了」的信号。
+    expect(screen.queryByLabelText("发送")).toBeNull();
 
     // 「智能体」曾经是这里的第三个 Tag,状态存在 localStorage 里。
     // 删掉了 —— 它现在是**另一条通道**(/agent),不是这个输入框上的开关。
@@ -99,6 +102,26 @@ describe("助手页渲染", () => {
     // 于是用户在 AI 助手页打的每一句话都在悄悄走智能体循环,
     // 而界面上没有任何东西告诉他。
     expect(screen.queryByRole("button", { name: "智能体" })).toBeNull();
+  });
+
+  it("打了字,发送按钮就出现 —— 这是上一条的正向对照", () => {
+    // 少了这一条,「空输入时没有发送按钮」可能因为按钮**根本没渲染出来**
+    // 而碰巧成立 —— 那是个白屏 bug,却会被当成正确行为。
+    render(
+      <ChatPanel
+      channel="chat"
+        models={MODELS}
+        conversations={CONVERSATIONS}
+        activeConversationId="c1"
+        initialTurns={[]}
+      />,
+    );
+
+    expect(screen.queryByLabelText("发送")).toBeNull();
+    fireEvent.change(screen.getByLabelText("对话输入"), {
+      target: { value: "你好" },
+    });
+    expect(screen.getByLabelText("发送")).toBeTruthy();
   });
 
   it("用户消息靠右成气泡,AI 回答靠左整幅铺开", () => {

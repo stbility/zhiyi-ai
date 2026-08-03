@@ -83,12 +83,10 @@ describe("智能体页面是整幅单栏 —— 右边不许挂东西", () => {
    *
    * 根子是 ChatPanel 里那个 224px(w-56)的会话侧栏:它已经在对话区
    * 里面了。Claude Code 桌面版是**三块各自独立的窗格**(会话列表 /
-   * 对话 / 预览),不是「两块、其中一块自带侧栏」。在会话列表被拆成
-   * 独立窗格之前,任何右侧栏都是在从对话区里割肉。
+   * 对话 / 预览),而且预览是**需要时弹出来**的,不是钉死在侧边。
    */
   it("页面里没有任何侧栏容器", () => {
     expect(AGENT_PAGE, "右边又挂上东西了").not.toMatch(/<aside/);
-    expect(AGENT_PAGE).not.toMatch(/WorkspaceBrowser/);
   });
 
   it("ChatPanel 是外壳里唯一的子元素,拿到整幅宽度", () => {
@@ -97,7 +95,6 @@ describe("智能体页面是整幅单栏 —— 右边不许挂东西", () => {
   });
 
   it("和 AI 助手页面用同一种外壳 —— 两边都是整幅", () => {
-    // 正向对照:AI 助手页面从来就是整幅的,智能体没有理由更窄
     const 壳 = /<div className="flex h-full w-full overflow-hidden">/;
     expect(AGENT_PAGE).toMatch(壳);
     expect(ASSISTANT_PAGE).toMatch(壳);
@@ -107,6 +104,39 @@ describe("智能体页面是整幅单栏 —— 右边不许挂东西", () => {
     // 下一个人(很可能还是我)会想「右边加个预览多好」。
     // 那个 224px 必须就地看得到,否则他会重新算错一遍。
     expect(AGENT_PAGE).toMatch(/224px/);
+  });
+});
+
+describe("产物预览是弹出层,不是常驻栏", () => {
+  it("工具行里成功写入的那一行可以点开", () => {
+    expect(CHAT_PANEL).toMatch(/t\.name === "write_file"/);
+    expect(CHAT_PANEL).toMatch(/setPreviewOpen\(true\)/);
+  });
+
+  it("弹出层用 fixed 覆盖,不参与页面布局 —— 对话区一寸不让", () => {
+    const 层 = CHAT_PANEL.slice(CHAT_PANEL.indexOf("previewOpen && workspace"));
+    expect(层).toMatch(/fixed inset-0/);
+    // 一旦写成 flex-1 / w-[NNNpx] 这类,它就又开始占宽度了
+    expect(层, "预览层又变成占位的栏了").not.toMatch(/flex-1 overflow-y-auto border-l/);
+  });
+
+  it("Esc 能关掉 —— 否则键盘用户被困在里面", () => {
+    expect(CHAT_PANEL).toMatch(/e\.key === "Escape"/);
+  });
+
+  it("复用工作区页面同一个组件,不另起一套", () => {
+    expect(CHAT_PANEL).toMatch(/<WorkspaceBrowser/);
+  });
+
+  it("工作区还没取到时不给点 —— 点开一个空层比不能点更糟", () => {
+    expect(CHAT_PANEL).toMatch(/workspace\?\.files\.length \?\? 0\) > 0/);
+  });
+
+  it("AI 助手页面不传 workspace —— 它本来就不产生副作用", () => {
+    // 正向对照:少了这条,「智能体有预览」可能因为两个页面又变成
+    // 同一个东西而碰巧成立
+    expect(ASSISTANT_PAGE).not.toMatch(/workspace/);
+    expect(AGENT_PAGE).toMatch(/loadWorkspaceForConversation/);
   });
 });
 
