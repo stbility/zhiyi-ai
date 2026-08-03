@@ -429,20 +429,50 @@ async function api(
     });
 
     const text = await response.text();
-    const body = text ? JSON.parse(text) : null;
 
-    return {
-      ok: response.ok,
-      status: response.status,
-      body,
-      error: response.ok
-        ? ""
-        : `GitHub 返回 HTTP ${response.status}${
-            (body as { message?: string } | null)?.message
-              ? `:${(body as { message?: string }).message}`
-              : ""
-          }`,
-    };
+    // JSON 解析要单独兜住,不能和网络错误共用一个 catch。
+    //
+    // 上一版把 JSON.parse 放在外层 try 里:GitHub 返回非 JSON(网关的
+    // HTML 错误页、502 的纯文本、空体的 204)时,解析异常会掉进
+    // 「无法连接 GitHub」那个分支 —— 而请求其实完整地收到了响应,
+    // 只是内容不是 JSON。把「连不上」和「回的东西看不懂」混为一谈,
+    // 会让人一直去查网络。
+    let body: unknown = null;
+    let parseFailed = false;
+    if (text) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        parseFailed = true;
+      }
+    }
+
+    if (!response.ok) {
+      const message = (body as { message?: string } | null)?.message;
+      return {
+        ok: false,
+        status: response.status,
+        body,
+        error:
+          `GitHub 返回 HTTP ${response.status}` +
+          (message
+            ? `:${message}`
+            : parseFailed
+              ? `(响应不是 JSON:${text.slice(0, 120)})`
+              : ""),
+      };
+    }
+
+    if (parseFailed) {
+      return {
+        ok: false,
+        status: response.status,
+        body: null,
+        error: `GitHub 返回了 HTTP ${response.status},但响应不是合法的 JSON。`,
+      };
+    }
+
+    return { ok: true, status: response.status, body, error: "" };
   } catch (e) {
     return {
       ok: false,
@@ -651,12 +681,30 @@ export async function commitFiles(
     //
     // 所以:分支必须由本次创建。撞名了就换一个,那点重试成本远小于
     // 「悄悄改了用户正在用的分支」。
-    return {
-      ok: false,
-      error:
-        `分支 ${options.branch} 已存在。为避免改动落到别人正在用的分支上,` +
-        `每次提交都必须使用新分支 —— 请换一个分支名重试。`,
-    };
+    // 但要区分「分支已存在」和「别的失败」。
+    //
+    // GitHub 对已存在的引用返回 422;403 是权限不足、404 是仓库不存在或
+    // 没授权。上一版不看状态码,一律回「分支已存在,请换个名字」——
+    // 用户会一直换名字,而真正的原因(比如 App 权限里没勾 Contents 写权限)
+    // 一个字都没提到。诊断指错方向比不给诊断更浪费时间。
+    if (created.status === 422) {
+      return {
+        ok: false,
+        error:
+          `分支 ${options.branch} 已存在。为避免改动落到别人正在用的分支上,` +
+          `每次提交都必须使用新分支 —— 请换一个分支名重试。`,
+      };
+    }
+    if (created.status === 403) {
+      return {
+        ok: false,
+        error:
+          `没有写入 ${owner}/${repo} 的权限(HTTP 403)。` +
+          `请到 GitHub 的应用设置里确认 Contents 权限为 Read and write,` +
+          `并且这个仓库在授权范围内${created.error ? `。${created.error}` : ""}`,
+      };
+    }
+    return { ok: false, error: `创建分支失败:${created.error}` };
   }
 
   return { ok: true, commitSha };

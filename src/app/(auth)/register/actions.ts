@@ -173,9 +173,23 @@ async function createPersonalOrganization(
   userId: string,
 ): Promise<void> {
   const local = email.split("@")[0] ?? "user";
-  // 组织标识只允许小写字母、数字、连字符。邮箱前缀里可能有点和加号,
-  // 而且不同邮箱可能撞出同一个前缀 —— 带一个随机后缀避开唯一约束冲突。
-  const base = local.toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 30);
+
+  // 组织标识的约束是 ^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$(迁移 0001)——
+  // **必须以字母或数字开头和结尾**,不只是「只含小写字母数字连字符」。
+  //
+  // 上一版只做了字符替换就直接用,于是 `-foo@x.com` 会得到 `-foo-abc123`、
+  // `___@x.com` 会得到 `----abc123`,两者都以连字符开头,插入时撞 CHECK,
+  // 整个自动建组织再次静默失败 —— 和刚修好的 N1 是同一类问题:
+  // 光看「字段给了没」不够,还得看「值满足约束没」。
+  //
+  // 所以替换之后必须把首尾的连字符剥掉。结尾由随机十六进制后缀保证,
+  // 它永远是字母数字。
+  const base = local
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 30)
+    .replace(/-+$/, "");
   const slug = `${base || "user"}-${randomUUID().slice(0, 6)}`;
 
   const { data: org, error } = await admin
