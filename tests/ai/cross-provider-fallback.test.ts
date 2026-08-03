@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { sseResponse } from "../helpers/sse";
+
 /**
  * 跨服务商降级。
  *
@@ -192,13 +194,10 @@ describe("智能体端到端:一家塌了换另一家", () => {
             );
           }
           return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                choices: [{ message: { content: "别家把活干完了。" }, finish_reason: "stop" }],
-                usage: { prompt_tokens: 1, completion_tokens: 1 },
-              }),
-              { status: 200 },
-            ),
+            sseResponse({
+              content: "别家把活干完了。",
+              usage: { prompt_tokens: 1, completion_tokens: 1 },
+            }),
           );
         },
       ),

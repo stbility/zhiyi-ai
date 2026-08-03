@@ -88,14 +88,22 @@ export function MessageFeedback({ messageId }: { messageId: string }) {
         {verdictButton("good", "thumbsUp", "这个回答有用", "text-success")}
         {verdictButton("bad", "thumbsDown", "这个回答没帮上", "text-warning")}
 
-        {/* 「我改成了这样」是最值钱的那条数据,但它是次要动作 ——
-            用文字链而不是按钮,不和上面两个图标抢重量 */}
+        {/* 编辑入口用 edit 图标,与赞/踩同一条操作行。
+            此前是「我改成了这样」五个字,横在每条回答下面比回答还抢眼 ——
+            它是最值钱的那条数据,但仍然是低频动作,不该占这么重的视觉。
+            语义由 aria-label 与 title 承担,展开后表单里有完整说明。 */}
         <button
           type="button"
           onClick={() => setEditing((v) => !v)}
-          className="text-fg-tertiary hover:text-fg-secondary text-label cursor-pointer"
+          aria-label="我改成了这样"
+          title="把你希望的写法写下来 —— 模型写的和你要的之间的差,是最有价值的数据"
+          aria-pressed={editing}
+          className={cn(
+            "inline-flex cursor-pointer items-center transition-colors duration-[var(--duration-hover)] ease-standard",
+            editing ? "text-brand" : "text-fg-tertiary hover:text-fg-secondary",
+          )}
         >
-          {editing ? "收起" : "我改成了这样"}
+          <Icon name="edit" size={13} />
         </button>
 
         {state.ok && <span className="text-success text-label">{state.ok}</span>}

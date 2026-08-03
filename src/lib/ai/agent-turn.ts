@@ -166,6 +166,16 @@ export async function runAgentTurn({
           signal,
           limits: DEFAULT_LIMITS,
           reporter: {
+            // 模型每吐一段就推一段 —— 这是智能体从「看起来卡死」
+            // 变成「看得见在跑」的关键。
+            //
+            // 走 reasoning 槽位而不是 delta:智能体运行途中说的话是**过程**,
+            // 不是最终答案 —— 最终答案是跑完之后的 summarizeRun。
+            // 推成 delta 的话,过程文字会和最后那份总结在正文里叠加两遍。
+            // 前端把 reasoning 渲染成生成期间默认展开的折叠块,正合适。
+            onText(text: string) {
+              send("reasoning", { text });
+            },
             onStep(step: AgentStep) {
               // 每一步都实时推给用户 —— 智能体跑几分钟,期间什么都不显示
               // 会让人以为卡死了

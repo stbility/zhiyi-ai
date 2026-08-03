@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { sseResponse } from "../helpers/sse";
+
 /**
  * 智能体循环测试。
  *
@@ -43,7 +45,7 @@ function memoryWorkspace() {
   };
 }
 
-/** 造一个返回固定序列的模型 */
+/** 造一个返回固定序列的模型(流式 —— 与产品里的协议一致) */
 function scriptedModel(
   turns: readonly {
     text?: string;
@@ -54,25 +56,13 @@ function scriptedModel(
   return vi.fn().mockImplementation(async () => {
     const turn = turns[Math.min(i, turns.length - 1)]!;
     i += 1;
-    return new Response(
-      JSON.stringify({
-        choices: [
-          {
-            message: {
-              content: turn.text ?? "",
-              tool_calls: (turn.calls ?? []).map((c, n) => ({
-                id: `call_${i}_${n}`,
-                type: "function",
-                function: { name: c.name, arguments: JSON.stringify(c.args) },
-              })),
-            },
-            finish_reason: turn.calls?.length ? "tool_calls" : "stop",
-          },
-        ],
-        usage: { prompt_tokens: 10, completion_tokens: 5 },
-      }),
-      { status: 200 },
-    );
+    return sseResponse({
+      ...(turn.text ? { content: turn.text } : {}),
+      ...(turn.calls
+        ? { toolCalls: turn.calls.map((c) => ({ name: c.name, args: c.args })) }
+        : {}),
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    });
   });
 }
 
@@ -227,15 +217,10 @@ describe("智能体循环", () => {
             status: 503,
           });
         }
-        return new Response(
-          JSON.stringify({
-            choices: [
-              { message: { content: "换了模型也办好了。" }, finish_reason: "stop" },
-            ],
-            usage: { prompt_tokens: 1, completion_tokens: 1 },
-          }),
-          { status: 200 },
-        );
+        return sseResponse({
+          content: "换了模型也办好了。",
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        });
       }),
     );
 

@@ -127,6 +127,14 @@ export interface AgentModelOption {
 /** 循环过程中的进度回调,用于把每一步实时推给前端 */
 export interface AgentReporter {
   onStep?(step: AgentStep): void;
+  /**
+   * 模型正在说的话,逐段推出去。
+   *
+   * Claude 的智能体设计:循环的每一轮都是一次独立的**流式**请求。
+   * 没有这一条,一步跑两三分钟期间前端一个字都没有,用户只能判断为卡死 ——
+   * 而它其实正常工作着。
+   */
+  onText?(text: string): void;
 }
 
 /**
@@ -256,6 +264,8 @@ export async function runAgent({
           tools: gitContext ? [...FILE_TOOLS, ...GIT_TOOLS] : FILE_TOOLS,
           signal,
           timeoutMs: remaining,
+          // 模型说的话实时推给前端,不等这一步跑完
+          ...(reporter?.onText ? { onText: reporter.onText } : {}),
         });
         if (
           candidate.providerId !== current.providerId ||

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { sseResponse } from "../helpers/sse";
+
 /**
  * 智能体的超时与预算。
  *
@@ -76,7 +78,7 @@ describe("智能体单步超时", () => {
         signal: new AbortController().signal,
         timeoutMs: 150,
       }),
-    ).rejects.toThrow(/用满平台给的|Vercel/);
+    ).rejects.toThrow(/时间已用完|尚未返回/);
 
     // 真的是被超时切断的,不是等到天荒地老
     expect(Date.now() - started).toBeLessThan(3_000);
@@ -163,41 +165,18 @@ describe("智能体单步超时", () => {
           }
           // good 正常干活:先写文件,再收尾
           call += 1;
-          const body =
-            call === 1
-              ? {
-                  choices: [
-                    {
-                      message: {
-                        content: "",
-                        tool_calls: [
-                          {
-                            id: "c1",
-                            type: "function",
-                            function: {
-                              name: "write_file",
-                              arguments: JSON.stringify({
-                                path: "src/app.ts",
-                                content: "export const a = 1;",
-                              }),
-                            },
-                          },
-                        ],
-                      },
-                      finish_reason: "tool_calls",
-                    },
-                  ],
-                }
-              : {
-                  choices: [
-                    {
-                      message: { content: "写好了。" },
-                      finish_reason: "stop",
-                    },
-                  ],
-                };
           return Promise.resolve(
-            new Response(JSON.stringify(body), { status: 200 }),
+            call === 1
+              ? sseResponse({
+                  toolCalls: [
+                    {
+                      id: "c1",
+                      name: "write_file",
+                      args: { path: "src/app.ts", content: "export const a = 1;" },
+                    },
+                  ],
+                })
+              : sseResponse({ content: "写好了。" }),
           );
         },
       ),
@@ -308,51 +287,53 @@ describe("智能体单步超时", () => {
  * 抛出的是裸 AbortError —— 没有 504,isTransientFailure 看不到 5xx,
  * 降级链就不会换模型,于是又挂回原来的老路。
  */
-describe("响应体挂住", () => {
-  /** 头立刻到,body 永远读不完 —— 只有 signal 能中止 */
-  function slowBodyFetch() {
+describe("流挂住", () => {
+  /** 响应头已到,但**流**一个字节都不发 —— 上游「先回头、body 不来」的真实形态 */
+  function stalledStreamFetch() {
     return vi.fn().mockImplementation(
       (_url: string, init: { signal: AbortSignal }) =>
-        Promise.resolve({
-          ok: true,
-          status: 200,
-          json: () =>
-            new Promise((_resolve, reject) => {
-              const fail = () =>
-                reject(
-                  Object.assign(new Error("aborted"), { name: "AbortError" }),
-                );
-              // 必须先判 aborted:信号可能在 json() 被调用之前就已中止,
-              // 而对已中止的信号挂 abort 监听器永远不会触发 —— 那样
-              // 这个 Promise 会永远挂着,测试超时,看起来像代码有问题。
-              if (init.signal.aborted) fail();
-              else init.signal.addEventListener("abort", fail);
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                const fail = () =>
+                  controller.error(
+                    Object.assign(new Error("aborted"), { name: "AbortError" }),
+                  );
+                // 必须先判 aborted:信号可能在这之前就已中止,
+                // 而对已中止的信号挂监听器永远不会触发
+                if (init.signal.aborted) fail();
+                else init.signal.addEventListener("abort", fail);
+              },
             }),
-        }),
+            { status: 200, headers: { "Content-Type": "text/event-stream" } },
+          ),
+        ),
     );
   }
 
   it("超时抛 504,降级链才会接手换模型", async () => {
     const { gateway, cipher } = await load();
-    vi.stubGlobal("fetch", slowBodyFetch());
+    vi.stubGlobal("fetch", stalledStreamFetch());
 
     const err = await gateway
       .callWithTools({
         credentials: creds(cipher),
-      model: "slow",
+        model: "slow",
         messages: [{ role: "user", content: "x" }],
         tools: [],
         signal: new AbortController().signal,
-        timeoutMs: 40,
+        timeoutMs: 60,
       })
       .then(() => null)
       .catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(gateway.ProviderCallError);
     const call = err as InstanceType<typeof gateway.ProviderCallError>;
-    // 504 落在 isTransientFailure 的 >=500 分支,降级链据此换模型
+    // 504 落在 isTransientFailure 的 >=500 分支,降级链据此换模型。
+    // fetch 在**响应头**到达时就 resolve 了,所以只把 fetch 包进 try 不够 ——
+    // 流挂住时超时是在读流的过程中触发的
     expect(call.status).toBe(504);
-    expect(call.message).toContain("没有把内容传完");
 
     const { isTransientFailure } = await import("@/lib/providers/model-filter");
     expect(isTransientFailure(call.status, call.message)).toBe(true);
@@ -361,13 +342,13 @@ describe("响应体挂住", () => {
 
   it("客户端自己断开时原样透传,不编一个「模型太慢」出来", async () => {
     const { gateway, cipher } = await load();
-    vi.stubGlobal("fetch", slowBodyFetch());
+    vi.stubGlobal("fetch", stalledStreamFetch());
 
     const controller = new AbortController();
     const promise = gateway
       .callWithTools({
         credentials: creds(cipher),
-      model: "m",
+        model: "m",
         messages: [{ role: "user", content: "x" }],
         tools: [],
         signal: controller.signal,
@@ -384,21 +365,22 @@ describe("响应体挂住", () => {
     vi.unstubAllGlobals();
   });
 
-  it("响应体不是 JSON 时说清楚,不冒充成超时", async () => {
+  it("流里塞了错误载荷时不得吞掉 —— 上游用 HTTP 200 报错是常见做法", async () => {
     const { gateway, cipher } = await load();
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: () => Promise.reject(new SyntaxError("Unexpected token <")),
-      }),
+      vi.fn().mockResolvedValue(
+        new Response(
+          `data: ${JSON.stringify({ error: { message: "rate limit exceeded" } })}\n\n`,
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      ),
     );
 
     const err = await gateway
       .callWithTools({
         credentials: creds(cipher),
-      model: "m",
+        model: "m",
         messages: [{ role: "user", content: "x" }],
         tools: [],
         signal: new AbortController().signal,
@@ -407,9 +389,9 @@ describe("响应体挂住", () => {
       .then(() => null)
       .catch((e: unknown) => e);
 
-    const call = err as InstanceType<typeof gateway.ProviderCallError>;
-    expect(call.status).toBe(502);
-    expect(call.message).toContain("不是合法的 JSON");
+    // 静默吞掉的话,表现是「模型什么都没说」—— 排查时毫无线索
+    expect(err).toBeInstanceOf(gateway.ProviderCallError);
+    expect((err as Error).message).toMatch(/限流|rate/i);
     vi.unstubAllGlobals();
   });
 });

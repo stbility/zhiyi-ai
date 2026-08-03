@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { sseResponse } from "../helpers/sse";
+
 /**
  * 智能体的三处「看起来在工作、其实做不成事」。
  *
@@ -36,10 +38,8 @@ const memoryTools = () => ({
   },
 });
 
-function jsonOnce(payload: unknown) {
-  return vi
-    .fn()
-    .mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }));
+function streamOnce(turn: Parameters<typeof sseResponse>[0]) {
+  return vi.fn().mockImplementation(async () => sseResponse(turn));
 }
 
 /** 把「一个服务商 + 一个模型」包成候选,凭据跟着候选走 */
@@ -63,14 +63,7 @@ describe("推理模型只给 reasoning_content 时", () => {
     // 用 ?? 回退的话空串会被原样返回,思考过程整段丢掉
     vi.stubGlobal(
       "fetch",
-      jsonOnce({
-        choices: [
-          {
-            message: { content: "", reasoning_content: "我先看看目录结构。" },
-            finish_reason: "stop",
-          },
-        ],
-      }),
+      streamOnce({ reasoning: "我先看看目录结构。" }),
     );
 
     const turn = await gateway.callWithTools({
@@ -90,14 +83,7 @@ describe("推理模型只给 reasoning_content 时", () => {
     const { gateway, cipher } = await load();
     vi.stubGlobal(
       "fetch",
-      jsonOnce({
-        choices: [
-          {
-            message: { content: "答案在这里", reasoning_content: "思考…" },
-            finish_reason: "stop",
-          },
-        ],
-      }),
+      streamOnce({ content: "答案在这里", reasoning: "思考…" }),
     );
 
     const turn = await gateway.callWithTools({
@@ -120,32 +106,11 @@ describe("输出被长度上限截断时", () => {
     // finish_reason: length + 一个被截断的工具调用参数
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: {
-                  content: "",
-                  tool_calls: [
-                    {
-                      id: "c1",
-                      type: "function",
-                      function: {
-                        name: "write_file",
-                        // 残缺的 JSON —— 正是被长度截断的典型表现
-                        arguments: '{"path":"a.ts","content":"export cons',
-                      },
-                    },
-                  ],
-                },
-                finish_reason: "length",
-              },
-            ],
-          }),
-          { status: 200 },
-        ),
-      ),
+      // finish_reason: length —— 输出被长度上限截断,工具参数是残缺的
+      streamOnce({
+        toolCalls: [{ name: "write_file", args: { path: "a.ts", content: "export cons" } }],
+        finishReason: "length",
+      }),
     );
 
     const r = await agent.runAgent({

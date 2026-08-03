@@ -894,6 +894,7 @@ export async function callWithTools({
   tools,
   signal,
   timeoutMs,
+  onText,
 }: {
   credentials: ProviderCredentials;
   model: string;
@@ -903,6 +904,15 @@ export async function callWithTools({
   signal: AbortSignal;
   /** 单次调用的等待上限。调用方应按剩余预算收窄 */
   timeoutMs: number;
+  /**
+   * 模型每吐出一段文字就回调一次,用于实时推给前端。
+   *
+   * 这是智能体能不能「看起来在工作」的关键。Claude 的智能体设计里,
+   * 循环的每一轮都是一次独立的**流式**请求:文本增量实时可见,
+   * 工具参数以 input_json_delta 逐片累积。而此前这里是非流式的 ——
+   * 一步跑两三分钟,期间前端一个字都收不到,用户只能判断为卡死。
+   */
+  onText?: ((text: string) => void) | undefined;
 }): Promise<ToolTurnResult> {
   if (!supportsToolCalling(credentials.kind)) {
     throw new ProviderCallError(
@@ -949,11 +959,7 @@ export async function callWithTools({
       // 把一堵外部的墙说成了对模型的判决,用户据此以为是模型坏了、
       // 或者以为是我们设的限制。
       throw new ProviderCallError(
-        `本次运行已用满平台给的 ${Math.round(timeoutMs / 1000)} 秒。\n` +
-          `Vercel 的单次请求最长 300 秒,这是平台的硬上限,调不高 —— ` +
-          `不是模型的问题,也不是我们设的限制。\n` +
-          `模型 ${model} 还在生成,只是这条链路装不下这么长的任务。` +
-          `需要长时间运行的工作流,要放到常驻的执行端(OpenClaw / Hermes)上跑。`,
+        `本次运行时间已用完,模型 ${model} 尚未返回。`,
         504,
       );
     }
@@ -965,83 +971,134 @@ export async function callWithTools({
     throw new ProviderCallError(await describeFailure(response, model), response.status);
   }
 
-  type ToolPayload = {
-    choices?: {
-      message?: {
-        content?: string | null;
-        reasoning_content?: string | null;
-        tool_calls?: {
-          id?: string;
-          function?: { name?: string; arguments?: string };
-        }[];
-      };
-      finish_reason?: string | null;
-    }[];
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
-  };
-
-  // 读响应体也要在超时保护内。
+  // 读流也要在超时保护内。
   //
-  // 上面只把 fetch 包进了 try,而 fetch 在**响应头**到达时就 resolve 了 ——
-  // 上游完全可能先回头、body 却挂住不发。那种情况下超时会在这里触发,
-  // 抛的是裸 AbortError:没有 504,isTransientFailure 看不到 5xx,
-  // 降级链就不会换模型 —— 而「上游挂住」正是这次修复要解决的场景本身。
-  let payload: ToolPayload;
+  // fetch 在**响应头**到达时就 resolve 了 —— 上游完全可能先回头、
+  // body 却挂住不发。那种情况下超时在读流时触发,抛的是裸 AbortError:
+  // 没有 504,isTransientFailure 看不到 5xx,降级链就不会换模型。
+  if (!response.body) {
+    throw new ProviderCallError("上游没有返回响应体。", response.status);
+  }
+
   try {
-    payload = (await response.json()) as ToolPayload;
+    return await assembleToolStream(response.body, onText);
   } catch (e) {
     if (timeout.aborted) {
       throw new ProviderCallError(
-        `模型 ${model} 已返回响应头,但在 ${Math.round(timeoutMs / 1000)} 秒内` +
-          `没有把内容传完 —— 通常是该服务商此刻容量不足。已中止并尝试换一个模型。`,
+        `本次运行时间已用完,模型 ${model} 尚未返回。`,
         504,
       );
     }
-    if (signal.aborted) throw e;
-    // 响应体不是合法 JSON —— 这和「连不上」是两回事,要说清楚
-    throw new ProviderCallError(
-      `模型 ${model} 返回的响应不是合法的 JSON,无法解析。`,
-      502,
-    );
+    throw e;
+  }
+}
+
+/**
+ * 把流式的工具调用拼回一次完整的结果。
+ *
+ * OpenAI 兼容协议下工具调用是**分片**到达的:
+ *   delta.tool_calls[i].function.arguments 每次只带一小段 JSON 文本,
+ *   必须按 index 累积,拼完整了才能解析。
+ *
+ * 这与 Claude 的 input_json_delta 是同一件事,官方文档的原话是
+ * 「accumulate tool-input JSON deltas and parse the completed JSON;
+ *   do not act on partial tool input」—— 半截 JSON 绝不能拿去执行。
+ *
+ * 正文与思考过程用 onText 实时推出去;工具参数不推 ——
+ * 用户要看的是「它在说什么」,不是一串正在拼接的 JSON。
+ */
+async function assembleToolStream(
+  body: ReadableStream<Uint8Array>,
+  onText?: ((text: string) => void) | undefined,
+): Promise<ToolTurnResult> {
+  let text = "";
+  let reasoning = "";
+  let finishReason: string | null = null;
+  const usage: ChatUsage = { inputTokens: null, outputTokens: null };
+  const calls = new Map<number, { id: string; name: string; args: string }>();
+
+  for await (const line of readSseLines(body)) {
+    if (!line.startsWith("data:")) continue;
+    const data = line.slice(5).trim();
+    if (data === "[DONE]") break;
+
+    let chunk: {
+      choices?: {
+        delta?: {
+          content?: string | null;
+          reasoning_content?: string | null;
+          tool_calls?: {
+            index?: number;
+            id?: string;
+            function?: { name?: string; arguments?: string };
+          }[];
+        };
+        finish_reason?: string | null;
+      }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+      error?: { message?: string } | string;
+    };
+    try {
+      chunk = JSON.parse(data);
+    } catch {
+      continue; // 心跳或注释行
+    }
+
+    // 上游以 HTTP 200 把错误塞在流里 —— 不能吞
+    const streamError =
+      typeof chunk.error === "string" ? chunk.error : chunk.error?.message;
+    if (streamError) {
+      throw new ProviderCallError(translateUpstreamError(streamError));
+    }
+
+    if (chunk.usage) {
+      usage.inputTokens = chunk.usage.prompt_tokens ?? usage.inputTokens;
+      usage.outputTokens = chunk.usage.completion_tokens ?? usage.outputTokens;
+    }
+
+    const choice = chunk.choices?.[0];
+    if (choice?.finish_reason) finishReason = choice.finish_reason;
+
+    const delta = choice?.delta;
+    if (!delta) continue;
+
+    if (typeof delta.content === "string" && delta.content !== "") {
+      text += delta.content;
+      onText?.(delta.content);
+    }
+    // 思考过程同样实时推出去:它不是答案,但它证明模型确实在工作
+    if (
+      typeof delta.reasoning_content === "string" &&
+      delta.reasoning_content !== ""
+    ) {
+      reasoning += delta.reasoning_content;
+      onText?.(delta.reasoning_content);
+    }
+
+    for (const c of delta.tool_calls ?? []) {
+      const i = c.index ?? 0;
+      const acc = calls.get(i) ?? { id: "", name: "", args: "" };
+      if (c.id) acc.id = c.id;
+      if (c.function?.name) acc.name = c.function.name;
+      if (c.function?.arguments) acc.args += c.function.arguments;
+      calls.set(i, acc);
+    }
   }
 
-  const choice = payload.choices?.[0];
-  const message = choice?.message;
-
-  const toolCalls = (message?.tool_calls ?? []).flatMap((c) =>
-    c.function?.name
-      ? [
-          {
-            id: c.id ?? `call_${c.function.name}`,
-            name: c.function.name,
-            rawArguments: c.function.arguments ?? "",
-          },
-        ]
-      : [],
-  );
-
-  // 推理模型可能只给 reasoning_content。它不是答案,但完全丢掉会让
-  // 「模型什么都没说」变得无法解释,所以在没有正文时退而用它。
-  //
-  // 这里不能用 ??:?? 只在 null / undefined 时回退,而这些接口在只输出
-  // 思考过程时给的是 content: ""(空字符串,不是 null)。于是
-  // `content ?? reasoning_content` 原样返回空串,思考过程被丢掉,
-  // 智能体那边报「模型既没有调用工具也没有给出回答」—— 而模型其实说了话,
-  // 只是放在另一个字段里。判空必须按「有没有内容」判,不是按「是不是 null」判。
-  const content = message?.content;
-  const reasoning = message?.reasoning_content;
-  const text =
-    content !== null && content !== undefined && content !== ""
-      ? content
-      : (reasoning ?? "");
+  const toolCalls = [...calls.entries()]
+    .sort(([a], [b]) => a - b)
+    .flatMap(([, c]) =>
+      c.name
+        ? [{ id: c.id || `call_${c.name}`, name: c.name, rawArguments: c.args }]
+        : [],
+    );
 
   return {
-    text,
+    // 只有思考过程时退而用它。判空按「有没有内容」判,空串也算没有 ——
+    // 用 ?? 的话空串不会回退,思考过程会被整段丢掉
+    text: text !== "" ? text : reasoning,
     toolCalls,
-    usage: {
-      inputTokens: payload.usage?.prompt_tokens ?? null,
-      outputTokens: payload.usage?.completion_tokens ?? null,
-    },
-    finishReason: choice?.finish_reason ?? null,
+    usage,
+    finishReason,
   };
 }
