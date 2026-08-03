@@ -2,10 +2,9 @@
 
 import { useActionState, useState } from "react";
 
-import { Icon } from "@/components/icons/Icon";
 import { Button } from "@/components/primitives/Button";
+import { Tag } from "@/components/primitives/Tag";
 import { SubmitButton } from "@/components/primitives/SubmitButton";
-import { cn } from "@/lib/cn";
 import {
   submitFeedback,
   type FeedbackState,
@@ -30,24 +29,24 @@ export function MessageFeedback({ messageId }: { messageId: string }) {
   /** 本地记住已提交的判定,让按钮当场变成选中态 —— 不必等整页刷新 */
   const [chosen, setChosen] = useState<string | null>(null);
 
-  const iconButton = (verdict: "good" | "bad", icon: "check" | "x", label: string) => (
+  /**
+   * 判定按钮。
+   *
+   * 此前用的是 ✓ / ✗ 两个图标 —— 那是错的:对号叉号表达的是
+   * 「这个答案对不对」,而这里问的是「有没有用」。用户的原话是
+   * 「输出框下方是错号对号」,他把每条回答下面那个叉号读成了
+   * 「这条回答报错了」。图标库里没有点赞/点踩,与其硬凑一个近似的,
+   * 不如直接用文字 —— 反馈这种低频动作,说清楚比省地方重要。
+   *
+   * 用设计系统的 Tag:它本来就是「可点击的状态标签」,
+   * 选中后填品牌色,和输入区那两个模式开关同一套视觉。
+   */
+  const verdictTag = (verdict: "good" | "bad", label: string) => (
     <form action={action} className="contents">
       <input type="hidden" name="messageId" value={messageId} />
       <input type="hidden" name="verdict" value={verdict} />
-      <button
-        type="submit"
-        aria-label={label}
-        title={label}
-        onClick={() => setChosen(verdict)}
-        className={cn(
-          "rounded-control flex size-7 cursor-pointer items-center justify-center border",
-          "transition-colors duration-[var(--duration-hover)] ease-standard",
-          chosen === verdict
-            ? "border-brand bg-brand-tint text-brand"
-            : "border-transparent text-fg-tertiary hover:bg-surface-3",
-        )}
-      >
-        <Icon name={icon} size={13} />
+      <button type="submit" onClick={() => setChosen(verdict)} className="contents">
+        <Tag active={chosen === verdict}>{label}</Tag>
       </button>
     </form>
   );
@@ -55,16 +54,11 @@ export function MessageFeedback({ messageId }: { messageId: string }) {
   return (
     <div className="mt-1.5 flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-1">
-        {iconButton("good", "check", "这个回答有用")}
-        {iconButton("bad", "x", "这个回答不对")}
-
-        <button
-          type="button"
-          onClick={() => setEditing((v) => !v)}
-          className="text-fg-tertiary hover:text-brand text-label cursor-pointer px-1.5 py-1"
-        >
+        {verdictTag("good", "有用")}
+        {verdictTag("bad", "没帮上")}
+        <Tag active={editing} onClick={() => setEditing((v) => !v)}>
           {editing ? "收起" : "我改成了这样"}
-        </button>
+        </Tag>
 
         {state.ok && <span className="text-success text-label">{state.ok}</span>}
         {state.error && (

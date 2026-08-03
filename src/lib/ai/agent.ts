@@ -80,7 +80,10 @@ export const DEFAULT_LIMITS: AgentLimits = {
   //
   // 留 12 是防「模型在两个工具之间反复横跳」的兜底,不是时间预算的替身。
   maxSteps: 12,
-  budgetMs: 240_000,
+  // 285 秒 = 平台给的全部时间(Vercel 函数上限 300 秒,留 15 秒收尾)。
+  // 这不是我们挑的数,是墙在那里。智能体要跑得更久,只能把执行搬出
+  // 无服务器函数 —— 那正是接 OpenClaw / Hermes 的意义。
+  budgetMs: 285_000,
   maxConsecutiveFailures: 3,
 };
 
