@@ -2,6 +2,21 @@ import "server-only";
 
 import { ProviderCallError, callWithTools } from "@/lib/ai/gateway";
 import { isTransientFailure } from "@/lib/providers/model-filter";
+
+/**
+ * 服务商在拒绝 tools / tool_choice 这两个参数本身。
+ *
+ * 这是判定「这个模型不支持工具调用」**唯一算数的证据**。
+ *
+ * 反过来那种推断是错的:模型收到了工具却用散文作答,**不能**据此判它
+ * 不支持 —— 它可能只是觉得这道题不需要动工具。把「没调」当成「不能调」,
+ * 就会把一个其实好好的模型永久拉黑。
+ *
+ * 只匹配参数被拒的措辞,不匹配「模型很忙」这类。各家措辞不同,
+ * 所以按语义抓关键词而不是认厂商。
+ */
+const TOOLS_REJECTED =
+  /tool_choice|tools?\s+(is\s+)?not\s+supported|does\s+not\s+support\s+tools?|unsupported\s+(parameter|value).*tool|function\s+calling\s+(is\s+)?not|不支持.*(工具|函数调用)/i;
 import { logger } from "@/lib/log";
 import type { ProviderCredentials } from "@/lib/ai/gateway";
 import { GIT_TOOLS, executeGitTool, type GitToolContext } from "@/lib/ai/git-tools";
@@ -50,6 +65,15 @@ export interface AgentOutcome {
    * 拼进正文,用户看到的就是「模型说的话」,而模型没说过。
    */
   readonly haltReason: string | null;
+  /**
+   * 这一轮观察到的工具调用能力,交给调用方落库(ai_models.supports_tools)。
+   *
+   *   "observed"  亲眼见过它发出 tool_calls —— 唯一算数的正面证据
+   *   "rejected"  服务商明确拒绝了 tools / tool_choice 参数
+   *   null        什么都没看出来。**不写库** —— 没有观察就不要留下结论,
+   *               尤其不能把「这次没调工具」记成「不支持工具」。
+   */
+  readonly toolSupport: "observed" | "rejected" | null;
 }
 
 export interface AgentLimits {
@@ -206,6 +230,14 @@ export async function runAgent({
   let consecutiveFailures = 0;
   let answer = "";
   let haltReason: string | null = null;
+  let toolSupport: "observed" | "rejected" | null = null;
+  /**
+   * 服务商拒绝过 tool_choice: "required" 之后,本次运行不再强制。
+   *
+   * 有些服务商支持 tools 但不认 "required" 这个取值。那种情况下
+   * 硬顶着重试只会把每一步都撞死,而它其实是能调工具的。
+   */
+  let forceDisabled = false;
   for (let index = 1; index <= limits.maxSteps; index++) {
     // 界限只有「本次运行还剩多少时间」—— 不另设任何人为上限。
     // callWithTools 拿它当超时:上游一个字节都不回时,没有超时就会
@@ -249,6 +281,19 @@ export async function runAgent({
           model: model.modelId,
           messages,
           tools: gitContext ? [...FILE_TOOLS, ...GIT_TOOLS] : FILE_TOOLS,
+          // 第一步强制动工具,之后放开。
+          //
+          // 「智能体」和「聊天助手」的分界线是产物落进工作区,而不是贴在
+          // 回答正文里。此前这里一律 "auto",于是模型可以完全无视工具 ——
+          // 而它真的会:一次真实运行里,模型收到全套文件工具、系统提示词
+          // 第一句就是「任何产物都必须用 write_file 写进工作区」,
+          // 它照样花 40 秒写了 1196 token 散文,工作区 0 文件。
+          // 贴在正文里的东西用户还要手工复制粘贴,那等于没做。
+          //
+          // 只强制第一步:后面必须放开,否则模型永远收不了尾 ——
+          // 「这一轮不调工具」正是它宣告任务完成的方式。
+          // 第一步强制去 list_files 看一眼工作区,本来就是它该做的第一件事。
+          toolChoice: index === 1 && !forceDisabled ? "required" : "auto",
           signal,
           timeoutMs: left,
           // 模型说的话实时推给前端,不等这一步跑完。
@@ -285,6 +330,27 @@ export async function runAgent({
 
         // 用户自己中止(关页面、点停止)不是失败,不重试
         if (signal.aborted) throw err;
+
+        // 服务商在拒绝 tools / tool_choice 这两个参数本身。
+        //
+        // 分两步退让,顺序不能反 —— 这两件事完全不同:
+        //   1. 先只把「强制」摘掉。有的服务商支持 tools,但不认
+        //      tool_choice: "required" 这个取值。这时它其实能调工具,
+        //      硬顶着只会把每一步都撞死。
+        //   2. 摘掉强制还是被拒,才说明它根本不接受 tools ——
+        //      这时才算拿到了「不支持工具调用」的确凿证据。
+        if (TOOLS_REJECTED.test(err.message)) {
+          if (!forceDisabled) {
+            forceDisabled = true;
+            logger.warn(
+              { model: model.modelId, upstream: err.message },
+              "服务商拒绝 tool_choice: required,本次运行改为不强制",
+            );
+            continue;
+          }
+          toolSupport = "rejected";
+          throw err;
+        }
 
         // 已经吐出过内容就不重发。
         //
@@ -379,6 +445,9 @@ export async function runAgent({
       break;
     }
 
+    // 亲眼见到它发出 tool_calls —— 这是「支持工具调用」唯一算数的证据
+    toolSupport = "observed";
+
     // 把模型的工具请求原样放回消息里 —— 协议要求下一轮能对上 tool_call_id
     messages.push({
       role: "assistant",
@@ -446,6 +515,7 @@ export async function runAgent({
     inputTokens,
     outputTokens,
     haltReason,
+    toolSupport,
   };
 }
 

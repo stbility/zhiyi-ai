@@ -89,6 +89,14 @@ interface Turn {
    * 显示出来,等待就从「死机」变成「看得见的进行中」。
    */
   reasoning?: string;
+  /**
+   * 这一轮跑过的工具,按发生顺序。只有智能体通道会有。
+   *
+   * 存的是**事实**:工具名、参数、成功与否、结果原文的开头。
+   * 不存任何叙述。分界很清楚:一句由我们措辞、描述「它在跑」的话,
+   * 是编的;而「write_file(src/app.tsx) 已写入 1240 字符」是发生过的事。
+   */
+  tools?: { name: string; ok: boolean; content: string }[];
   /** 上下文被裁剪的说明 */
   trimming?: string;
   /** 联网检索的说明 */
@@ -421,6 +429,7 @@ export function ChatPanel({
       let buffer = "";
       let text = "";
       let reasoning = "";
+      let ranTools: { name: string; ok: boolean; content: string }[] = [];
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -496,6 +505,18 @@ export function ChatPanel({
               // 落库失败时服务端不会带这个字段,那时按钮就不该出现。
               ...(done.messageId ? { dbId: done.messageId } : {}),
             });
+          } else if (event === "step" && "tools" in payload) {
+            // 智能体每完成一步就推一条。
+            //
+            // 只收工具执行,不收叙述:模型这一步说的话已经走 reasoning
+            // 实时流出去了,再收一遍会重复。
+            const p = payload as {
+              tools: { name: string; ok: boolean; content: string }[];
+            };
+            if (p.tools.length > 0) {
+              ranTools = [...ranTools, ...p.tools];
+              patchAssistant({ tools: ranTools });
+            }
           } else if (event === "error" && "message" in payload) {
             patchAssistant({ error: payload.message });
           }
@@ -728,21 +749,57 @@ export function ChatPanel({
                   </span>
                 ) : null}
 
-                {/* 思考过程。放在答案上方,因为它先发生。
-                    生成中默认展开 —— 那正是用户最需要看到「在动」的时刻;
-                    生成完成后折叠起来,答案才是主角。 */}
+                {/* 思考过程 —— 不套框。
+                    照 Claude Code 的做法:思考以**灰色斜体**内联在流里流式显示,
+                    默认折叠、可展开(它在终端里是 Ctrl+O)。
+
+                    此前这里是一个带边框、带底色、带圆角的 details 盒子。
+                    那个盒子把「模型在想」抬成了和答案并列的一块内容,
+                    可它本来就不是内容 —— 是过程。灰斜体的意思正是
+                    「这行字不是答案,扫一眼就够」。 */}
                 {turn.role === "assistant" && turn.reasoning ? (
                   <details
                     open={streaming && turn.content === ""}
-                    className="border-divider bg-surface-2 rounded-control w-full border px-3 py-2"
+                    className="w-full [&_summary::-webkit-details-marker]:hidden"
                   >
-                    <summary className="text-fg-tertiary text-label cursor-pointer select-none">
-                      思考过程({turn.reasoning.length} 字)
+                    <summary className="text-fg-tertiary text-label hover:text-fg-secondary cursor-pointer list-none italic select-none">
+                      ✻ 思考过程
                     </summary>
-                    <div className="text-fg-tertiary text-label mt-2 max-h-64 overflow-auto whitespace-pre-wrap">
+                    {/* 左边一条细线代替边框:既标出这段的范围,
+                        又不把它围成一个与答案平级的方块 */}
+                    <div className="border-divider text-fg-tertiary text-label mt-1.5 max-h-64 overflow-auto border-l pl-3 italic whitespace-pre-wrap">
                       {turn.reasoning}
                     </div>
                   </details>
+                ) : null}
+
+                {/* 工具执行 —— 照 Claude Code 的做法用**专门的可视组件**
+                    呈现,而不是把它拼成一段话混进回答里。
+                    每一行都是发生过的事:调了哪个工具、结果是什么。
+                    这里一个字的叙述都没有。 */}
+                {turn.tools && turn.tools.length > 0 ? (
+                  <ul className="flex w-full flex-col gap-1">
+                    {turn.tools.map((t, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <Icon
+                          name={t.ok ? "check" : "x"}
+                          size={12}
+                          className={cn(
+                            "mt-1 shrink-0",
+                            t.ok ? "text-success" : "text-error",
+                          )}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <code className="text-fg-secondary text-label font-mono">
+                            {t.name}
+                          </code>
+                          <span className="text-fg-tertiary text-label ml-2 break-all">
+                            {t.content}
+                          </span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
                 ) : null}
 
                 <div
@@ -819,17 +876,17 @@ export function ChatPanel({
             ))
           )}
 
-          {/* 这里曾显示「智能体运行中 · 已运行 N 秒」和
-              「正在等待模型返回第一步…」。删掉了 —— 那是系统在旁白。
+          {/* 这里曾经挂着一块由我们措辞的运行状态板 —— 报运行秒数、
+              报「还在等第一步」。删掉了,那是系统在旁白。
 
-              跑起来还看得见吗?看得见,而且看到的都是模型自己的东西:
-              思考过程走 reasoning 事件实时流出,上面那个气泡里就在动;
-              等待秒数由客户端本地计时(waitedMs),不是服务端推的文案。
-              产物在工作区页面里,不需要我们在这儿复述一遍。
+              跑起来还看得见吗?看得见,而且看到的都是真实发生的东西:
+              思考过程走 reasoning 事件实时流出,上面那段灰斜体就在动;
+              工具执行走 step 事件,渲染成上面那组结构化的工具行;
+              等待秒数由客户端本地计时(waitedMs),不是服务端推的文案;
+              产物在智能体页面右边那一栏里,实时看得见。
 
-              服务端仍然发 step 与 progress 事件 —— progress 是心跳,
-              没有它中间的反向代理会因为长时间无数据把连接掐断。
-              前端不再渲染它们。 */}
+              progress 事件仍然收着但不渲染 —— 它是心跳,
+              没有它中间的反向代理会因为长时间无数据把连接掐断。 */}
         </div>
 
         <form

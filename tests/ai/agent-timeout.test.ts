@@ -78,7 +78,7 @@ describe("智能体单步超时", () => {
         signal: new AbortController().signal,
         timeoutMs: 150,
       }),
-    ).rejects.toThrow(/时间已用完|尚未返回/);
+    ).rejects.toThrow(/请求超时/);
 
     // 真的是被超时切断的,不是等到天荒地老
     expect(Date.now() - started).toBeLessThan(3_000);

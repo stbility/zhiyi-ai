@@ -364,6 +364,121 @@ describe("智能体循环", () => {
     vi.unstubAllGlobals();
   });
 
+  it("第一步强制动工具,之后放开 —— 否则模型可以整轮不碰工作区", async () => {
+    const { agent, cipher } = await load();
+    const files = new Map<string, string>();
+    const 每步的选择: unknown[] = [];
+
+    let call = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((_u: string, init: { body: string }) => {
+        每步的选择.push((JSON.parse(init.body) as { tool_choice: unknown }).tool_choice);
+        call += 1;
+        return Promise.resolve(
+          call === 1
+            ? sseResponse({
+                toolCalls: [
+                  {
+                    id: "c1",
+                    name: "write_file",
+                    args: { path: "src/a.ts", content: "export const a = 1;" },
+                  },
+                ],
+              })
+            : sseResponse({ content: "写好了。" }),
+        );
+      }),
+    );
+
+    const r = await agent.runAgent({
+      model: candidate(cipher, "m"),
+      userMessage: "建一个入口文件",
+      history: [],
+      toolContext: {
+        async readFile(p: string) {
+          return files.get(p) ?? null;
+        },
+        async writeFile(p: string, c: string) {
+          files.set(p, c);
+        },
+        async listFiles() {
+          return [];
+        },
+      },
+      signal: new AbortController().signal,
+    });
+
+    // 第一步必须是 required。
+    //
+    // "auto" 允许模型完全无视工具,而它真的会:一次真实运行里,模型收到
+    // 全套文件工具、系统提示词第一句就是「任何产物都必须用 write_file
+    // 写进工作区」,它照样花 40 秒写了 1196 token 散文,工作区 0 文件。
+    // 产物贴在正文里,用户还要手工复制粘贴 —— 那等于没做。
+    expect(每步的选择[0], "第一步没有强制动工具").toBe("required");
+
+    // 之后必须放开,否则模型永远收不了尾 ——
+    // 「这一轮不调工具」正是它宣告任务完成的方式。
+    expect(每步的选择[1], "第二步还在强制,模型将无法收尾").toBe("auto");
+
+    expect(files.get("src/a.ts")).toBe("export const a = 1;");
+    expect(r.answer).toBe("写好了。");
+    // 亲眼见过 tool_calls —— 这是「支持工具调用」唯一算数的正面证据
+    expect(r.toolSupport).toBe("observed");
+    vi.unstubAllGlobals();
+  });
+
+  it("服务商拒绝 required 时先摘掉强制,而不是判它不支持工具", async () => {
+    const { agent, cipher } = await load();
+    const 每步的选择: unknown[] = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((_u: string, init: { body: string }) => {
+        const choice = (JSON.parse(init.body) as { tool_choice: unknown }).tool_choice;
+        每步的选择.push(choice);
+        // 只拒绝 required 这个取值,tools 本身是接受的
+        if (choice === "required") {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ error: { message: "unsupported value for tool_choice" } }),
+              { status: 400, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+        return Promise.resolve(sseResponse({ content: "我直接答了。" }));
+      }),
+    );
+
+    const r = await agent.runAgent({
+      model: candidate(cipher, "m"),
+      userMessage: "干活",
+      history: [],
+      toolContext: {
+        async readFile() {
+          return null;
+        },
+        async writeFile() {},
+        async listFiles() {
+          return [];
+        },
+      },
+      signal: new AbortController().signal,
+    });
+
+    // 退让必须分两步,顺序不能反:
+    // 有的服务商支持 tools,只是不认 "required" 这个取值。这时它其实
+    // 能调工具 —— 直接判它「不支持工具调用」会把一个好好的模型拉黑。
+    expect(每步的选择[0]).toBe("required");
+    expect(每步的选择[1]).toBe("auto");
+    expect(r.answer).toBe("我直接答了。");
+    // 拒的是 required,不是 tools —— 所以**不能**留下否定结论
+    expect(r.toolSupport, "把「不认 required」误判成了「不支持工具」").not.toBe(
+      "rejected",
+    );
+    vi.unstubAllGlobals();
+  });
+
   it("总结只回模型自己说的话,不由系统拼叙述", async () => {
     const { agent } = await load();
     const summary = agent.summarizeRun({
@@ -385,6 +500,7 @@ describe("智能体循环", () => {
       inputTokens: 1,
       outputTokens: 1,
       haltReason: "已达到步数上限(12 步)。",
+      toolSupport: null,
     });
 
     // 只剩模型说的那句话。系统不再往里拼任何东西 ——

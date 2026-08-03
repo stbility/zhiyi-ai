@@ -179,15 +179,10 @@ const NO_ENTITLEMENT =
  *
  * **铁律:上游自己说了话,就用上游的话,我们不在前面加转述。**
  *
- * 这条规则是被一次真实投诉逼出来的。上游回的是
- *
- *   HTTP 529  Service temporarily overloaded
- *
- * 而我们显示成「服务商暂时不可用(HTTP 529)。服务商原话:Service
- * temporarily overloaded」——「overloaded」是**过载、太忙**,
- * 「不可用」是**挂了**。对用户是两个完全不同的判断:前者意味着
- * 等一下再试,后者意味着这家不能用了。我们把人家的话改了意思,
- * 又把原话附在后面,于是同一行里两个互相打架的说法。
+ * 这条规则是被一次真实投诉逼出来的。上游回的是一个 529,原话的意思是
+ * **过载、太忙**;我们却在它前面加了一句自己的转述,说成**不可用**。
+ * 对用户这是两个相反的判断:前者意味着等一下再试,后者意味着这家不能用了。
+ * 而且原话就附在同一行后半截 —— 于是一行里两个互相打架的说法。
  *
  * 而且那句转述毫无必要 —— 上游已经把话说清楚了。
  *
@@ -266,8 +261,8 @@ export async function describeFailure(
   }
   // 限流与 5xx:上游的原话就是最准确的说明,不再套一层我们的转述。
   //
-  // 这两支此前分别写死成「服务商限流,请稍后重试」和「服务商暂时不可用」。
-  // 后者把 overloaded(忙)说成了不可用(坏),前面那段注释记着这笔账。
+  // 这两支此前都写死成固定文案,把上游的原话挤到后面去了。
+  // 其中 5xx 那句还把「忙」说成了「坏」—— 前面那段注释记着这笔账。
   if (status === 429 || status >= 500) {
     return detail
       ? `${who}HTTP ${status}:${detail}`
@@ -276,6 +271,17 @@ export async function describeFailure(
         `${who}服务商返回 HTTP ${status},没有附带任何说明。`;
   }
   return detail ? `${who}HTTP ${status}:${detail}` : `${who}接口返回 HTTP ${status}`;
+}
+
+/**
+ * 把等待时长说成人话。
+ *
+ * 不能直接 Math.round(ms / 1000):不足一秒会取整成 0,界面上就出现
+ * 「请求超时(0 秒)」—— 一句一眼假的话。用户已经因为这类文字
+ * 反复怀疑系统在编造,不能再多一条。
+ */
+function formatWaited(ms: number): string {
+  return ms >= 1000 ? `${Math.round(ms / 1000)} 秒` : `${ms} 毫秒`;
 }
 
 /** 逐行读取 SSE 流 */
@@ -935,6 +941,7 @@ export async function callWithTools({
   model,
   messages,
   tools,
+  toolChoice = "auto",
   signal,
   timeoutMs,
   onText,
@@ -944,6 +951,19 @@ export async function callWithTools({
   /** 允许带 tool 角色的消息 —— 工具结果要按协议回喂 */
   messages: readonly Record<string, unknown>[];
   tools: readonly unknown[];
+  /**
+   * 要不要**强制**这一步动工具。
+   *
+   * "auto"     模型自己决定。它可以选择不调 —— 而它确实会选择不调:
+   *            生产实况是模型收到全套文件工具、系统提示词第一句就写着
+   *            「任何产物都必须用 write_file 写进工作区」,它照样花了
+   *            40 秒写出 1196 token 的散文,工作区 0 文件。
+   * "required" 至少调一个工具,不许直接作答。
+   *
+   * 只在**第一步**用 required:后面必须放开,否则模型永远收不了尾 ——
+   * 「不调工具」正是它宣告任务完成的方式。
+   */
+  toolChoice?: "auto" | "required";
   signal: AbortSignal;
   /** 单次调用的等待上限。调用方应按剩余预算收窄 */
   timeoutMs: number;
@@ -987,7 +1007,7 @@ export async function callWithTools({
         model,
         messages,
         tools,
-        tool_choice: "auto",
+        tool_choice: toolChoice,
         // 流式。工具调用的参数分片到达,按 index 累积 —— 见 assembleToolStream。
         //
         // 这一行曾经是非流式,而解析器已经改成读 SSE 了:
@@ -1003,15 +1023,18 @@ export async function callWithTools({
     });
   } catch (e) {
     if (timeout.aborted) {
-      // 504 落在 isTransientFailure 的 >=500 分支里,于是智能体的降级链
-      // 会自动换下一个模型 —— 这正是想要的:慢到不可用就换一个,
-      // 而不是让用户等到平台把函数杀掉。
-      // 措辞必须如实:这不是我们判定模型「太慢」,是**平台的函数时限到了**。
-      // 上一版写成「这么慢无法完成任务…容量不足或排队严重」,
-      // 把一堵外部的墙说成了对模型的判决,用户据此以为是模型坏了、
-      // 或者以为是我们设的限制。
+      // 只陈述发生了什么,不解释、不归咎。
+      //
+      // 这句话前后被我写坏过两次,每次都是多说了一层推断:
+      // 先是「这么慢无法完成任务,容量不足或排队严重」—— 把一堵外部的墙
+      // 说成对模型的判决;后来改成「时间用完、模型尚未返回」—— 后半句
+      // 听起来仍然是在说模型的不是,而且当时还会带上一个用户
+      // 根本没选过的模型名(降级链留下的)。
+      //
+      // 事实只有一件:等到了这个秒数,没等到响应。就说这一件。
+      // 504 会落进 isTransientFailure,由重试接手 —— 见 agent.ts。
       throw new ProviderCallError(
-        `本次运行时间已用完,模型 ${model} 尚未返回。`,
+        `请求超时(${formatWaited(timeoutMs)})。`,
         504,
       );
     }
@@ -1037,7 +1060,7 @@ export async function callWithTools({
   } catch (e) {
     if (timeout.aborted) {
       throw new ProviderCallError(
-        `本次运行时间已用完,模型 ${model} 尚未返回。`,
+        `请求超时(${formatWaited(timeoutMs)})。`,
         504,
       );
     }

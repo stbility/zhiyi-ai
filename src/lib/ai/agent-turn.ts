@@ -48,17 +48,22 @@ export async function runAgentTurn({
   history: readonly { role: "user" | "assistant"; content: string }[];
   signal: AbortSignal;
 }): Promise<Response> {
-  // 工作区按需创建 —— 普通问答不需要,用到时才建,避免一堆空目录
-  const workspaceId = await ensureWorkspace(
-    supabase,
-    organizationId,
-    conversationId,
-    userId,
-  );
+  // 工作区真正用到时才建,而且只建一次。
+  // 无条件建的话,模型一个文件都没写的运行也会留下一个空工作区。
+  let workspacePromise: Promise<string> | null = null;
+  const ensureId = () => {
+    workspacePromise ??= ensureWorkspace(
+      supabase,
+      organizationId,
+      conversationId,
+      userId,
+    );
+    return workspacePromise;
+  };
 
   const toolContext = createWorkspaceTools(
     supabase,
-    workspaceId,
+    ensureId,
     organizationId,
     conversationId,
   );
@@ -132,7 +137,10 @@ export async function runAgentTurn({
         }
       };
 
-      send("meta", { conversationId, model, agent: true, workspaceId });
+      // 不再在这里报 workspaceId:工作区已改成用到时才建,这个时刻它
+      // 通常还不存在。前端也从来没用过这个字段 —— 它是在整页刷新时
+      // 由服务端把文件列表一起取来的。
+      send("meta", { conversationId, model, agent: true });
 
       // 心跳。
       //
@@ -183,6 +191,21 @@ export async function runAgentTurn({
             },
           },
         });
+
+        // 把观察到的工具能力落库。
+        //
+        // 只在**确实观察到证据**时才写 —— toolSupport 为 null 表示这一轮
+        // 什么都没看出来,那就什么都不写。尤其不能把「这次没调工具」
+        // 记成「不支持工具」:模型可能只是觉得这道题不需要动工具,
+        // 记成不支持就把一个好好的模型永久拉黑了。见迁移 0024。
+        if (outcome.toolSupport !== null) {
+          await recordToolSupport(
+            supabase,
+            organizationId,
+            selected,
+            outcome.toolSupport === "observed",
+          );
+        }
 
         // 存进 messages.content 的,只有模型自己说的话。
         //
@@ -237,13 +260,23 @@ export async function runAgentTurn({
             organization_id: organizationId,
             role: "assistant",
             content: "",
-            provider_id: providerId,
-            model_id: model,
+            // 失败留痕同样记**实际跑的**那一个,与成功路径同源。
+            // 两条路径取不同的来源,迟早会出现「同一次运行两个模型名」。
+            provider_id: selected.providerId,
+            model_id: selected.modelId,
             latency_ms: Date.now() - startedAt,
             error_message: message,
           });
         } catch {
           // 告知用户比留痕更要紧
+        }
+
+        // 参数被拒同样是证据,而且是**唯一算数的**否定证据 ——
+        // 这条路径以抛错收场,上面那段落库走不到,所以这里补上
+        if (e instanceof ProviderCallError && /tool/i.test(e.message)) {
+          await recordToolSupport(supabase, organizationId, selected, false).catch(
+            () => undefined,
+          );
         }
 
         send("error", { message });
@@ -315,9 +348,19 @@ async function ensureWorkspace(
  * 工具层不认识数据库 —— 这样它既可测(注入内存实现),
  * 以后换成真实文件系统或 Git 仓库也不必改工具定义。
  */
+/**
+ * 工作区工具。工作区**用到时才建**。
+ *
+ * 此前是在 runAgentTurn 开头无条件建一个。后果是每跑一次智能体就多一个
+ * 工作区,哪怕模型一个文件都没写 —— 工作区列表里堆着一排
+ * 「某某任务,0 文件」,用户根本分不清哪个有东西。
+ *
+ * 现在传的是一个 thunk:第一次真正读写时才去建,而且只建一次。
+ * 只想让模型读一读、答一答的那些运行,不再留下空壳。
+ */
 function createWorkspaceTools(
   supabase: SupabaseClient,
-  workspaceId: string,
+  ensureId: () => Promise<string>,
   organizationId: string,
   conversationId: string,
 ): ToolContext {
@@ -326,7 +369,7 @@ function createWorkspaceTools(
       const { data } = await supabase
         .from("workspace_files")
         .select("content")
-        .eq("workspace_id", workspaceId)
+        .eq("workspace_id", await ensureId())
         .eq("path", path)
         .maybeSingle();
       return (data?.content as string | undefined) ?? null;
@@ -335,7 +378,7 @@ function createWorkspaceTools(
     async writeFile(path, content) {
       const { error } = await supabase.from("workspace_files").upsert(
         {
-          workspace_id: workspaceId,
+          workspace_id: await ensureId(),
           organization_id: organizationId,
           path,
           content,
@@ -352,7 +395,7 @@ function createWorkspaceTools(
       let query = supabase
         .from("workspace_files")
         .select("path, size_chars")
-        .eq("workspace_id", workspaceId)
+        .eq("workspace_id", await ensureId())
         .order("path");
       if (prefix) query = query.like("path", `${prefix}%`);
 
@@ -409,4 +452,34 @@ async function loadGitContext(
       repos.repos.map((r) => [r.fullName, r.defaultBranch]),
     ),
   };
+}
+
+/**
+ * 记下这个模型的工具调用能力。
+ *
+ * 失败不影响本轮 —— 这是给下一次用的情报,不是这一次的必要条件。
+ * 为它中断一次已经跑完的运行是本末倒置。
+ */
+async function recordToolSupport(
+  supabase: SupabaseClient,
+  organizationId: string,
+  model: AgentModelOption,
+  supported: boolean,
+): Promise<void> {
+  const { error } = await supabase
+    .from("ai_models")
+    .update({
+      supports_tools: supported,
+      tools_checked_at: new Date().toISOString(),
+    })
+    .eq("organization_id", organizationId)
+    .eq("provider_id", model.providerId)
+    .eq("model_id", model.modelId);
+
+  if (error) {
+    logger.warn(
+      { dbError: error.message, model: model.modelId },
+      "工具能力观察结果未能落库",
+    );
+  }
 }
