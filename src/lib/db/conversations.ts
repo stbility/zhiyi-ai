@@ -5,7 +5,6 @@ import type {
   InitialTurn,
   ModelOption,
 } from "@/components/app/ChatPanel";
-import type { WorkspaceFile } from "@/components/app/WorkspaceBrowser";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
@@ -109,52 +108,4 @@ export async function loadTurns(
     latencyMs: (row.latency_ms as number | null) ?? null,
     error: (row.error_message as string | null) ?? null,
   }));
-}
-
-/**
- * 这条会话产出的工作区文件。
- *
- * 智能体页面的右半边就是它 —— **产物必须在跑智能体的那个页面上看得见**。
- * 此前要看产出得切到「工作区」页面自己找,于是智能体和聊天助手在界面上
- * 完全一样,用户没有任何办法分辨,合理的怀疑就是「这页面是复制的」。
- *
- * 工作区是用到时才建的(见 agent-turn.ts),所以没有工作区是正常状态,
- * 不是错误 —— 它只意味着这条会话还没有产出过文件。
- */
-export async function loadWorkspaceForConversation(
-  conversationId: string,
-): Promise<{ id: string; name: string; files: WorkspaceFile[] } | null> {
-  const supabase = await createSupabaseServerClient();
-  if (!supabase) return null;
-
-  const { data: conv } = await supabase
-    .from("conversations")
-    .select("workspace_id")
-    .eq("id", conversationId)
-    .maybeSingle();
-
-  const workspaceId = conv?.workspace_id as string | null | undefined;
-  if (!workspaceId) return null;
-
-  const [{ data: ws }, { data: files }] = await Promise.all([
-    supabase.from("workspaces").select("id, name").eq("id", workspaceId).maybeSingle(),
-    supabase
-      .from("workspace_files")
-      .select("path, content, size_chars, updated_at")
-      .eq("workspace_id", workspaceId)
-      .order("path"),
-  ]);
-
-  if (!ws) return null;
-
-  return {
-    id: ws.id as string,
-    name: ws.name as string,
-    files: (files ?? []).map((f) => ({
-      path: f.path as string,
-      content: (f.content as string | null) ?? "",
-      sizeChars: (f.size_chars as number | null) ?? 0,
-      updatedAt: f.updated_at as string,
-    })),
-  };
 }

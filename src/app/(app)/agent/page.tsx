@@ -2,12 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { ChatPanel } from "@/components/app/ChatPanel";
-import { WorkspaceBrowser } from "@/components/app/WorkspaceBrowser";
 import {
   loadConversations,
   loadModels,
   loadTurns,
-  loadWorkspaceForConversation,
 } from "@/lib/db/conversations";
 import { getMyOrganizations } from "@/lib/db/queries";
 
@@ -18,15 +16,25 @@ import { getMyOrganizations } from "@/lib/db/queries";
  * 文件工具,产物直接写进工作区,而不是把代码贴在回答正文里等人复制。
  * 贴在正文里的东西还要手工复制粘贴,那等于没做。
  *
- * 页面是**两块平铺的窗格**:左边是过程,右边是产物。
+ * 页面是**整幅单栏**的:对话占满可用宽度,右边不挂任何东西。
  *
- * 布局照 Claude Code 桌面版:它是一套可平铺的窗格(chat / file / preview /
- * diff),文件树**持续可见并随智能体创建文件实时更新**,预览窗格
- * 直接渲染 HTML —— 产物看得见摸得着,不用切到别处去找。
+ * 这里我连着做错了两版,记下来免得再犯:
  *
- * 有一条是踩出来的:**没有产物时不留空窗格**。此前右边固定挂一个
- * 380px 的框,工作区是空的时候就是一大块白,既没信息又把对话挤窄。
- * 现在没有文件就整幅让给对话,有了文件才平铺成两块。
+ *   第一版  右边固定挂 380px 的产物栏。工作区为空时就是一大块白,
+ *           既没信息又把对话挤窄。
+ *   第二版  改成「有产物才平铺成两块等宽窗格」。看着讲得通,算术却更糟:
+ *           ChatPanel 里面还有一个 224px 的会话侧栏,于是 1512px 的屏上
+ *           对话区只剩 1512×0.5 − 224 = 532px,比第一版的 908px
+ *           还窄了 41%。我为了修一个窄框,做出了一个更窄的框。
+ *
+ * 教训是那个 224px:Claude Code 桌面版是**三块各自独立的窗格**
+ * (会话列表 / 对话 / 预览),不是「两块、其中一块自带侧栏」。
+ * 在没有把会话列表拆成独立窗格之前,任何右侧栏都是在从对话区里割肉。
+ *
+ * 所以产物不在这个页面上展示,而是:
+ *   · 每一步写了哪个文件,由对话流里的工具行如实列出(发生过的事)
+ *   · 文件本身在左侧导航的「工作区」里看,那里是整幅的
+ * 等会话列表拆成独立窗格之后,再谈把预览搬回来。
  *
  * 此前这个页面只是把 AI 助手的面板原样搬过来 —— 同样的气泡、同样的
  * 输入框,没有工作区、没有文件列表、没有步骤显示。后端确实走的是
@@ -83,47 +91,20 @@ export default async function AgentPage({
         conversations[0] ??
         null);
 
-  const [initialTurns, workspace] = active
-    ? await Promise.all([
-        loadTurns(active.id),
-        loadWorkspaceForConversation(active.id),
-      ])
-    : [[], null];
-
-  // 有产物才平铺成两块。
-  //
-  // 没有产物时右边那一块是纯粹的空白 —— 它不提供任何信息,只是把对话
-  // 挤窄。空工作区本来就是正常状态(工作区是用到时才建的),
-  // 不需要用一个框去宣告它。
-  const 有产物 = workspace !== null && workspace.files.length > 0;
+  const initialTurns = active ? await loadTurns(active.id) : [];
 
   return (
+    // 和 AI 助手页面同一种外壳:整幅、不滚动,只有消息区滚动。
+    // 右边不挂任何东西 —— 见文件头那段关于 224px 的教训。
     <div className="flex h-full w-full overflow-hidden">
-      <div className="flex min-w-0 flex-1 overflow-hidden">
-        <ChatPanel
-          key={active?.id ?? "new"}
-          channel="agent"
-          models={models}
-          conversations={conversations}
-          activeConversationId={active?.id ?? null}
-          initialTurns={initialTurns}
-        />
-      </div>
-
-      {/* 产物窗格。与对话等宽平铺,不是挂在边上的一条。
-          用的是「工作区」页面同一个 WorkspaceBrowser —— 文件列表、
-          HTML 预览、源码、全屏都在里面,不另起一套。
-          窄屏不平铺:一块屏放两栏谁都读不清,产物在「工作区」页面照样看得到。
-          ChatPanel 跑完一轮会 router.refresh(),这一栏跟着刷新。 */}
-      {有产物 && workspace ? (
-        <aside className="border-divider hidden min-w-0 flex-1 overflow-y-auto border-l p-4 xl:block">
-          <WorkspaceBrowser
-            id={workspace.id}
-            name={workspace.name}
-            files={workspace.files}
-          />
-        </aside>
-      ) : null}
+      <ChatPanel
+        key={active?.id ?? "new"}
+        channel="agent"
+        models={models}
+        conversations={conversations}
+        activeConversationId={active?.id ?? null}
+        initialTurns={initialTurns}
+      />
     </div>
   );
 }

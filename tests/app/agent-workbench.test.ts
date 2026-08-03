@@ -72,38 +72,41 @@ describe("工具执行用可视组件,不是叙述文字", () => {
   });
 });
 
-describe("智能体页面能看见产物", () => {
-  it("有产物栏,直接挂工作区浏览器", () => {
-    expect(AGENT_PAGE).toMatch(/WorkspaceBrowser/);
-    expect(AGENT_PAGE).toMatch(/loadWorkspaceForConversation/);
+describe("智能体页面是整幅单栏 —— 右边不许挂东西", () => {
+  /**
+   * 这一组守的是我连着做错的两版布局。
+   *
+   *   第一版  右边固定挂 380px 产物栏。工作区为空时就是一大块白,
+   *           既没信息又把对话挤窄。
+   *   第二版  改成「有产物才平铺成两块等宽窗格」。听着讲得通,
+   *           算术却更糟 —— 见下面那条断言里的数字。
+   *
+   * 根子是 ChatPanel 里那个 224px(w-56)的会话侧栏:它已经在对话区
+   * 里面了。Claude Code 桌面版是**三块各自独立的窗格**(会话列表 /
+   * 对话 / 预览),不是「两块、其中一块自带侧栏」。在会话列表被拆成
+   * 独立窗格之前,任何右侧栏都是在从对话区里割肉。
+   */
+  it("页面里没有任何侧栏容器", () => {
+    expect(AGENT_PAGE, "右边又挂上东西了").not.toMatch(/<aside/);
+    expect(AGENT_PAGE).not.toMatch(/WorkspaceBrowser/);
   });
 
-  it("AI 助手页面没有产物栏 —— 它本来就不产生副作用", () => {
-    // 这一条是上一条的**正向对照**。少了它,「智能体页面有工作区」
-    // 这个断言可能因为两个页面又变成同一个东西而碰巧成立。
-    expect(ASSISTANT_PAGE).not.toMatch(/WorkspaceBrowser/);
+  it("ChatPanel 是外壳里唯一的子元素,拿到整幅宽度", () => {
+    // 不许再套一层 flex-1 的包装 —— 那正是给同级侧栏腾地方的写法
+    expect(AGENT_PAGE).not.toMatch(/flex min-w-0 flex-1 overflow-hidden/);
   });
 
-  it("没有产物时不留空窗格", () => {
-    // 用户的原话:「不是你现在设计的右边一个空白框破坏整体视觉效果」。
-    // 那个 380px 的框在工作区为空时就是一大块白 —— 不提供任何信息,
-    // 只是把对话挤窄。而空工作区本来就是正常状态(工作区用到时才建),
-    // 不需要用一个框去宣告它。
-    expect(AGENT_PAGE).toMatch(/workspace\.files\.length > 0/);
-    // 渲染必须挂在这个条件上,不能无条件铺出来
-    expect(AGENT_PAGE).toMatch(/有产物 && workspace \? \(/);
+  it("和 AI 助手页面用同一种外壳 —— 两边都是整幅", () => {
+    // 正向对照:AI 助手页面从来就是整幅的,智能体没有理由更窄
+    const 壳 = /<div className="flex h-full w-full overflow-hidden">/;
+    expect(AGENT_PAGE).toMatch(壳);
+    expect(ASSISTANT_PAGE).toMatch(壳);
   });
 
-  it("产物窗格与对话**等宽平铺**,不是挂在边上的一条", () => {
-    // Claude Code 桌面版是一套可平铺的窗格。此前这里写死 w-[380px],
-    // 产物被压在一条窄边里,预览的 HTML 根本看不清。
-    const 产物栏 = AGENT_PAGE.slice(AGENT_PAGE.indexOf("<aside"));
-    expect(产物栏).toMatch(/flex-1/);
-    expect(产物栏, "又写死成固定窄宽了").not.toMatch(/w-\[\d+px\]/);
-  });
-
-  it("产物窗格不给用户出主意", () => {
-    expect(AGENT_PAGE).not.toMatch(/试试|不妨|建议你|帮你写/);
+  it("对话区宽度的算术留在代码里,不是只写在提交信息里", () => {
+    // 下一个人(很可能还是我)会想「右边加个预览多好」。
+    // 那个 224px 必须就地看得到,否则他会重新算错一遍。
+    expect(AGENT_PAGE).toMatch(/224px/);
   });
 });
 
