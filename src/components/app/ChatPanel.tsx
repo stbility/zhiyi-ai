@@ -298,6 +298,28 @@ export function ChatPanel({
    * 那几十秒里界面完全静止,和卡死无法区分。
    */
   const [agentElapsed, setAgentElapsed] = useState<number | null>(null);
+  /**
+   * 本轮已等待的秒数,客户端本地计时。
+   *
+   * 不能只靠服务端心跳:那是智能体路径才有的,而**最需要它的恰恰是普通对话**。
+   * 推理模型(deepseek-v4-pro 这类)会先思考很久才吐第一个正文字,
+   * 而思考过程要服务商吐 reasoning_content 我们才显示得出来 ——
+   * NVIDIA 的部署未必开着。于是界面上一两分钟一个字不动。
+   *
+   * 生产实测:一次带联网检索的提问,122 秒才出全文。
+   * 中间什么都不显示,用户只能判断为「AI 助手无反应」,
+   * 而它其实正常工作着,只是慢。
+   */
+  const [waitedMs, setWaitedMs] = useState(0);
+
+  // 归零放在 send() 里(事件处理器),不在 effect 体内直接 setState ——
+  // 那会被 react-hooks/set-state-in-effect 挡下,而且确实是多余的一次渲染
+  useEffect(() => {
+    if (!streaming) return;
+    const startedAt = Date.now();
+    const timer = setInterval(() => setWaitedMs(Date.now() - startedAt), 1000);
+    return () => clearInterval(timer);
+  }, [streaming]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   /** 桌面端历史栏是否展开。收起后输出区能多出 224px 宽度 */
   const [historyOpen, setHistoryOpen] = useState(true);
@@ -373,6 +395,7 @@ export function ChatPanel({
     setStreaming(true);
     setAgentSteps([]);
     setAgentElapsed(null);
+    setWaitedMs(0);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -782,7 +805,16 @@ export function ChatPanel({
                     !turn.error &&
                     streaming && (
                       <span className="text-fg-tertiary">
-                        {turn.reasoning ? "正在思考…" : "正在生成…"}
+                        {turn.reasoning ? "正在思考" : "正在生成"}
+                        {waitedMs >= 1000 && ` · 已等待 ${Math.round(waitedMs / 1000)} 秒`}
+                        {/* 超过半分钟还没出字,就该说清楚为什么 ——
+                            干等而不知道原因,和坏了没有区别 */}
+                        {waitedMs >= 30_000 && !turn.reasoning && (
+                          <span className="text-fg-tertiary block">
+                            推理模型会先思考很久才出第一个字;开了联网还要先检索。
+                            想更快可以换 deepseek-v4-flash 这类非推理模型,或关掉联网。
+                          </span>
+                        )}
                       </span>
                     )}
                 </div>
