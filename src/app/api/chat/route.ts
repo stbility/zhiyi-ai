@@ -44,42 +44,21 @@ export const maxDuration = 300;
  *
  * 所以必须在撞上限之前主动失败,把原因说清楚。
  */
-/** 首个分片的等待上限 —— 超过说明服务商在排队或根本没响应 */
-const FIRST_CHUNK_TIMEOUT_MS = 45_000;
-/** 流中途卡住的上限 —— 已经在输出了,给宽一些 */
-const STALL_TIMEOUT_MS = 60_000;
-
 /*
- * 这里曾有一个「吞吐下限」:观察 90 秒后产出低于 200 字符就判定模型不可用。
+ * 这里曾有两个人为时限:首片 45 秒、停滞 60 秒。两个都删了。
  *
- * 它被**整个删除**了,因为它的立论数据不存在。
+ * 它们杀掉的是**正在正常工作**的请求。推理模型(deepseek-v4-pro 这类)
+ * 会先思考很久才吐第一个字,而思考过程要服务商吐 reasoning_content
+ * 我们才收得到 —— NVIDIA 的部署未必开着。于是一次正常的推理调用
+ * 在第 45 秒被判成「模型正在排队」直接掐断,用户看到的是「模型不能用了」。
  *
- * 当时引用的证据是「NVIDIA deepseek-v4-flash 284 秒产出 18 个 token,
- * 15 秒挤一个字」—— 而生产库 messages 表里查无此记录。真实数据恰恰相反:
+ * 唯一还留着的时限是平台强制的那个:Vercel 的函数最长 300 秒,调不高。
+ * 看门狗的真正价值从来不是「早点掐断」,而是**在撞上平台上限之前主动收尾,
+ * 把原因说清楚** —— 被平台强杀时连接直接断开,浏览器只报「Failed to fetch」,
+ * 用户完全不知道发生了什么。所以机制保留,阈值只剩平台那一个。
  *
- *   07-29  deepseek-v4-flash   14.5 token/秒
- *   07-30  z-ai/glm-5.2        22.0 token/秒
- *   08-02  deepseek-v4-flash   97 ~ 129 token/秒   ← 加了下限之后,更快
- *
- * 服务商从来没有塌陷过。据一个查无实据的结论加一道会中止用户请求的闸门,
- * 比不加更糟:它会在长上下文的前 90 秒(模型还在处理三万个输入 token)
- * 把一次正常的生成掐掉,而用户看到的是「模型不可用」。
- *
- * 真正有据可依的防线保留着:首片 45 秒(有 296 秒挂死的真实故障支撑)、
- * 停滞 60 秒、总预算 285 秒。
- */
-/**
- * 总预算。
- *
- * 上限来自平台:Vercel Hobby 的函数最长 300 秒,调不高。我们在撞上它之前
- * 主动收尾,才能把原因说清楚 —— 被平台强杀时连接直接断开,浏览器只报
- * 「Failed to fetch」。
- *
- * 从 240 秒提到 285 秒:写长代码的请求经常跑到 4 分钟以上,240 秒会把
- * 正常输出拦腰截断,而用户看到的是「断网」。留 15 秒给落库与收尾足够。
- *
- * 但这治不了根:单次 HTTP 请求最长就是 300 秒,真正的长任务必须转成
- * 后台作业(见工作流引擎)。
+ * 产品定位上也是这个道理:用户用自己的密钥、自己付费,
+ * 我们没有立场替他决定「等多久算太久」。
  */
 const TOTAL_BUDGET_MS = 285_000;
 /**
@@ -504,7 +483,9 @@ export async function POST(request: NextRequest) {
     // 总预算是整次请求共享的,不是每个模型各给一份 —— 否则四个模型轮下来
     // 早就撞上平台的函数时限了
     const remaining = TOTAL_BUDGET_MS - (Date.now() - startedAt);
-    if (remaining < FIRST_CHUNK_TIMEOUT_MS) break;
+    // 只要还有时间就试。此前是「剩余不足 45 秒就放弃」——
+    // 那是拿一个人为阈值提前否掉一次本来可能成功的调用
+    if (remaining <= 0) break;
 
     const wd = createStallWatchdog(
       remaining,
@@ -513,10 +494,6 @@ export async function POST(request: NextRequest) {
         `如果任务本身很长(比如生成整个项目),请拆成几步分别提问;` +
         `长时间运行的任务需要工作流引擎在后台执行。`,
       request.signal,
-    );
-    wd.arm(
-      FIRST_CHUNK_TIMEOUT_MS,
-      `模型在 ${Math.round(FIRST_CHUNK_TIMEOUT_MS / 1000)} 秒内没有返回任何内容,通常是该模型正在排队。`,
     );
 
     attempted.push(candidate.modelId);
@@ -698,10 +675,8 @@ export async function POST(request: NextRequest) {
             send("delta", { text: chunk.text });
           }
           // 思考也算「在动」—— 正在推理的模型不该被当成卡住
-          wd.arm(
-            STALL_TIMEOUT_MS,
-            `模型输出中途停滞超过 ${Math.round(STALL_TIMEOUT_MS / 1000)} 秒,已中止。上面是已生成的部分。`,
-          );
+          // 收到增量不再重新 arm 一个人为的停滞阈值 ——
+          // 总预算那个定时器一直在跑,它才是唯一的界限
         }
         wd.clear();
 

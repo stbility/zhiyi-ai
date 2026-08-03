@@ -71,7 +71,15 @@ export interface AgentLimits {
 }
 
 export const DEFAULT_LIMITS: AgentLimits = {
-  maxSteps: 3,
+  // 步数上限回到 12。
+  //
+  // 我曾把它压到 3,理由是「单步中位数 84 秒,240 秒装不下更多」。
+  // 那个算术没错,但结论错了:**真正的界限是 budgetMs,不是步数**。
+  // 一步快就多跑几步,一步慢自然就少跑几步 —— 用步数再卡一道,
+  // 只会在模型很快的时候平白截断一次本来能完成的任务。
+  //
+  // 留 12 是防「模型在两个工具之间反复横跳」的兜底,不是时间预算的替身。
+  maxSteps: 12,
   budgetMs: 240_000,
   maxConsecutiveFailures: 3,
 };
