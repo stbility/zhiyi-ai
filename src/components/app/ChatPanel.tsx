@@ -926,9 +926,46 @@ export function ChatPanel({
           onSubmit={send}
           className="border-divider flex shrink-0 flex-col gap-2 border-t p-3.5"
         >
-          {/* 「这一条会怎么执行」必须在发送前就看得见。
-              状态集中放在这里说,按钮标签就能一直保持短 ——
-              标签跟着状态变长会把整行控件撑开,反而更难扫。 */}
+          {/* 当前模式必须一眼可见。
+              上一版把这条状态带整个删了 —— 当时的理由是它在讲实现机制
+              (「先检索再作答」「代码写入工作区」),那部分确实该删。
+              但连**状态本身**一起删掉是过头了:开关只剩一个带色边框的
+              小图标,而这两个开关是记在 localStorage 里的**模式**,
+              开了就一直有效。用户完全可能在不知情的状态下,每一条消息
+              都走智能体路径(每步一次完整调用,慢得多),
+              然后判断为「AI 助手坏了」。
+              所以状态留下,机制不留。 */}
+          {(agentMode || webSearch) && (
+            <div className="border-brand bg-brand-tint rounded-control flex flex-wrap items-center gap-x-3 gap-y-1 border px-3 py-1.5">
+              {agentMode && (
+                <span className="text-brand text-label flex items-center gap-1.5">
+                  <Icon name="bot" size={13} className="shrink-0" />
+                  智能体模式
+                  <button
+                    type="button"
+                    onClick={() => setAgentMode(false)}
+                    className="hover:text-brand-hover cursor-pointer underline"
+                  >
+                    关闭
+                  </button>
+                </span>
+              )}
+              {webSearch && (
+                <span className="text-brand text-label flex items-center gap-1.5">
+                  <Icon name="search" size={13} className="shrink-0" />
+                  联网
+                  <button
+                    type="button"
+                    onClick={() => setWebSearch(false)}
+                    className="hover:text-brand-hover cursor-pointer underline"
+                  >
+                    关闭
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
+
           {/* 只说结论,不说规则。
               取用规则那一长段搬到按钮的 title 里 —— 需要时悬停可见,
               不必每次都占掉输入区两行。 */}
