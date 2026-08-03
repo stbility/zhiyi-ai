@@ -85,7 +85,7 @@ describe("智能体单步超时", () => {
     vi.unstubAllGlobals();
   });
 
-  it("超时报 504 —— 必须落进「临时故障」,降级链才会换模型", async () => {
+  it("超时报 504 —— 状态码要落进「临时故障」,对话路径才认得出", async () => {
     const { gateway, cipher } = await load();
     vi.stubGlobal("fetch", hangingFetch());
 
@@ -183,7 +183,7 @@ describe("智能体单步超时", () => {
     );
 
     const r = await agent.runAgent({
-      candidates: [candidate(cipher, "slow"), candidate(cipher, "good", "备用服务商", "p2")],
+      model: candidate(cipher, "good"),
       userMessage: "建一个入口文件",
       history: [],
       toolContext: {
@@ -209,15 +209,10 @@ describe("智能体单步超时", () => {
     expect(files.get("src/app.ts")).toBe("export const a = 1;");
     expect(r.answer).toBe("写好了。");
     expect(r.haltReason).toBeNull();
-    // 换过模型必须如实告知 —— 悄悄换等于伪造来源。
-    // 现在连**换到了哪一家服务商**也一并说清楚:跨服务商降级之后,
-    // 只说模型名不够 —— 用户需要知道这次回答其实是别家跑的。
-    expect(r.usedModels.join("、")).toContain("good");
-    expect(r.usedModels.join("、")).toContain("备用服务商");
     vi.unstubAllGlobals();
   });
 
-  it("单步超时被剩余预算收窄,不会几个候选各给一份满额", async () => {
+  it("每一步的时限就是剩余预算,不另设固定单步上限", async () => {
     const { agent, cipher } = await load();
     const seen: number[] = [];
 
@@ -235,8 +230,8 @@ describe("智能体单步超时", () => {
       ),
     );
 
-    // 直接观察传给 callWithTools 的 timeoutMs:总预算 300ms,
-    // 单步上限 120 秒 —— 生效值必须是前者,否则一个候选就能吃光整次运行
+    // 直接观察传给 callWithTools 的 timeoutMs:界限只有「本次运行还剩多少时间」,
+    // 不另设固定的单步上限
     const gateway = await import("@/lib/ai/gateway");
     vi.spyOn(gateway, "callWithTools").mockImplementation(
       async (args: Parameters<typeof gateway.callWithTools>[0]) => {
@@ -247,7 +242,7 @@ describe("智能体单步超时", () => {
 
     await agent
       .runAgent({
-        candidates: [candidate(cipher, "a"), candidate(cipher, "b", "备用服务商", "p2"), candidate(cipher, "c", "备用服务商", "p2")],
+        model: candidate(cipher, "a"),
         userMessage: "干活",
         history: [],
         toolContext: {
@@ -284,8 +279,8 @@ describe("智能体单步超时", () => {
  * 而它恰恰是这次修复要解决的场景本身。
  *
  * 只把 fetch 包进超时保护是不够的:那种情况下超时会在读 body 时触发,
- * 抛出的是裸 AbortError —— 没有 504,isTransientFailure 看不到 5xx,
- * 降级链就不会换模型,于是又挂回原来的老路。
+ * 抛出的是裸 AbortError —— 没有 504,上层拿不到可判断的状态码,
+ * 用户看到的就只是一句「智能体运行失败」。
  */
 describe("流挂住", () => {
   /** 响应头已到,但**流**一个字节都不发 —— 上游「先回头、body 不来」的真实形态 */

@@ -14,6 +14,8 @@ import { logger } from "@/lib/log";
 import type { AgentStep } from "@/lib/ai/agent";
 import { ProviderCallError } from "@/lib/ai/gateway";
 import type { ToolContext } from "@/lib/ai/tools";
+import { loadProviderCipher } from "@/lib/ai/credentials";
+import type { ProviderKind } from "@/lib/providers/registry";
 
 /**
  * 智能体模式的一轮。
@@ -24,15 +26,6 @@ import type { ToolContext } from "@/lib/ai/tools";
  * 响应仍然是 SSE,但推的是**进度事件**而非逐字增量 ——
  * 用户需要看到的是「正在写 src/app.ts」,不是模型在想什么。
  */
-
-/**
- * 候选池大小。
- *
- * 比对话路径的 3 个略多:智能体要跑十几步,每一步都可能撞上不同的服务商故障,
- * 多一个备选换来的是「前 10 步的产出不白费」。但也不能无限多 ——
- * 每个候选都要解一次密钥,而且候选越多,轮完一圈的时间就越长。
- */
-const MAX_AGENT_CANDIDATES = 4;
 
 export async function runAgentTurn({
   supabase,
@@ -75,53 +68,52 @@ export async function runAgentTurn({
   // 并把有限的步数耗光。
   const gitContext = await loadGitContext(supabase, organizationId);
 
-  // 候选模型:智能体一跑十几步,中途撞限流是常态。
-  // 没有备用的话,第 11 步一个 503 就把前 10 步打死。
+  // 用户选的那一个服务商 + 模型。**不准备备用,也不自动换。**
   //
-  // 候选跨**整个组织的全部服务商**,不再限于用户选中的那一个。
-  // 此前这里是 .eq("provider_id", providerId),于是英伟达容量塌陷时
-  // 四个候选全在英伟达、全部超时,而用户配好的 DeepSeek 官方一次都没试过。
-  // 凭据也必须跟着换 —— 拿 A 家的 key 调 B 家的模型只会得到 401。
-  const { loadOrgCandidates, orderCandidates, createCredentialLoader } =
-    await import("@/lib/ai/candidates");
+  // 这里曾经是一条跨服务商的候选链,某一步失败就换下一个接着跑。
+  // 删掉了。用户的原话是「你选哪个就用哪个,不换」,而实际发生的事
+  // 比「换了」更糟:他选 deepseek-v4-flash,系统跑了 glm-5.2,
+  // 留痕里的 model_id 记的还是 deepseek —— 同一次运行,库里和界面上
+  // 两个不一样的模型名。从用户那一侧看,这和编造无法区分。
+  //
+  // 模型不可用就如实报错,让他自己换。这是他的选择,不是我们的。
+  const { data: providerRow } = await supabase
+    .from("ai_providers")
+    .select("kind, base_url, display_name, enabled")
+    .eq("id", providerId)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
 
-  const ordered = orderCandidates(
-    await loadOrgCandidates(supabase, organizationId),
-    providerId,
-    model,
-  ).slice(0, MAX_AGENT_CANDIDATES);
+  const credentials =
+    providerRow && providerRow.enabled !== false
+      ? await (async () => {
+          const cipher = await loadProviderCipher(providerId);
+          return cipher
+            ? {
+                kind: providerRow.kind as ProviderKind,
+                baseUrl: providerRow.base_url as string | null,
+                apiKeyCipher: cipher,
+              }
+            : null;
+        })()
+      : null;
 
-  const credentialsFor = createCredentialLoader();
-  const candidates: AgentModelOption[] = [];
-  for (const c of ordered) {
-    const creds = await credentialsFor(c);
-    // 取不到密钥的候选直接不进候选池 —— 给一个必然 401 的候选,
-    // 只会在每一步白烧一次往返
-    if (!creds) {
-      logger.warn(
-        { providerId: c.providerId, organizationId },
-        "候选服务商密钥不可读,已从候选池剔除",
-      );
-      continue;
-    }
-    candidates.push({
-      providerId: c.providerId,
-      providerName: c.providerName,
-      modelId: c.modelId,
-      credentials: creds,
-    });
-  }
-
-  // 一个候选都没有:如实报错,而不是让循环空转到超时
-  if (candidates.length === 0) {
+  if (!credentials) {
     return new Response(
       JSON.stringify({
         error:
-          "没有可用的模型服务。请到「模型服务」确认已添加服务商、密钥有效且模型已启用。",
+          "这个服务商当前不可用。请到「模型服务」确认它已启用且密钥有效。",
       }),
       { status: 503, headers: { "Content-Type": "application/json" } },
     );
   }
+
+  const selected: AgentModelOption = {
+    providerId,
+    providerName: (providerRow?.display_name as string) ?? "",
+    modelId: model,
+    credentials,
+  };
 
   const encoder = new TextEncoder();
   const startedAt = Date.now();
@@ -158,7 +150,7 @@ export async function runAgentTurn({
 
       try {
         const outcome = await runAgent({
-          candidates,
+          model: selected,
           userMessage,
           history,
           toolContext,
@@ -192,22 +184,14 @@ export async function runAgentTurn({
           },
         });
 
-        // 一个文件都没写,却输出了一大段像代码的正文 ——
-        // 说明模型没理会工具,把代码贴在了回答里。这正是智能体模式要消灭的行为,
-        // 必须明说,否则用户会以为是系统没保存。
-        const wroteAnything = outcome.steps.some((s) =>
-          s.tools.some((t) => t.name === "write_file" && t.ok),
-        );
-        const looksLikeCode = /```|function |const |import |class /.test(
-          outcome.answer,
-        );
-        const summary =
-          !wroteAnything && looksLikeCode
-            ? summarizeRun(outcome) +
-              "\n\n⚠️ 本次模型把代码写在了回答里,没有调用文件工具,因此工作区没有产物。" +
-              "这通常是该模型对工具调用支持较弱 —— 换一个模型(GLM-5.2 或 deepseek-v4-pro)重试," +
-              "或把任务说得更具体一些(例如「用 write_file 分别创建 A、B、C 三个文件」)。"
-            : summarizeRun(outcome);
+        // 存进 messages.content 的,只有模型自己说的话。
+        //
+        // 这里曾经在正文后面拼一段警告(「本次模型把代码写在了回答里……
+        // 建议换 GLM-5.2 重试」)。两条都不能留:一是它进了 content,
+        // 用户看到的就是模型说的话,而模型没说过;二是界面不是我们给用户
+        // 出主意的地方 —— 换哪个模型是他的事。
+        // 写没写文件,工作区里一目了然,不需要我们复述。
+        const summary = summarizeRun(outcome);
 
         // 取回 id:反馈按钮要用它。见 route.ts 的 insertAssistantMessage
         const { data: savedRow } = await supabase
@@ -217,8 +201,11 @@ export async function runAgentTurn({
             organization_id: organizationId,
             role: "assistant",
             content: summary,
-            provider_id: providerId,
-            model_id: model,
+            // 记实际跑的那一个。selected 就是本次唯一跑过的模型 ——
+            // 从这里取而不是从入参取,是为了让「库里记的」和「真跑的」
+            // 在代码上是同一个来源,而不是两个碰巧相等的值。
+            provider_id: selected.providerId,
+            model_id: selected.modelId,
             input_tokens: outcome.inputTokens,
             output_tokens: outcome.outputTokens,
             latency_ms: Date.now() - startedAt,
@@ -227,6 +214,10 @@ export async function runAgentTurn({
           .single();
 
         send("delta", { text: summary });
+        // 撞上护栏的原因走**错误通道**,不拼进 content。
+        // 系统消息和模型回复分属不同通道 —— 混进正文,用户就会当成
+        // 模型说的话。
+        if (outcome.haltReason) send("error", { message: outcome.haltReason });
         send("done", {
           inputTokens: outcome.inputTokens,
           outputTokens: outcome.outputTokens,

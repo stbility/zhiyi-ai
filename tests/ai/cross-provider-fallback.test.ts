@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { sseResponse } from "../helpers/sse";
 
 /**
  * 跨服务商降级。
@@ -168,11 +167,20 @@ describe("换服务商的说明", () => {
   });
 });
 
-describe("智能体端到端:一家塌了换另一家", () => {
-  it("换服务商时,请求真的带上了**新那家**的密钥", async () => {
-    // 这一条是整个修复的落点。修复前 runAgent 只有一个固定的 credentials,
-    // 降级只换模型名 —— 于是换到别家也还是拿旧密钥去调,必然 401。
-    // 这里断言的不是「换没换」,而是「换过去的那次请求用的是谁的钥匙」。
+/**
+ * 智能体**不**参与降级。
+ *
+ * 上面那些排序 / 凭据 / 说明的能力仍然给对话路径(AI 助手)用 ——
+ * 那条线是好的,不动。但智能体这条线不用它们:用户的原话是
+ * 「你选哪个就用哪个,不换」。
+ *
+ * 为什么要专门守一条:自动换模型在智能体上造成的是**留痕自相矛盾**。
+ * 生产实况 —— 用户选 deepseek-v4-flash,messages.model_id 记的是它,
+ * 而正文里写着「本次运行改用过 z-ai/glm-5.2」。同一条记录两个模型名,
+ * 用户没法判断哪个是真的,合理的结论就是「这段文字是编的」。
+ */
+describe("智能体不换模型", () => {
+  it("选定服务商跑不通就抛错,绝不拿另一家的密钥再试", async () => {
     vi.resetModules();
     vi.doMock("server-only", () => ({}));
     process.env["ENCRYPTION_KEY"] = Buffer.alloc(32, 11).toString("base64");
@@ -180,7 +188,6 @@ describe("智能体端到端:一家塌了换另一家", () => {
     const agent = await import("@/lib/ai/agent");
 
     const nvKey = encryptSecret("nvapi-key-of-nvidia");
-    const dsKey = encryptSecret("sk-key-of-deepseek");
 
     /** 每次请求实际用的 Authorization 头 */
     const authSeen: string[] = [];
@@ -188,57 +195,41 @@ describe("智能体端到端:一家塌了换另一家", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockImplementation(
-        (_url: string, init: { headers: Record<string, string>; body: string; signal: AbortSignal }) => {
+        (_url: string, init: { headers: Record<string, string> }) => {
           authSeen.push(init.headers["Authorization"] ?? "");
-          const model = (JSON.parse(init.body) as { model: string }).model;
-          // 英伟达那家永远排队
-          if (model === "deepseek-ai/deepseek-v4-flash") {
-            return Promise.resolve(
-              new Response("ResourceExhausted: Worker limit reached", { status: 503 }),
-            );
-          }
           return Promise.resolve(
-            sseResponse({
-              content: "别家把活干完了。",
-              usage: { prompt_tokens: 1, completion_tokens: 1 },
-            }),
+            new Response("ResourceExhausted: Worker limit reached", { status: 503 }),
           );
         },
       ),
     );
 
-    const r = await agent.runAgent({
-      candidates: [
-        {
+    await expect(
+      agent.runAgent({
+        model: {
           providerId: "nv",
           providerName: "nvidia",
           modelId: "deepseek-ai/deepseek-v4-flash",
-          credentials: { kind: "openai_compatible", baseUrl: "https://integrate.api.nvidia.com/v1", apiKeyCipher: nvKey },
+          credentials: {
+            kind: "openai_compatible",
+            baseUrl: "https://integrate.api.nvidia.com/v1",
+            apiKeyCipher: nvKey,
+          },
         },
-        {
-          providerId: "ds",
-          providerName: "deepseek",
-          modelId: "deepseek-chat",
-          credentials: { kind: "openai_compatible", baseUrl: "https://api.deepseek.com/v1", apiKeyCipher: dsKey },
+        userMessage: "干活",
+        history: [],
+        toolContext: {
+          async readFile() { return null; },
+          async writeFile() {},
+          async listFiles() { return []; },
         },
-      ],
-      userMessage: "干活",
-      history: [],
-      toolContext: {
-        async readFile() { return null; },
-        async writeFile() {},
-        async listFiles() { return []; },
-      },
-      signal: new AbortController().signal,
-    });
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow();
 
-    expect(r.answer).toBe("别家把活干完了。");
-    // 两次请求,两把不同的钥匙 —— 第二次绝不能还带着英伟达的
-    expect(authSeen).toHaveLength(2);
+    // 一次请求,一把钥匙。多一次就说明降级链又长回来了。
+    expect(authSeen).toHaveLength(1);
     expect(authSeen[0]).toContain("nvapi-key-of-nvidia");
-    expect(authSeen[1]).toContain("sk-key-of-deepseek");
-    // 而且要如实告诉用户换到了哪一家
-    expect(r.usedModels.join("、")).toContain("deepseek");
     vi.unstubAllGlobals();
   });
 });

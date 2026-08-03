@@ -283,15 +283,6 @@ export function ChatPanel({
    * 而不是把代码贴在回答正文里等人复制。这是「智能体」与「聊天助手」的分界。
    */
   const [agentMode, setAgentMode] = usePersistentToggle("zhiyi-agent-mode");
-  /** 智能体运行过程中的每一步,实时显示,免得几分钟里什么都看不到 */
-  const [agentSteps, setAgentSteps] = useState<string[]>([]);
-  /**
-   * 智能体已运行毫秒数,由服务端心跳推送。
-   *
-   * 步与步之间可能隔几十秒(每一步都是一次非流式调用),只显示步骤的话
-   * 那几十秒里界面完全静止,和卡死无法区分。
-   */
-  const [agentElapsed, setAgentElapsed] = useState<number | null>(null);
   /**
    * 本轮已等待的秒数,客户端本地计时。
    *
@@ -378,8 +369,6 @@ export function ChatPanel({
     setTurns((prev) => [...prev, userTurn, assistantTurn]);
     setDraft("");
     setStreaming(true);
-    setAgentSteps([]);
-    setAgentElapsed(null);
     setWaitedMs(0);
 
     const controller = new AbortController();
@@ -495,27 +484,6 @@ export function ChatPanel({
               // 落库失败时服务端不会带这个字段,那时按钮就不该出现。
               ...(done.messageId ? { dbId: done.messageId } : {}),
             });
-          } else if (event === "step" && "index" in payload) {
-            // 智能体每完成一步就推一条 —— 跑几分钟期间什么都不显示,
-            // 用户只会以为卡死了
-            const p = payload as {
-              index: number;
-              text: string;
-              tools: { name: string; ok: boolean; content: string }[];
-            };
-            const line =
-              p.tools.length > 0
-                ? p.tools
-                    .map((t) => `${t.ok ? "✓" : "✗"} ${t.content}`)
-                    .join("\n")
-                : p.text;
-            if (line.trim() !== "") {
-              setAgentSteps((prev) => [...prev, `第 ${p.index} 步:${line}`]);
-            }
-          } else if (event === "progress" && "elapsedMs" in payload) {
-            // 智能体的每一步都是非流式调用,一步几十秒期间连接上什么都没有。
-            // 显示已运行秒数,把「看起来卡死」变成「看得见在跑」。
-            setAgentElapsed((payload as { elapsedMs: number }).elapsedMs);
           } else if (event === "error" && "message" in payload) {
             patchAssistant({ error: payload.message });
           }
@@ -839,23 +807,17 @@ export function ChatPanel({
             ))
           )}
 
-          {/* 智能体运行进度。
-              没有步骤时也要显示 —— 第一步返回之前可能就要等几十秒,
-              那段时间恰恰是最容易被误判成卡死的。 */}
-          {streaming && (agentSteps.length > 0 || agentElapsed !== null) && (
-            <div className="border-border-default bg-surface-2 rounded-card mx-auto mt-4 w-full max-w-[900px] border p-3">
-              <p className="text-fg-tertiary text-label mb-1.5">
-                智能体运行中
-                {agentElapsed !== null &&
-                  ` · 已运行 ${Math.round(agentElapsed / 1000)} 秒`}
-              </p>
-              <pre className="text-fg-secondary text-label max-h-40 overflow-auto whitespace-pre-wrap">
-                {agentSteps.length > 0
-                  ? agentSteps.join("\n")
-                  : "正在等待模型返回第一步…"}
-              </pre>
-            </div>
-          )}
+          {/* 这里曾显示「智能体运行中 · 已运行 N 秒」和
+              「正在等待模型返回第一步…」。删掉了 —— 那是系统在旁白。
+
+              跑起来还看得见吗?看得见,而且看到的都是模型自己的东西:
+              思考过程走 reasoning 事件实时流出,上面那个气泡里就在动;
+              等待秒数由客户端本地计时(waitedMs),不是服务端推的文案。
+              产物在工作区页面里,不需要我们在这儿复述一遍。
+
+              服务端仍然发 step 与 progress 事件 —— progress 是心跳,
+              没有它中间的反向代理会因为长时间无数据把连接掐断。
+              前端不再渲染它们。 */}
         </div>
 
         <form

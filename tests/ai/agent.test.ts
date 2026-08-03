@@ -100,7 +100,7 @@ describe("智能体循环", () => {
     );
 
     const r = await agent.runAgent({
-      candidates: [candidate(cipher, "m")],
+      model: candidate(cipher, "m"),
       userMessage: "建一个入口文件",
       history: [],
       toolContext: ws.ctx,
@@ -126,7 +126,7 @@ describe("智能体循环", () => {
     );
 
     const r = await agent.runAgent({
-      candidates: [candidate(cipher, "m")],
+      model: candidate(cipher, "m"),
       userMessage: "干活",
       history: [],
       toolContext: ws.ctx,
@@ -140,8 +140,10 @@ describe("智能体循环", () => {
 
     expect(r.steps).toHaveLength(3);
     expect(r.haltReason).toContain("步数上限");
-    // 必须告诉用户已完成的部分在哪,否则他不知道该不该重来
-    expect(r.haltReason).toContain("工作区");
+    // 只陈述事实。「已完成的文件都在工作区里」这类话删掉了 ——
+    // 它在一个文件都没写的运行里照样会打印,那就是纯粹的假话;
+    // 写没写文件,工作区里一目了然。
+    expect(r.haltReason).not.toMatch(/工作区|可以继续追问/);
     vi.unstubAllGlobals();
   });
 
@@ -161,7 +163,7 @@ describe("智能体循环", () => {
     );
 
     const r = await agent.runAgent({
-      candidates: [candidate(cipher, "m")],
+      model: candidate(cipher, "m"),
       userMessage: "写个文件",
       history: [],
       toolContext: ws.ctx,
@@ -186,7 +188,7 @@ describe("智能体循环", () => {
     vi.stubGlobal("fetch", scriptedModel([{ text: "" }]));
 
     const r = await agent.runAgent({
-      candidates: [candidate(cipher, "m")],
+      model: candidate(cipher, "m"),
       userMessage: "干活",
       history: [],
       toolContext: ws.ctx,
@@ -202,48 +204,39 @@ describe("智能体循环", () => {
     vi.unstubAllGlobals();
   });
 
-  it("临时性失败会换备用模型,不让一个 503 打死整轮", async () => {
-    /**
-     * 真实故障:智能体跑到一半,英伟达返回
-     *   503 ResourceExhausted: Worker local total request limit reached (48/48)
-     * 整轮直接结束,前面几步写好的文件用户完全不知道还在不在。
-     * 普通对话早就有跨厂商降级,我写智能体循环时漏接了。
-     */
+  it("模型报错就如实抛出 —— 绝不自动换成别的模型", async () => {
     const { agent, cipher } = await load();
     const ws = memoryWorkspace();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response("ResourceExhausted: Worker limit reached", { status: 503 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
 
-    let call = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation(async () => {
-        call += 1;
-        if (call === 1) {
-          return new Response("ResourceExhausted: Worker limit reached", {
-            status: 503,
-          });
-        }
-        return sseResponse({
-          content: "换了模型也办好了。",
-          usage: { prompt_tokens: 1, completion_tokens: 1 },
-        });
+    await expect(
+      agent.runAgent({
+        model: candidate(cipher, "busy-model"),
+        userMessage: "干活",
+        history: [],
+        toolContext: ws.ctx,
+        signal: new AbortController().signal,
       }),
-    );
+    ).rejects.toThrow();
 
-    const r = await agent.runAgent({
-      candidates: [candidate(cipher, "busy-model"), candidate(cipher, "backup-model", "备用服务商", "p2")],
-      userMessage: "干活",
-      history: [],
-      toolContext: ws.ctx,
-      signal: new AbortController().signal,
-    });
-
-    expect(r.answer).toBe("换了模型也办好了。");
-    // 换过模型必须留痕 —— 悄悄换等于伪造来源
-    expect(r.usedModels.join("、")).toContain("backup-model");
+    // 只调一次 —— 这是一条**反向守卫**。
+    //
+    // 这里曾经是候选链:一个模型失败就换下一个接着跑。真实后果是
+    // 用户选 deepseek-v4-flash、系统实际跑 glm-5.2,而库里 model_id
+    // 记的仍是 deepseek —— 同一次运行,界面和留痕两个不同的模型名。
+    // 从用户那一侧看,这和编造无法区分。
+    //
+    // 选哪个模型是用户的决定。跑不通就如实报错,让他自己换。
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
   });
 
-  it("永久性失败不浪费配额换模型 —— 换几次都一样", async () => {
+  it("密钥失效时只试一次,不反复烧配额", async () => {
     const { agent, cipher } = await load();
     const ws = memoryWorkspace();
     const fetchMock = vi
@@ -253,7 +246,7 @@ describe("智能体循环", () => {
 
     await expect(
       agent.runAgent({
-        candidates: [candidate(cipher, "m"), candidate(cipher, "a", "备用服务商", "p2"), candidate(cipher, "b", "备用服务商", "p2"), candidate(cipher, "c", "备用服务商", "p2")],
+        model: candidate(cipher, "m"),
         userMessage: "干活",
         history: [],
         toolContext: ws.ctx,
@@ -261,14 +254,7 @@ describe("智能体循环", () => {
       }),
     ).rejects.toThrow();
 
-    // 每家服务商只试一次,但不同的服务商都要试。
-    //
-    // 候选是 p1 一个 + p2 三个。401 是**整个服务商**级别的问题,
-    // 同一把密钥换几个模型结果完全一样,所以 p2 的三个候选只烧一次调用;
-    // 但 p1 的密钥失效绝不能成为「p2 也不试」的理由 —— 此前那样写会让
-    // 一把过期的旧密钥把整个组织的对话能力全部堵死。
-    // 所以期望是 2 次(两家各一次),不是 1 次也不是 4 次。
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
   });
 
@@ -292,8 +278,7 @@ describe("智能体循环", () => {
       ],
       inputTokens: 1,
       outputTokens: 1,
-      haltReason: null,
-      usedModels: ["备用服务商 · backup"],
+      haltReason: "已达到步数上限(12 步)。",
     });
 
     // 只剩模型说的那句话。系统不再往里拼任何东西 ——
@@ -301,7 +286,9 @@ describe("智能体循环", () => {
     // 事实没丢:产物在工作区看得见,用过哪个模型 messages.model_id 记着。
     expect(summary).toBe("已完成登录页。");
     expect(summary).not.toContain("src/login.tsx");
-    expect(summary).not.toContain("backup");
+    // 护栏原因也不进正文 —— 它走 SSE 的 error 通道,由界面在错误位置渲染,
+    // 而不是伪装成模型说的话
+    expect(summary).not.toContain("步数上限");
     expect(summary).not.toContain("本次");
   });
 });

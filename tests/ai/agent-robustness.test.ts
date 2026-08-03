@@ -57,10 +57,8 @@ function candidate(cipher: string, modelId: string, providerName = "测试服务
 }
 
 describe("推理模型只给 reasoning_content 时", () => {
-  it("content 是空串也要回退到思考过程,不能判成「什么都没说」", async () => {
+  it("思考过程走 reasoning 字段,不顶替正文", async () => {
     const { gateway, cipher } = await load();
-    // 关键在于 content 是 ""(空字符串)而不是 null ——
-    // 用 ?? 回退的话空串会被原样返回,思考过程整段丢掉
     vi.stubGlobal(
       "fetch",
       streamOnce({ reasoning: "我先看看目录结构。" }),
@@ -75,7 +73,18 @@ describe("推理模型只给 reasoning_content 时", () => {
       timeoutMs: 10_000,
     });
 
-    expect(turn.text).toBe("我先看看目录结构。");
+    // 两个字段必须始终分开。
+    //
+    // 这里曾经是 `text: text !== "" ? text : reasoning` —— 思考过程直接
+    // 顶替正文。后果是智能体把「它在想」判成「它答完了」:模型吐一句
+    // 「我先看看目录结构」就被当作最终回答,循环第一步就收工,
+    // 工作区 0 文件。用户看到的正是那个形态。
+    //
+    // 思考过程没有丢:它照样实时推给界面,而且模型停下时如果正文为空,
+    // 智能体会拿它当回答显示(见 agent.ts)—— 那是**模型自己的话**,
+    // 只是不能在循环中途冒充正文。
+    expect(turn.text).toBe("");
+    expect(turn.reasoning).toBe("我先看看目录结构。");
     vi.unstubAllGlobals();
   });
 
@@ -114,7 +123,7 @@ describe("输出被长度上限截断时", () => {
     );
 
     const r = await agent.runAgent({
-      candidates: [candidate(cipher, "m")],
+      model: candidate(cipher, "m"),
       userMessage: "写个大文件",
       history: [],
       toolContext: memoryTools(),
@@ -127,8 +136,10 @@ describe("输出被长度上限截断时", () => {
     });
 
     expect(r.haltReason).toMatch(/长度上限截断/);
-    // 必须给出可执行的下一步,而不是只说「失败了」
-    expect(r.haltReason).toMatch(/拆小|换一个/);
+    // 只说发生了什么,不给建议 —— 界面不是我们替用户拿主意的地方。
+    // 而且这句话走 SSE 的 error 通道,不会被拼进模型的回答里。
+    expect(r.haltReason).toMatch(/截断/);
+    expect(r.haltReason).not.toMatch(/建议|请|试试/);
     // 只烧掉一步,没有把剩下 11 步在同一个坑里耗光
     expect(r.steps.length).toBe(1);
     vi.unstubAllGlobals();

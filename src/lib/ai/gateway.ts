@@ -838,8 +838,20 @@ export function translateUpstreamError(raw: string): string {
 
 /** 带工具的一次调用返回 */
 export interface ToolTurnResult {
-  /** 模型这一步说的话。可能为空(它只想调工具) */
+  /**
+   * 模型这一步说的**正文**。可能为空(它只想调工具)。
+   *
+   * 绝不把 reasoning 混进来。推理模型的第一段往往只有思考过程 ——
+   * 混进来之后智能体会把「它在想」判成「它答完了」,循环第一步就收工。
+   * 表现就是界面上有一句「我先看看工作区」,然后什么都没发生,
+   * 工作区 0 文件。
+   */
   readonly text: string;
+  /**
+   * 思考过程。实时推给用户看,但**不是**答案 ——
+   * 不参与「这一轮是否结束」的判断。
+   */
+  readonly reasoning: string;
   /** 模型请求的工具调用。为空表示它认为任务完成了 */
   readonly toolCalls: readonly {
     id: string;
@@ -1119,9 +1131,12 @@ async function assembleToolStream(
     );
 
   return {
-    // 只有思考过程时退而用它。判空按「有没有内容」判,空串也算没有 ——
-    // 用 ?? 的话空串不会回退,思考过程会被整段丢掉
-    text: text !== "" ? text : reasoning,
+    // text 只装正文,reasoning 单独给。绝不在这里让思考过程顶替正文 ——
+    // 顶替的后果是智能体把「在想」当成「答完了」,一步就收工。
+    // 模型确实停下、而正文为空时,由 agent.ts 决定拿思考过程当回答显示:
+    // 那是模型自己的话,只是不能在循环中途冒充正文。
+    text,
+    reasoning,
     toolCalls,
     usage,
     finishReason,

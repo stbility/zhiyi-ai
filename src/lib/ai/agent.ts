@@ -1,7 +1,6 @@
 import "server-only";
 
 import { ProviderCallError, callWithTools } from "@/lib/ai/gateway";
-import { isTransientFailure } from "@/lib/providers/model-filter";
 import { logger } from "@/lib/log";
 import type { ProviderCredentials } from "@/lib/ai/gateway";
 import { GIT_TOOLS, executeGitTool, type GitToolContext } from "@/lib/ai/git-tools";
@@ -41,10 +40,15 @@ export interface AgentOutcome {
   /** 累计用量 */
   readonly inputTokens: number;
   readonly outputTokens: number;
-  /** 因为撞上护栏而中止时的说明。正常结束为 null */
+  /**
+   * 因为撞上护栏而中止的原因。正常结束为 null。
+   *
+   * **绝不拼进 answer 里**。它由调用方走**错误通道**送出(SSE 的 error
+   * 事件),界面在错误位置渲染 —— 这是 Claude 的做法:系统消息和模型回复
+   * 用不同的 role 分开,各走各的通道,不合并成一段文字。
+   * 拼进正文,用户看到的就是「模型说的话」,而模型没说过。
+   */
   readonly haltReason: string | null;
-  /** 运行中降级用过的备用模型。悄悄换模型等于伪造来源,必须告知 */
-  readonly usedModels: readonly string[];
 }
 
 export interface AgentLimits {
@@ -111,15 +115,11 @@ export function capToolResult(content: string): string {
 }
 
 /**
- * 一个可用的「服务商 + 模型」组合。
- *
- * 智能体的降级必须带上凭据一起换:此前只换模型名、凭据固定是用户选的
- * 那一家,于是所谓的降级永远出不了那个服务商 —— 而服务商的容量塌陷
- * 是整体性的,同一家里换几个模型等于没换。见 lib/ai/candidates.ts。
+ * 用户选定的「服务商 + 模型」。凭据必须和模型名成对传 ——
+ * 只带模型名、凭据另取一家,跑的就不是用户选的那个东西。
  */
 export interface AgentModelOption {
   readonly providerId: string;
-  /** 服务商显示名,用于向用户如实说明换到了哪一家 */
   readonly providerName: string;
   readonly modelId: string;
   readonly credentials: ProviderCredentials;
@@ -145,7 +145,7 @@ export interface AgentReporter {
  * @param history 之前的对话,按时间正序
  */
 export async function runAgent({
-  candidates,
+  model,
   userMessage,
   history,
   toolContext,
@@ -155,16 +155,18 @@ export async function runAgent({
   reporter,
 }: {
   /**
-   * 候选「服务商 + 模型」,按优先级排列,第一个是用户选的那个。
+   * 用哪个「服务商 + 模型」跑。**就这一个,不换。**
    *
-   * 智能体一跑就是十几步,中途撞上限流或排队是常态。没有备用的话,
-   * 第 11 步一个 503 就把前 10 步的工作全打死 —— 而那些文件其实已经写好了。
+   * 这里曾经是一条候选链,失败就自动换下一个接着跑。删掉了。
    *
-   * 关键是候选要**跨服务商**。此前只换模型名、凭据固定用第一家的,
-   * 于是英伟达容量塌陷时三个候选全在英伟达,全部超时,而用户配好的
-   * DeepSeek 官方一次都没被试过 —— 这正是「智能体不工作」的根因。
+   * 真实后果不是「换了个模型」,是**留痕自相矛盾**:用户选了 A,
+   * messages.model_id 记的是 A,而正文里由系统写了一句「改用过 B」——
+   * 同一条记录两个模型名。用户没法判断哪个是真的,
+   * 合理的结论就是这段文字是编的。
+   *
+   * 选哪个模型是用户的决定。跑不通就如实报错,让他自己换。
    */
-  candidates: readonly AgentModelOption[];
+  model: AgentModelOption;
   userMessage: string;
   history: readonly { role: "user" | "assistant"; content: string }[];
   toolContext: ToolContext;
@@ -194,114 +196,33 @@ export async function runAgent({
   let consecutiveFailures = 0;
   let answer = "";
   let haltReason: string | null = null;
-  const primary = candidates[0];
-  if (!primary) {
-    throw new ProviderCallError(
-      "没有可用的模型。请到「模型服务」添加服务商并测试连接。",
-    );
-  }
-  /** 当前实际在用的「服务商 + 模型」,降级后会变 */
-  let active: AgentModelOption = primary;
-  /** 本次运行中换用过的候选 —— 换过必须告诉用户,悄悄换等于伪造来源 */
-  const switchedModels = new Set<string>();
-  /** 已确认整体不可用的服务商(密钥失效等),同一家的其余候选直接跳过 */
-  const deadProviders = new Set<string>();
-
   for (let index = 1; index <= limits.maxSteps; index++) {
-    if (Date.now() - startedAt > limits.budgetMs) {
-      haltReason =
-        `已达到本次运行的时间上限(${Math.round(limits.budgetMs / 1000)} 秒),` +
-        `在第 ${index - 1} 步停止。已完成的文件都已保存在工作区,可以继续追问未完成的部分。`;
+    // 界限只有「本次运行还剩多少时间」—— 不另设任何人为上限。
+    // callWithTools 拿它当超时:上游一个字节都不回时,没有超时就会
+    // 一路挂到平台强杀,连接直接断开,浏览器只报「Failed to fetch」。
+    const remaining = limits.budgetMs - (Date.now() - startedAt);
+    if (remaining <= 0) {
+      haltReason = "本次运行已达到平台的时间上限。";
       break;
     }
 
-    // 这一步依次尝试主模型与备用模型。
-    //
-    // 只对**临时性**失败换模型(限流、排队、5xx);密钥错误、模型不存在
-    // 这类换几次都一样,换了只是白白多烧几次配额。
     let turn;
-    let lastError: ProviderCallError | null = null;
-    // 从**当前生效的模型**开始,不是从用户最初选的那个开始。
-    //
-    // 原来写的是 [model, ...fallbackModels]:第 1 步降级到 B 之后,
-    // 第 2 步到第 12 步每一步都要先撞一次已知在排队的 A,白白多等一轮。
-    // 更糟的是下面那句 candidate !== activeModel 会因此成立,
-    // 于是把用户自己选的 A 记进「换过的模型」,最后报告
-    // 最后把用户自己选的那个也报成「换过的模型」。
-    const current = active;
-    const order: readonly AgentModelOption[] = [
-      current,
-      ...candidates.filter(
-        (c) => !(c.providerId === current.providerId && c.modelId === current.modelId),
-      ),
-    ];
-    for (const candidate of order) {
-      // 这家已经确认不可用(密钥失效等),同一把密钥换个模型结果一样
-      if (deadProviders.has(candidate.providerId)) continue;
-
-      // 单步超时按**剩余预算**收窄,而不是每个候选各给一份 120 秒 ——
-      // 否则三个候选轮下来就是 360 秒,早就撞破总预算和平台时限了。
-      // 单步超时 = **剩余预算**,不再另设一个固定上限。
-      //
-      // 原来是 Math.min(stepTimeoutMs=120秒, remaining)。那个 120 秒
-      // 比模型的正常工作时间还短:生产上 8 次成功调用里有 2 次是
-      // 139 秒和 154 秒,固定上限会误杀四分之一的正常请求 ——
-      // 而它们本来都能跑完。08-03 那次智能体运行就是这么死的:
-      // 第一步在 117 秒被掐断,换候选,预算烧光,0 字符输出。
-      //
-      // 仍然要有超时,但界限只能是「本次运行还剩多少时间」:
-      // callWithTools 是非流式的,上游不回就一个字节都收不到,
-      // 没有超时会一路挂到平台强杀、连接直接断开。
-      const remaining = limits.budgetMs - (Date.now() - startedAt);
-      if (remaining <= 0) break;
-
-      try {
-        turn = await callWithTools({
-          // 每个候选用**它自己服务商**的密钥 —— 拿 A 家的 key 调 B 家的模型
-          // 只会得到 401,跨服务商降级的前提就是凭据也跟着换
-          credentials: candidate.credentials,
-          model: candidate.modelId,
-          messages,
-          tools: gitContext ? [...FILE_TOOLS, ...GIT_TOOLS] : FILE_TOOLS,
-          signal,
-          timeoutMs: remaining,
-          // 模型说的话实时推给前端,不等这一步跑完
-          ...(reporter?.onText ? { onText: reporter.onText } : {}),
-        });
-        if (
-          candidate.providerId !== current.providerId ||
-          candidate.modelId !== current.modelId
-        ) {
-          active = candidate;
-          switchedModels.add(`${candidate.providerName} · ${candidate.modelId}`);
-        }
-        lastError = null;
-        break;
-      } catch (e) {
-        const err =
-          e instanceof ProviderCallError
-            ? e
-            : new ProviderCallError("调用模型服务失败。");
-        lastError = err;
-        // 永久性失败:整家跳过,但继续试**别的**服务商。
-        // 此前是 break 掉整轮 —— 那在「候选全在同一家」的年代是对的,
-        // 现在候选跨服务商,一把过期密钥不该把整个组织的能力堵死。
-        if (!isTransientFailure(err.status, err.message)) {
-          deadProviders.add(candidate.providerId);
-        }
-      }
-    }
-
-    if (!turn) {
-      // 全都试过还是不行。已完成的步骤不能白费 —— 文件早就写进工作区了,
-      // 所以这里不抛错,而是带着已有成果如实收尾。
-      haltReason =
-        steps.length > 0
-          ? `第 ${index} 步调用模型失败,已停止:${lastError?.message ?? "未知原因"}\n` +
-            `前 ${steps.length} 步已完成,产出的文件都在工作区里。`
-          : (lastError?.message ?? "调用模型服务失败。");
-      if (steps.length === 0 && lastError) throw lastError;
-      break;
+    try {
+      turn = await callWithTools({
+        credentials: model.credentials,
+        model: model.modelId,
+        messages,
+        tools: gitContext ? [...FILE_TOOLS, ...GIT_TOOLS] : FILE_TOOLS,
+        signal,
+        timeoutMs: remaining,
+        // 模型说的话实时推给前端,不等这一步跑完
+        ...(reporter?.onText ? { onText: reporter.onText } : {}),
+      });
+    } catch (e) {
+      // 不换模型,如实抛出。上游说什么就是什么,不加任何推断。
+      throw e instanceof ProviderCallError
+        ? e
+        : new ProviderCallError("调用模型服务失败。");
     }
 
     inputTokens += turn.usage.inputTokens ?? 0;
@@ -315,22 +236,29 @@ export async function runAgent({
     // finishReason 这个字段一直取回来了却从没被用过,这里正是它该用的地方。
     if (turn.finishReason === "length") {
       answer = turn.text;
-      haltReason =
-        `模型这一步的输出被长度上限截断了` +
-        (turn.toolCalls.length > 0
-          ? `,工具调用的参数不完整,无法安全执行 —— 强行执行会写出半截文件。`
-          : `。`) +
-        `请把任务拆小一些再试(例如一次只让它写一个文件),` +
-        `或换一个输出长度上限更高的模型。`;
+      // 此时工具调用的参数是残缺 JSON,执行会写出半截文件
+      haltReason = "模型输出被长度上限截断。";
       steps.push({ index, text: turn.text, tools: [] });
       reporter?.onStep?.({ index, text: turn.text, tools: [] });
       break;
     }
 
-    // 没有工具调用 = 模型认为任务完成了
+    // 没有工具调用 = 模型认为这一轮结束了。以上游的信号为准,不自作主张续跑。
+    //
+    // 这里不能反过来「它只想了想,那我再让它跑一轮」并把思考塞回 messages
+    // 当助手发言 —— 模型看见自己上一轮的独白会接着独白,一路烧到步数上限。
+    // 思考过程不是对话内容,不进 messages。
     if (turn.toolCalls.length === 0) {
-      answer = turn.text;
-      if (turn.text.trim() === "") {
+      // 正文为空但有思考过程时,显示思考过程。
+      //
+      // 它同样是**模型自己的话**,不是我们写的旁白,所以可以直接给用户看,
+      // 而且不加任何包装说明。空白气泡对用户毫无信息量。
+      //
+      // 但它只在这里(模型已经停下)顶替正文。gateway 里 text 与 reasoning
+      // 始终是分开的两个字段 —— 一旦在循环中途混起来,智能体会把「它在想」
+      // 判成「它答完了」,第一步就收工,工作区 0 文件。
+      answer = turn.text.trim() !== "" ? turn.text : turn.reasoning;
+      if (answer.trim() === "") {
         // 模型既没有调工具也没有说话。
         //
         // 不写任何叙述:空回答本身就是事实,而任何解释都是我在猜
@@ -339,7 +267,7 @@ export async function runAgent({
         // 排查要用的东西在留痕里:messages 有 model_id 与耗时,
         // 日志里有上游的 finish_reason。
         logger.warn(
-          { model: current.modelId, finishReason: turn.finishReason },
+          { model: model.modelId, finishReason: turn.finishReason },
           "智能体本轮无输出",
         );
       }
@@ -387,6 +315,11 @@ export async function runAgent({
       });
     }
 
+    // 这一轮说的话先存下来。下面三条退出路径(连续失败、步数用完、
+    // 时间用完)都不经过前面的 break —— 不在这里赋值的话,撞上护栏时
+    // 返回的 answer 是空字符串,界面上就是一片空白。
+    if (turn.text.trim() !== "") answer = turn.text;
+
     const step: AgentStep = { index, text: turn.text, tools: results };
     steps.push(step);
     reporter?.onStep?.(step);
@@ -395,16 +328,12 @@ export async function runAgent({
     const allFailed = results.every((r) => !r.ok);
     consecutiveFailures = allFailed ? consecutiveFailures + 1 : 0;
     if (consecutiveFailures >= limits.maxConsecutiveFailures) {
-      haltReason =
-        `工具连续 ${consecutiveFailures} 次执行失败,已停止。` +
-        `最后一次的原因:${results[results.length - 1]?.content ?? "未知"}`;
+      haltReason = `工具连续 ${consecutiveFailures} 次执行失败,已停止。`;
       break;
     }
 
     if (index === limits.maxSteps) {
-      haltReason =
-        `已达到本次运行的步数上限(${limits.maxSteps} 步)。` +
-        `已完成的文件都已保存在工作区,可以继续追问未完成的部分。`;
+      haltReason = `已达到步数上限(${limits.maxSteps} 步)。`;
     }
   }
 
@@ -414,15 +343,11 @@ export async function runAgent({
     inputTokens,
     outputTokens,
     haltReason,
-    usedModels: [...switchedModels],
   };
 }
 
 /**
- * 把一次运行总结成给用户看的文字。
- *
- * 用户关心的是「做了什么」,不是每一步的原始输出。文件内容在工作区里,
- * 这里只列清单 —— 把文件内容再贴一遍正是我们要消灭的行为。
+ * 取这次运行要显示在对话框里的文字。
  */
 export function summarizeRun(outcome: AgentOutcome): string {
   // 只回模型自己说的话。
