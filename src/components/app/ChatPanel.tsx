@@ -319,6 +319,13 @@ export function ChatPanel({
   const [agentMode, setAgentMode] = usePersistentToggle("zhiyi-agent-mode");
   /** 智能体运行过程中的每一步,实时显示,免得几分钟里什么都看不到 */
   const [agentSteps, setAgentSteps] = useState<string[]>([]);
+  /**
+   * 智能体已运行毫秒数,由服务端心跳推送。
+   *
+   * 步与步之间可能隔几十秒(每一步都是一次非流式调用),只显示步骤的话
+   * 那几十秒里界面完全静止,和卡死无法区分。
+   */
+  const [agentElapsed, setAgentElapsed] = useState<number | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   /** 桌面端历史栏是否展开。收起后输出区能多出 224px 宽度 */
   const [historyOpen, setHistoryOpen] = useState(true);
@@ -384,6 +391,7 @@ export function ChatPanel({
     setDraft("");
     setStreaming(true);
     setAgentSteps([]);
+    setAgentElapsed(null);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -510,6 +518,10 @@ export function ChatPanel({
             if (line.trim() !== "") {
               setAgentSteps((prev) => [...prev, `第 ${p.index} 步:${line}`]);
             }
+          } else if (event === "progress" && "elapsedMs" in payload) {
+            // 智能体的每一步都是非流式调用,一步几十秒期间连接上什么都没有。
+            // 显示已运行秒数,把「看起来卡死」变成「看得见在跑」。
+            setAgentElapsed((payload as { elapsedMs: number }).elapsedMs);
           } else if (event === "error" && "message" in payload) {
             patchAssistant({ error: payload.message });
           }
@@ -811,12 +823,20 @@ export function ChatPanel({
             ))
           )}
 
-          {/* 智能体运行进度 */}
-          {streaming && agentSteps.length > 0 && (
+          {/* 智能体运行进度。
+              没有步骤时也要显示 —— 第一步返回之前可能就要等几十秒,
+              那段时间恰恰是最容易被误判成卡死的。 */}
+          {streaming && (agentSteps.length > 0 || agentElapsed !== null) && (
             <div className="border-border-default bg-surface-2 rounded-card mx-auto mt-4 w-full max-w-[900px] border p-3">
-              <p className="text-fg-tertiary text-label mb-1.5">智能体运行中</p>
+              <p className="text-fg-tertiary text-label mb-1.5">
+                智能体运行中
+                {agentElapsed !== null &&
+                  ` · 已运行 ${Math.round(agentElapsed / 1000)} 秒`}
+              </p>
               <pre className="text-fg-secondary text-label max-h-40 overflow-auto whitespace-pre-wrap">
-                {agentSteps.join("\n")}
+                {agentSteps.length > 0
+                  ? agentSteps.join("\n")
+                  : "正在等待模型返回第一步…"}
               </pre>
             </div>
           )}

@@ -135,7 +135,12 @@ describe("智能体循环", () => {
       history: [],
       toolContext: ws.ctx,
       signal: new AbortController().signal,
-      limits: { maxSteps: 3, budgetMs: 60_000, maxConsecutiveFailures: 99 },
+      limits: {
+        maxSteps: 3,
+        budgetMs: 60_000,
+        maxConsecutiveFailures: 99,
+        stepTimeoutMs: 30_000,
+      },
     });
 
     expect(r.steps).toHaveLength(3);
@@ -167,7 +172,12 @@ describe("智能体循环", () => {
       history: [],
       toolContext: ws.ctx,
       signal: new AbortController().signal,
-      limits: { maxSteps: 10, budgetMs: 60_000, maxConsecutiveFailures: 2 },
+      limits: {
+        maxSteps: 10,
+        budgetMs: 60_000,
+        maxConsecutiveFailures: 2,
+        stepTimeoutMs: 30_000,
+      },
     });
 
     expect(r.steps.length).toBeLessThanOrEqual(2);

@@ -877,6 +877,15 @@ export function supportsToolCalling(kind: ProviderKind): boolean {
  *
  * 只支持 OpenAI 兼容协议。Anthropic 与 Google 的工具协议不同,
  * 需要各自的适配;在它们接入之前,调用方应先检查 supportsTools。
+ *
+ * **必须传 timeoutMs。** 非流式意味着在上游回完之前这里一个字节都收不到,
+ * 没有超时就只能一直挂着 —— 而对话路径有首片 45 秒、停滞 60 秒、总预算
+ * 285 秒、吞吐下限四层防护,智能体路径此前一层都没有。实际后果:
+ * 服务商容量塌陷时(生产实测 NVIDIA 15 秒才挤出一个 token),一步就能
+ * 把整个函数挂到 Vercel 的 300 秒上限被强杀,连接直接断开,
+ * 浏览器只报「Failed to fetch」—— 这正是「智能体无法正常工作」的根因。
+ * 智能体的 budgetMs 也救不了,因为它只在每步**开始前**判断,
+ * 拦不住一个已经挂住的 fetch。
  */
 export async function callWithTools({
   credentials,
@@ -884,6 +893,7 @@ export async function callWithTools({
   messages,
   tools,
   signal,
+  timeoutMs,
 }: {
   credentials: ProviderCredentials;
   model: string;
@@ -891,6 +901,8 @@ export async function callWithTools({
   messages: readonly Record<string, unknown>[];
   tools: readonly unknown[];
   signal: AbortSignal;
+  /** 单次调用的等待上限。调用方应按剩余预算收窄 */
+  timeoutMs: number;
 }): Promise<ToolTurnResult> {
   if (!supportsToolCalling(credentials.kind)) {
     throw new ProviderCallError(
@@ -901,27 +913,53 @@ export async function callWithTools({
   }
 
   const apiKey = decryptSecret(credentials.apiKeyCipher);
-  const response = await fetch(`${resolveBaseUrl(credentials)}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      tools,
-      tool_choice: "auto",
-      stream: false,
-    }),
-    signal,
-  });
+
+  // 超时与外部中止合并成一个信号。
+  //
+  // 两者必须能区分:超时要告诉用户「这个模型此刻太慢,换一个」并让降级链
+  // 接管;客户端自己走掉则什么都不必解释。合并后 fetch 抛的是同一种
+  // AbortError,所以单独留住 timeout 这个引用,靠它的 aborted 来判定。
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const combined = AbortSignal.any([signal, timeout]);
+
+  let response: Response;
+  try {
+    response = await fetch(`${resolveBaseUrl(credentials)}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        tools,
+        tool_choice: "auto",
+        stream: false,
+      }),
+      signal: combined,
+    });
+  } catch (e) {
+    if (timeout.aborted) {
+      // 504 落在 isTransientFailure 的 >=500 分支里,于是智能体的降级链
+      // 会自动换下一个模型 —— 这正是想要的:慢到不可用就换一个,
+      // 而不是让用户等到平台把函数杀掉。
+      throw new ProviderCallError(
+        `模型 ${model} 超过 ${Math.round(timeoutMs / 1000)} 秒没有返回结果。` +
+          `智能体的每一步都是一次完整调用,这么慢无法完成任务 —— ` +
+          `通常是该服务商此刻容量不足或排队严重,已中止并尝试换一个模型。`,
+        504,
+      );
+    }
+    // 客户端断开:没人在等回复,不必解释什么
+    throw e;
+  }
 
   if (!response.ok) {
     throw new ProviderCallError(await describeFailure(response, model), response.status);
   }
 
-  const payload = (await response.json()) as {
+  type ToolPayload = {
     choices?: {
       message?: {
         content?: string | null;
@@ -935,6 +973,31 @@ export async function callWithTools({
     }[];
     usage?: { prompt_tokens?: number; completion_tokens?: number };
   };
+
+  // 读响应体也要在超时保护内。
+  //
+  // 上面只把 fetch 包进了 try,而 fetch 在**响应头**到达时就 resolve 了 ——
+  // 上游完全可能先回头、body 却挂住不发。那种情况下超时会在这里触发,
+  // 抛的是裸 AbortError:没有 504,isTransientFailure 看不到 5xx,
+  // 降级链就不会换模型 —— 而「上游挂住」正是这次修复要解决的场景本身。
+  let payload: ToolPayload;
+  try {
+    payload = (await response.json()) as ToolPayload;
+  } catch (e) {
+    if (timeout.aborted) {
+      throw new ProviderCallError(
+        `模型 ${model} 已返回响应头,但在 ${Math.round(timeoutMs / 1000)} 秒内` +
+          `没有把内容传完 —— 通常是该服务商此刻容量不足。已中止并尝试换一个模型。`,
+        504,
+      );
+    }
+    if (signal.aborted) throw e;
+    // 响应体不是合法 JSON —— 这和「连不上」是两回事,要说清楚
+    throw new ProviderCallError(
+      `模型 ${model} 返回的响应不是合法的 JSON,无法解析。`,
+      502,
+    );
+  }
 
   const choice = payload.choices?.[0];
   const message = choice?.message;
@@ -951,10 +1014,23 @@ export async function callWithTools({
       : [],
   );
 
+  // 推理模型可能只给 reasoning_content。它不是答案,但完全丢掉会让
+  // 「模型什么都没说」变得无法解释,所以在没有正文时退而用它。
+  //
+  // 这里不能用 ??:?? 只在 null / undefined 时回退,而这些接口在只输出
+  // 思考过程时给的是 content: ""(空字符串,不是 null)。于是
+  // `content ?? reasoning_content` 原样返回空串,思考过程被丢掉,
+  // 智能体那边报「模型既没有调用工具也没有给出回答」—— 而模型其实说了话,
+  // 只是放在另一个字段里。判空必须按「有没有内容」判,不是按「是不是 null」判。
+  const content = message?.content;
+  const reasoning = message?.reasoning_content;
+  const text =
+    content !== null && content !== undefined && content !== ""
+      ? content
+      : (reasoning ?? "");
+
   return {
-    // 推理模型可能只给 reasoning_content。它不是答案,但完全丢掉会让
-    // 「模型什么都没说」变得无法解释,所以在没有正文时退而用它。
-    text: message?.content ?? message?.reasoning_content ?? "",
+    text,
     toolCalls,
     usage: {
       inputTokens: payload.usage?.prompt_tokens ?? null,

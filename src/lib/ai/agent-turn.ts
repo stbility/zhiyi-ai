@@ -98,6 +98,20 @@ export async function runAgentTurn({
 
       send("meta", { conversationId, model, agent: true, workspaceId });
 
+      // 心跳。
+      //
+      // 智能体的每一步都是一次**非流式**调用:上游回完之前这里一个字节都
+      // 没有,而一步几十秒是常态。期间连接上什么都不流动,界面停在
+      // 「正在生成…」一动不动 —— 用户只能判断为卡死,然后关掉页面重试,
+      // 而那一步其实正在正常进行。中间的反向代理也可能因为长时间无数据
+      // 把连接掐掉。
+      //
+      // 每 5 秒推一条已运行秒数:既让界面能显示「已运行 42 秒」,
+      // 也让连接上始终有数据流动。
+      const heartbeat = setInterval(() => {
+        send("progress", { elapsedMs: Date.now() - startedAt });
+      }, 5_000);
+
       try {
         const outcome = await runAgent({
           credentials,
@@ -185,6 +199,9 @@ export async function runAgentTurn({
 
         send("error", { message });
       } finally {
+        // 心跳必须停,否则定时器会拖着已经结束的函数不放,
+        // 还会往一个关掉的流里写
+        clearInterval(heartbeat);
         try {
           controller.close();
         } catch {

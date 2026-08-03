@@ -53,13 +53,48 @@ export interface AgentLimits {
   readonly budgetMs: number;
   /** 连续失败多少次就停 —— 一直失败说明它没在改正,再试也是浪费 */
   readonly maxConsecutiveFailures: number;
+  /**
+   * 单步等待上限(毫秒)。
+   *
+   * budgetMs 只在每步**开始前**判断,拦不住一个已经挂住的调用 ——
+   * 而智能体的每一步都是一次非流式请求,上游不回就一个字节都没有。
+   * 没有这一项时,服务商容量塌陷会让一步挂满整个函数时限,
+   * 最后被平台强杀、连接断开,浏览器只报「Failed to fetch」。
+   *
+   * 取 120 秒:正常模型写完一个文件远用不到,而慢到这个程度的
+   * 服务商本来就该被换掉。实际生效值还会被剩余预算进一步收窄。
+   */
+  readonly stepTimeoutMs: number;
 }
 
 export const DEFAULT_LIMITS: AgentLimits = {
   maxSteps: 12,
   budgetMs: 240_000,
   maxConsecutiveFailures: 3,
+  stepTimeoutMs: 120_000,
 };
+
+/**
+ * 单条工具结果回喂给模型的字符上限。
+ *
+ * 工具结果会被原样追加进 messages,而 messages 每一步都要整个重发。
+ * read_file / git_read_file 读一个 100KB 的文件,之后每一步都要再背一遍 ——
+ * 12 步下来光这一个文件就重复传了十几次,既撑爆上下文也把钱烧光。
+ *
+ * 截断必须**让模型看见**:悄悄截断会让它以为读到的就是文件全文,
+ * 据此改出来的代码是错的,比读不到更糟。
+ */
+export const MAX_TOOL_RESULT_CHARS = 30_000;
+
+/** 按上限截断工具结果,并如实告诉模型被截断了 */
+export function capToolResult(content: string): string {
+  if (content.length <= MAX_TOOL_RESULT_CHARS) return content;
+  return (
+    content.slice(0, MAX_TOOL_RESULT_CHARS) +
+    `\n\n…[内容过长,此处截断。原文共 ${content.length} 个字符,` +
+    `已显示前 ${MAX_TOOL_RESULT_CHARS} 个。需要后面的部分请按目录或分段再读。]`
+  );
+}
 
 /** 循环过程中的进度回调,用于把每一步实时推给前端 */
 export interface AgentReporter {
@@ -151,6 +186,12 @@ export async function runAgent({
     // 「运行中主模型不可用,已自动改用:A」—— A 正是他选的那个。
     const order = [activeModel, ...fallbackModels.filter((m) => m !== activeModel)];
     for (const candidate of order) {
+      // 单步超时按**剩余预算**收窄,而不是每个候选各给一份 120 秒 ——
+      // 否则三个候选轮下来就是 360 秒,早就撞破总预算和平台时限了。
+      const remaining = limits.budgetMs - (Date.now() - startedAt);
+      if (remaining <= 0) break;
+      const stepTimeout = Math.min(limits.stepTimeoutMs, remaining);
+
       try {
         turn = await callWithTools({
           credentials,
@@ -158,6 +199,7 @@ export async function runAgent({
           messages,
           tools: gitContext ? [...FILE_TOOLS, ...GIT_TOOLS] : FILE_TOOLS,
           signal,
+          timeoutMs: stepTimeout,
         });
         if (candidate !== activeModel) {
           activeModel = candidate;
@@ -189,6 +231,26 @@ export async function runAgent({
 
     inputTokens += turn.usage.inputTokens ?? 0;
     outputTokens += turn.usage.outputTokens ?? 0;
+
+    // 被输出长度上限截断了。
+    //
+    // 这时工具调用的参数是**残缺的 JSON**,执行必然得到「参数不是合法的
+    // JSON」;而模型再试一次仍然会写到同样的长度、同样被截断,于是剩下的
+    // 步数就在这个循环里烧光,用户等到最后拿到一句不知所云的报错。
+    // finishReason 这个字段一直取回来了却从没被用过,这里正是它该用的地方。
+    if (turn.finishReason === "length") {
+      answer = turn.text;
+      haltReason =
+        `模型这一步的输出被长度上限截断了` +
+        (turn.toolCalls.length > 0
+          ? `,工具调用的参数不完整,无法安全执行 —— 强行执行会写出半截文件。`
+          : `。`) +
+        `请把任务拆小一些再试(例如一次只让它写一个文件),` +
+        `或换一个输出长度上限更高的模型。`;
+      steps.push({ index, text: turn.text, tools: [] });
+      reporter?.onStep?.({ index, text: turn.text, tools: [] });
+      break;
+    }
 
     // 没有工具调用 = 模型认为任务完成了
     if (turn.toolCalls.length === 0) {
@@ -234,7 +296,12 @@ export async function runAgent({
       messages.push({
         role: "tool",
         tool_call_id: result.callId,
-        content: result.content,
+        // 回喂给模型的那份按上限截断,给用户看的 results 保留完整内容。
+        //
+        // messages 每一步都要整个重发,而 read_file 可能读回一个 100KB 的
+        // 文件 —— 不截断的话 12 步下来同一个文件被重复传十几次,
+        // 上下文撑爆、钱也烧光。截断处会明确告诉模型「这里截断了」。
+        content: capToolResult(result.content),
       });
     }
 
