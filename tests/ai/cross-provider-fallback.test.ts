@@ -224,11 +224,17 @@ describe("智能体不换模型", () => {
           async listFiles() { return []; },
         },
         signal: new AbortController().signal,
+        limits: { maxSteps: 3, budgetMs: 60_000, maxConsecutiveFailures: 3, maxRetries: 2 },
       }),
     ).rejects.toThrow();
 
-    // 一次请求,一把钥匙。多一次就说明降级链又长回来了。
-    expect(authSeen).toHaveLength(1);
+    // 可以重试,但**从头到尾只有一把钥匙**。
+    //
+    // 重试同一个模型是 Claude Code 的官方行为(见 agent.ts 里的引文);
+    // 换一家的密钥再试才是降级链。这里守的是后者不许回来 ——
+    // 出现第二把钥匙就说明它长回来了。
+    expect(authSeen.length).toBeGreaterThan(0);
+    expect(new Set(authSeen).size, "出现了第二把钥匙 —— 降级链又长回来了").toBe(1);
     expect(authSeen[0]).toContain("nvapi-key-of-nvidia");
     vi.unstubAllGlobals();
   });

@@ -174,7 +174,33 @@ async function readUpstreamDetail(response: Response): Promise<string | null> {
 const NO_ENTITLEMENT =
   /not found for account|not authorized|no access to|not entitled|access denied|无权限|未开通|没有权限/i;
 
-/** 导出仅为可测试 —— 错误诊断的措辞直接决定用户去修哪里,必须能被守住 */
+/**
+ * 把一次失败的上游响应说成一句人话。
+ *
+ * **铁律:上游自己说了话,就用上游的话,我们不在前面加转述。**
+ *
+ * 这条规则是被一次真实投诉逼出来的。上游回的是
+ *
+ *   HTTP 529  Service temporarily overloaded
+ *
+ * 而我们显示成「服务商暂时不可用(HTTP 529)。服务商原话:Service
+ * temporarily overloaded」——「overloaded」是**过载、太忙**,
+ * 「不可用」是**挂了**。对用户是两个完全不同的判断:前者意味着
+ * 等一下再试,后者意味着这家不能用了。我们把人家的话改了意思,
+ * 又把原话附在后面,于是同一行里两个互相打架的说法。
+ *
+ * 而且那句转述毫无必要 —— 上游已经把话说清楚了。
+ *
+ * 所以现在:有原话就直接给原话,只补一个状态码。
+ * 只有在上游一个字都没给时,我们才用状态码本身来描述。
+ *
+ * 唯一的例外是 401/403/404 那几支:上游的原话本身是不可操作的
+ * (「Not found for account」并不告诉用户该去哪儿点哪个按钮),
+ * 我们把它翻译成一条能照着做的指引。但即便如此,原话也必须一并保留 ——
+ * 翻译可以有,替换不行。
+ *
+ * 导出仅为可测试 —— 错误诊断的措辞直接决定用户去修哪里,必须能被守住。
+ */
 export async function describeFailure(
   response: Response,
   /** 出错的模型标识。多个模型并存时不点名等于没说 */
@@ -238,11 +264,16 @@ export async function describeFailure(
     }
     return `${who}接口或模型不存在(HTTP 404),请检查接口地址与模型名称${suffix}`;
   }
-  if (status === 429) {
-    return `${who}服务商限流,请稍后重试${suffix}`;
-  }
-  if (status >= 500) {
-    return `${who}服务商暂时不可用(HTTP ${status})${suffix}`;
+  // 限流与 5xx:上游的原话就是最准确的说明,不再套一层我们的转述。
+  //
+  // 这两支此前分别写死成「服务商限流,请稍后重试」和「服务商暂时不可用」。
+  // 后者把 overloaded(忙)说成了不可用(坏),前面那段注释记着这笔账。
+  if (status === 429 || status >= 500) {
+    return detail
+      ? `${who}HTTP ${status}:${detail}`
+      : // 上游一个字都没给。这时只能陈述我们确实知道的那一件事:
+        // 收到了这个状态码。不推断它为什么发生。
+        `${who}服务商返回 HTTP ${status},没有附带任何说明。`;
   }
   return detail ? `${who}HTTP ${status}:${detail}` : `${who}接口返回 HTTP ${status}`;
 }

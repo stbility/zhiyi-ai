@@ -202,6 +202,7 @@ describe("智能体单步超时", () => {
         maxSteps: 5,
         budgetMs: 20_000,
         maxConsecutiveFailures: 3,
+        maxRetries: 0,
       },
     });
 
@@ -259,6 +260,7 @@ describe("智能体单步超时", () => {
           maxSteps: 3,
           budgetMs: 300,
           maxConsecutiveFailures: 3,
+        maxRetries: 0,
         },
       })
       .catch(() => undefined);

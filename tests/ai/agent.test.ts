@@ -135,6 +135,7 @@ describe("智能体循环", () => {
         maxSteps: 3,
         budgetMs: 60_000,
         maxConsecutiveFailures: 99,
+        maxRetries: 0,
       },
     });
 
@@ -172,6 +173,7 @@ describe("智能体循环", () => {
         maxSteps: 10,
         budgetMs: 60_000,
         maxConsecutiveFailures: 2,
+        maxRetries: 0,
       },
     });
 
@@ -204,14 +206,16 @@ describe("智能体循环", () => {
     vi.unstubAllGlobals();
   });
 
-  it("模型报错就如实抛出 —— 绝不自动换成别的模型", async () => {
+  it("临时失败会重试同一个模型 —— 但绝不换成别的模型", async () => {
     const { agent, cipher } = await load();
     const ws = memoryWorkspace();
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
+    const 打过的模型: string[] = [];
+    const fetchMock = vi.fn().mockImplementation((_u: string, init: { body: string }) => {
+      打过的模型.push((JSON.parse(init.body) as { model: string }).model);
+      return Promise.resolve(
         new Response("ResourceExhausted: Worker limit reached", { status: 503 }),
       );
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
@@ -221,22 +225,124 @@ describe("智能体循环", () => {
         history: [],
         toolContext: ws.ctx,
         signal: new AbortController().signal,
+        // 退避是真的会 sleep,测试里只重试两次,够证明「重试了」且不拖慢
+        limits: { maxSteps: 3, budgetMs: 60_000, maxConsecutiveFailures: 3, maxRetries: 2 },
       }),
     ).rejects.toThrow();
 
-    // 只调一次 —— 这是一条**反向守卫**。
-    //
-    // 这里曾经是候选链:一个模型失败就换下一个接着跑。真实后果是
-    // 用户选 deepseek-v4-flash、系统实际跑 glm-5.2,而库里 model_id
-    // 记的仍是 deepseek —— 同一次运行,界面和留痕两个不同的模型名。
-    // 从用户那一侧看,这和编造无法区分。
-    //
-    // 选哪个模型是用户的决定。跑不通就如实报错,让他自己换。
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // 重试了 —— 这是 Claude Code 官方文档写明的行为:
+    // 「Claude Code retries these failures: Server errors, overloaded
+    //   responses, and request timeouts」,默认 10 次,退避重试用尽之前
+    // 根本不把错误给用户看。
+    // 此前我们收到 529 就把整轮打死,十几步的活全毁 —— 那正是官方仓库
+    // issue #60577 记的缺陷。
+    expect(打过的模型.length, "一次都没重试").toBe(3); // 首次 + 2 次重试
+
+    // 但**打的自始至终是同一个模型**。
+    // 重试同一个 ≠ 换一个。用户说的是「你选哪个就用哪个,不换」,
+    // 换模型才违背它,继续试不违背。
+    expect(new Set(打过的模型)).toEqual(new Set(["busy-model"]));
     vi.unstubAllGlobals();
   });
 
-  it("密钥失效时只试一次,不反复烧配额", async () => {
+  it("连接断在开口之前 —— 重发,这是 Claude 明确要求重试的一类", async () => {
+    const { agent, cipher } = await load();
+    const ws = memoryWorkspace();
+
+    // 一个字都没吐就断 —— 「before any part of Claude's response has completed」
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.error(new Error("connection reset by peer"));
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await agent
+      .runAgent({
+        model: candidate(cipher, "m"),
+        userMessage: "干活",
+        history: [],
+        toolContext: ws.ctx,
+        signal: new AbortController().signal,
+        limits: { maxSteps: 3, budgetMs: 60_000, maxConsecutiveFailures: 3, maxRetries: 2 },
+      })
+      .catch(() => undefined);
+
+    // 这是上面那条 emitted 规则的**正向对照**:同样是流中断,
+    // 区别只在断之前有没有吐过东西。没吐过 → 必须重发。
+    //
+    // 此前不会重发,而且原因很隐蔽:断连抛的是原始 Error,被一律包成
+    // 「调用模型服务失败。」,消息和状态码全丢,于是判成永久性失败。
+    expect(fetchMock, "断连没有被重试").toHaveBeenCalledTimes(3);
+    vi.unstubAllGlobals();
+  });
+
+  it("已经吐出过内容就不重发 —— 否则同一个 write_file 会执行两遍", async () => {
+    const { agent, cipher } = await load();
+    const ws = memoryWorkspace();
+
+    // 和上一条**只差一点**:断之前先吐了一段正文。
+    // 上一条会重发 3 次,这一条必须只发 1 次 —— 这一对构成正反对照,
+    // 少了任何一边,「不重发」这个断言都可能因为别的原因碰巧成立
+    // (它已经骗过我一次:当时断连被误判成永久性失败,
+    //  于是 emitted 这道闸门根本没被走到,测试却是绿的)。
+    let 吐过 = false;
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          // 必须分两次 pull:controller.error() 会**丢弃队列里已入队的数据**,
+          // 写成 start() 里 enqueue 完立刻 error,那段正文根本送不到消费者手上,
+          // 于是 emitted 永远是 false —— 这条测试就会因为完全错误的理由变绿。
+          // (它确实这么骗过我一次。)
+          new ReadableStream({
+            pull(c) {
+              if (吐过) {
+                c.error(new Error("connection reset by peer"));
+                return;
+              }
+              吐过 = true;
+              c.enqueue(
+                new TextEncoder().encode(
+                  'data: {"choices":[{"delta":{"content":"我开始写"}}]}\n\n',
+                ),
+              );
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await agent
+      .runAgent({
+        model: candidate(cipher, "m"),
+        userMessage: "干活",
+        history: [],
+        toolContext: ws.ctx,
+        signal: new AbortController().signal,
+        limits: { maxSteps: 3, budgetMs: 60_000, maxConsecutiveFailures: 3, maxRetries: 5 },
+      })
+      .catch(() => undefined);
+
+    // Claude 官方把这条列在「不重试」里,理由是我猜不到的:
+    //   「Claude Code could execute the same tool calls twice if it re-ran
+    //    the request, so it keeps the completed output and ends the turn
+    //    with an incomplete-response notice.」
+    // 重发一个已经开始产出的请求,会让同一个 write_file 写两遍。
+    // 宁可这一轮不完整,也不能把文件写重。
+    expect(fetchMock, "已经吐过内容还重发了 —— 工具会被执行两遍").toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("永久性失败一次都不重试 —— 密钥错了重试多少次都一样", async () => {
     const { agent, cipher } = await load();
     const ws = memoryWorkspace();
     const fetchMock = vi

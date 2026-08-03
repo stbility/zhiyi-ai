@@ -1,6 +1,7 @@
 import "server-only";
 
 import { ProviderCallError, callWithTools } from "@/lib/ai/gateway";
+import { isTransientFailure } from "@/lib/providers/model-filter";
 import { logger } from "@/lib/log";
 import type { ProviderCredentials } from "@/lib/ai/gateway";
 import { GIT_TOOLS, executeGitTool, type GitToolContext } from "@/lib/ai/git-tools";
@@ -73,6 +74,14 @@ export interface AgentLimits {
   readonly budgetMs: number;
   /** 连续失败多少次就停 —— 一直失败说明它没在改正,再试也是浪费 */
   readonly maxConsecutiveFailures: number;
+  /**
+   * 单步最多重试几次(同一个模型)。
+   *
+   * 10 是 Claude Code 的默认值(CLAUDE_CODE_MAX_RETRIES),照抄。
+   * 实际很难跑满 —— 退避时间还要受剩余预算约束,而我们的预算被
+   * Vercel 的 300 秒硬顶压着,Claude Code 在本机跑没有这个限制。
+   */
+  readonly maxRetries: number;
 }
 
 export const DEFAULT_LIMITS: AgentLimits = {
@@ -90,6 +99,7 @@ export const DEFAULT_LIMITS: AgentLimits = {
   // 无服务器函数 —— 那正是接 OpenClaw / Hermes 的意义。
   budgetMs: 285_000,
   maxConsecutiveFailures: 3,
+  maxRetries: 10,
 };
 
 /**
@@ -206,24 +216,117 @@ export async function runAgent({
       break;
     }
 
+    // 这一步的调用,带**重试**。
+    //
+    // 做法照抄 Claude Code 官方文档(code.claude.com/docs/en/errors):
+    //   「Claude Code retries these failures: Server errors, overloaded
+    //    responses, and request timeouts … Temporary 429 throttles.」
+    // 默认 CLAUDE_CODE_MAX_RETRIES = 10,指数退避,**重试用尽之前
+    // 根本不把这个错误给用户看**。
+    //
+    // 此前这里是收到错误就直接抛,整轮打死。生产实况:上游回一个
+    // 529 overloaded(意思是「忙,等会儿再来」),我们把它当成终局,
+    // 一次都不试就把用户十几步的活全毁了。Claude Code 官方仓库的
+    // issue #60577 记的就是这个缺陷,而文档写明的应有行为是自动重试。
+    //
+    // 重试的是**同一个模型**,不换 —— 这和「你选哪个就用哪个」不冲突,
+    // 换模型才冲突。
     let turn;
-    try {
-      turn = await callWithTools({
-        credentials: model.credentials,
-        model: model.modelId,
-        messages,
-        tools: gitContext ? [...FILE_TOOLS, ...GIT_TOOLS] : FILE_TOOLS,
-        signal,
-        timeoutMs: remaining,
-        // 模型说的话实时推给前端,不等这一步跑完
-        ...(reporter?.onText ? { onText: reporter.onText } : {}),
-      });
-    } catch (e) {
-      // 不换模型,如实抛出。上游说什么就是什么,不加任何推断。
-      throw e instanceof ProviderCallError
-        ? e
-        : new ProviderCallError("调用模型服务失败。");
+    let attempt = 0;
+    for (;;) {
+      // 只要重发,就可能把同一个工具调用执行两遍。所以按 Claude 的规则:
+      // 这一次尝试里只要已经吐出过内容,就不再重发。见下面 emitted。
+      let emitted = false;
+      const left = limits.budgetMs - (Date.now() - startedAt);
+      if (left <= 0) {
+        haltReason = "本次运行已达到平台的时间上限。";
+        break;
+      }
+
+      try {
+        turn = await callWithTools({
+          credentials: model.credentials,
+          model: model.modelId,
+          messages,
+          tools: gitContext ? [...FILE_TOOLS, ...GIT_TOOLS] : FILE_TOOLS,
+          signal,
+          timeoutMs: left,
+          // 模型说的话实时推给前端,不等这一步跑完。
+          // 顺带记下「这一次尝试有没有真的吐出过东西」——重试的前提是没吐过。
+          onText: (text: string) => {
+            emitted = true;
+            reporter?.onText?.(text);
+          },
+        });
+        break;
+      } catch (e) {
+        // 连接断了 vs 上游明确回了一个错误 —— 这两件事必须分开。
+        //
+        // ProviderCallError 表示我们**收到了 HTTP 响应**并据此分了类
+        // (状态码、上游原话都在)。抛出别的东西,意味着传输层就断了:
+        // fetch failed、流读到一半 connection reset、TLS 握手失败……
+        // 这时既没有状态码也没有上游原话。
+        //
+        // 此前这里一律包成 `new ProviderCallError("调用模型服务失败。")`,
+        // 原始消息整个丢掉。后果是 isTransientFailure 拿到的是
+        // (undefined, "调用模型服务失败。") —— 判成永久性失败,一次都不重试。
+        // 而 Claude Code 官方文档把断连明确列在**要重试**的一类里:
+        //   「Dropped connections. This covers a connection that drops in
+        //    the middle of a request, before any part of Claude's response
+        //    has completed: Claude Code re-issues the request with the same
+        //    backoff, and the turn continues.」
+        // 所以断连要保留原文,并且直接按临时性失败处理。
+        const dropped = !(e instanceof ProviderCallError);
+        const err = dropped
+          ? new ProviderCallError(
+              `与模型服务的连接中断:${e instanceof Error ? e.message : String(e)}`,
+            )
+          : e;
+
+        // 用户自己中止(关页面、点停止)不是失败,不重试
+        if (signal.aborted) throw err;
+
+        // 已经吐出过内容就不重发。
+        //
+        // 这条是 Claude 官方明确列在「不重试」里的,理由是我猜不到的:
+        //   「Claude Code could execute the same tool calls twice if it
+        //    re-ran the request, so it keeps the completed output and
+        //    ends the turn with an incomplete-response notice.」
+        // 也就是说,重发一个已经开始产出的请求,会让同一个 write_file
+        // 执行两遍。宁可这一轮不完整,也不能把文件写两次。
+        if (emitted) throw err;
+
+        // 永久性失败(密钥错、模型不存在)重试多少次都一样,只是白烧配额。
+        // 断连没有状态码可判,但它按定义就是临时性的 —— 见上面的引文。
+        if (!dropped && !isTransientFailure(err.status, err.message)) throw err;
+
+        attempt += 1;
+        if (attempt > limits.maxRetries) throw err;
+
+        // 指数退避 1s / 2s / 4s / 8s,封顶 8 秒。
+        //
+        // 上限还要受**剩余预算**约束:Vercel 的函数最长 300 秒,
+        // 这是平台强制的,不是我们的判断。等待时间超过剩余预算的话,
+        // 与其睡过去被平台强杀(浏览器只报 Failed to fetch),
+        // 不如现在就如实报错。
+        const backoff = Math.min(1000 * 2 ** (attempt - 1), 8000);
+        if (backoff >= limits.budgetMs - (Date.now() - startedAt)) throw err;
+
+        logger.warn(
+          {
+            model: model.modelId,
+            attempt,
+            status: err.status,
+            backoffMs: backoff,
+          },
+          "上游临时失败,退避后重试同一个模型",
+        );
+        await new Promise((r) => setTimeout(r, backoff));
+      }
     }
+
+    // 预算在重试过程中耗光了
+    if (!turn) break;
 
     inputTokens += turn.usage.inputTokens ?? 0;
     outputTokens += turn.usage.outputTokens ?? 0;
