@@ -108,8 +108,12 @@ export default async function IntegrationsPage({
   //
   // 取不到就**不生成链接**,由卡片显示「暂时取不到」——
   // 给一个必然 404 的按钮,和放一个空按钮是同一类问题。
-  const slug = appConfig ? await getAppSlug() : null;
-  const installHref = slug ? installUrl(slug, issueState(org.id)) : null;
+  const slugResult = appConfig
+    ? await getAppSlug()
+    : { slug: null, source: "none" as const, error: null };
+  const installHref = slugResult.slug
+    ? installUrl(slugResult.slug, issueState(org.id))
+    : null;
   const params = await searchParams;
 
   return (
@@ -126,6 +130,8 @@ export default async function IntegrationsPage({
         installation={gitInstallation}
         installHref={installHref}
         canManage={canManage}
+        slugSource={slugResult.source}
+        slugError={slugResult.error}
         notice={{
           ...(params.githubOk ? { ok: true } : {}),
           ...(params.githubError ? { error: params.githubError } : {}),

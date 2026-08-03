@@ -289,7 +289,11 @@ describe("应用 slug", () => {
     );
 
     const { getAppSlug } = await import("@/lib/integrations/github");
-    expect(await getAppSlug()).toBe("zhiyi-ai-repo");
+    const r = await getAppSlug();
+    expect(r.slug).toBe("zhiyi-ai-repo");
+    // 来源必须标明已查证 —— 界面据此决定要不要警告用户
+    expect(r.source).toBe("github");
+    expect(r.error).toBeNull();
     vi.unstubAllGlobals();
   });
 
@@ -300,7 +304,13 @@ describe("应用 slug", () => {
     });
 
     const { getAppSlug } = await import("@/lib/integrations/github");
-    expect(await getAppSlug()).toBe("兜底名字");
+    const r = await getAppSlug();
+    expect(r.slug).toBe("兜底名字");
+    // 关键:回退值必须标成未查证,并带出失败原因。
+    // 上一版静默回退到一个没验过的值,拼出的仍然是 404 链接,
+    // 而用户只看到 GitHub 的 404,完全无从排查。
+    expect(r.source).toBe("env");
+    expect(r.error).toBeTruthy();
     vi.unstubAllGlobals();
   });
 
@@ -309,7 +319,21 @@ describe("应用 slug", () => {
     vi.stubGlobal("fetch", async () => new Response("{}", { status: 500 }));
 
     const { getAppSlug } = await import("@/lib/integrations/github");
-    expect(await getAppSlug()).toBeNull();
+    const r = await getAppSlug();
+    expect(r.slug).toBeNull();
+    expect(r.source).toBe("none");
+    vi.unstubAllGlobals();
+  });
+
+  it("401 时点名最常见的配错 —— 别让人对着 404 干瞪眼", async () => {
+    stubConfig();
+    vi.stubGlobal("fetch", async () => new Response("{}", { status: 401 }));
+
+    const { getAppSlug } = await import("@/lib/integrations/github");
+    const r = await getAppSlug();
+    // 查证失败最常见的原因就是把 OAuth App 的 client id 填了进来
+    expect(r.error).toContain("OAuth App");
+    expect(r.error).toContain("Client ID");
     vi.unstubAllGlobals();
   });
 

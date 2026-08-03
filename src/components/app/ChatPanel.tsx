@@ -13,6 +13,7 @@ import {
 } from "react";
 
 import { Icon, type IconName } from "@/components/icons/Icon";
+import { MessageFeedback } from "@/components/app/MessageFeedback";
 import { Button, buttonClasses } from "@/components/primitives/Button";
 import { IconButton } from "@/components/primitives/IconButton";
 import { Select } from "@/components/primitives/Select";
@@ -249,6 +250,19 @@ function IconToggle({
     >
       <Icon name={icon} size={15} />
     </button>
+  );
+}
+
+/**
+ * 这条消息是否已经落库。
+ *
+ * 前端在流式生成期间用的是临时 id(不是 UUID),那时消息还没写进
+ * messages 表 —— 对它提交反馈只会得到「找不到这条消息」。
+ * 按 UUID 形状判断,比另加一个字段简单且不会忘记维护。
+ */
+function isPersistedId(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    id,
   );
 }
 
@@ -819,6 +833,20 @@ export function ChatPanel({
                     )}
                   </div>
                 )}
+
+                {/* 反馈只挂在**已落库**的助手消息上。
+                    正在生成的那条还没有真实 id(前端用的是临时 id),
+                    给它一个点了必然报「找不到这条消息」的按钮不如不给。
+
+                    这是整条链路上唯一一件现在不做以后补不回来的事:
+                    历史对话随时能回捞,但用户当时想把这句话改成什么,
+                    过后没人记得。 */}
+                {turn.role === "assistant" &&
+                  turn.content !== "" &&
+                  !turn.error &&
+                  isPersistedId(turn.id) && (
+                    <MessageFeedback messageId={turn.id} />
+                  )}
               </div>
             ))
           )}

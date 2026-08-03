@@ -14,6 +14,10 @@ export interface GitConnectionProps {
   /** 去 GitHub 授权的地址。未配置时为 null */
   installHref: string | null;
   canManage: boolean;
+  /** slug 是否向 GitHub 查证过。env = 只是环境变量里填的,未经查证 */
+  slugSource: "github" | "env" | "none";
+  /** 查证失败的原因。这是用户唯一能据以排查的线索,必须显示出来 */
+  slugError: string | null;
   /** 回调带回来的提示 */
   notice?: { ok?: boolean; error?: string } | undefined;
 }
@@ -34,13 +38,26 @@ export function GitConnection({
   installation,
   installHref,
   canManage,
+  slugSource,
+  slugError,
   notice,
 }: GitConnectionProps) {
   return (
     <section className="bg-surface-2 border-border-default rounded-card font-zh border p-5">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <h3 className="text-fg text-body font-medium">Git 仓库</h3>
-        {!configured ? (
+        {/* slug 没查证过就必须说出来。
+          安装地址是 https://github.com/apps/<slug>/... —— slug 错了
+          用户看到的是 GitHub 的 404,不是我们的报错,完全无从排查。
+          把 GitHub 的原始报错摆出来,他才知道该去改哪个配置。 */}
+      {configured && slugSource !== "github" && slugError && (
+        <p className="border-warning bg-warning-tint text-warning rounded-control text-caption mb-3 p-3">
+          未能向 GitHub 查证应用地址{slugSource === "env" ? "(下面用的是环境变量里填的值,可能不对)" : ""}:
+          <span className="mt-1 block">{slugError}</span>
+        </p>
+      )}
+
+      {!configured ? (
           <Badge>未配置</Badge>
         ) : installation ? (
           <Badge tone="success">已连接</Badge>
@@ -62,6 +79,17 @@ export function GitConnection({
       {notice?.ok && (
         <p className="border-success bg-success-tint text-success rounded-control text-caption mb-3 p-3">
           已连接成功。
+        </p>
+      )}
+
+      {/* slug 没查证过就必须说出来。
+          安装地址是 https://github.com/apps/<slug>/... —— slug 错了
+          用户看到的是 GitHub 的 404,不是我们的报错,完全无从排查。
+          把 GitHub 的原始报错摆出来,他才知道该去改哪个配置。 */}
+      {configured && slugSource !== "github" && slugError && (
+        <p className="border-warning bg-warning-tint text-warning rounded-control text-caption mb-3 p-3">
+          未能向 GitHub 查证应用地址{slugSource === "env" ? "(下面用的是环境变量里填的值,可能不对)" : ""}:
+          <span className="mt-1 block">{slugError}</span>
         </p>
       )}
 

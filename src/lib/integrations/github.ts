@@ -260,55 +260,89 @@ async function readError(response: Response): Promise<string> {
 }
 
 /**
- * 应用 slug 的缓存。
+ * 应用 slug 的缓存。只缓存**向 GitHub 查证过**的值。
  *
- * 它几乎不变(改名才会变),而每次渲染集成页都要用它拼安装地址 ——
- * 每次都去问一遍是白白多一个往返。缓存在模块作用域即可:
- * 函数实例回收就没了,不必落库。
+ * 它几乎不变(改名才会变),而每次渲染集成页都要用它拼安装地址。
  */
 let cachedSlug: string | null = null;
 
+export interface AppSlugResult {
+  readonly slug: string | null;
+  /** github = 向 GitHub 查证过;env = 只是环境变量里填的,未经查证 */
+  readonly source: "github" | "env" | "none";
+  /** 查证失败时的原因,要显示给用户 —— 这是他唯一能据以排查的线索 */
+  readonly error: string | null;
+}
+
 /**
- * 向 GitHub 查这个 App 的 slug。
+ * 取这个 App 的 slug,并如实说明来源是否可信。
  *
  * 安装页地址是 https://github.com/apps/<slug>/installations/new,
- * slug 错了就是一个 GitHub 的 404 —— 用户看到的不是我们的报错,
- * 完全无从判断哪里配错了。所以不让人手填,直接问 GitHub。
+ * slug 错了就是 GitHub 的 404 —— 用户看到的不是我们的报错,
+ * 完全无从判断哪里配错了。
+ *
+ * 上一版这里有个自相矛盾:查询失败时静默回退到环境变量,而那个值**未经验证**。
+ * 一边写着「不生成必然 404 的地址」,一边把一个没验过的值拿去拼地址 ——
+ * 实际发生的正是这样:GitHub App 叫 zhiyi-ai-repo,环境变量填的是旧
+ * OAuth App 的名字 zhiyi-ai,查询失败后照样拼出 404 链接,
+ * 而用户看到的仍然只是一个 GitHub 404。
+ *
+ * 现在把来源一并返回:回退值仍然给(总比什么都没有强),但**必须标明
+ * 它未经查证**,并把 GitHub 的原始报错带出来。查证失败最常见的原因是
+ * GITHUB_APP_CLIENT_ID 填成了 OAuth App 的 client id —— 那会得到 401,
+ * 说出来用户三十秒就能改对;不说,他只能一直盯着一个 404 页面。
  *
  * GET /app 用 App JWT 认证,返回里就有 slug。
  * 来源:https://docs.github.com/en/rest/apps/apps
- *
- * 查不到时回退到环境变量里那个(如果填了)—— 网络抖一下不该让
- * 整个连接入口消失;但如果两者都没有,就如实返回 null,
- * 由调用方显示「暂时取不到」,而不是拼一个必然 404 的地址。
  */
-export async function getAppSlug(): Promise<string | null> {
-  if (cachedSlug) return cachedSlug;
+export async function getAppSlug(): Promise<AppSlugResult> {
+  if (cachedSlug) {
+    return { slug: cachedSlug, source: "github", error: null };
+  }
 
   const config = getGitHubAppConfig();
-  if (!config) return null;
+  if (!config) {
+    return { slug: null, source: "none", error: "尚未配置 GitHub App。" };
+  }
 
+  let failure: string;
   try {
     const response = await fetch(`${API}/app`, {
       headers: headers(signAppJwt(config)),
       signal: AbortSignal.timeout(10_000),
     });
+
     if (response.ok) {
       const payload = (await response.json()) as { slug?: string };
       if (payload.slug) {
         cachedSlug = payload.slug;
-        return cachedSlug;
+        return { slug: payload.slug, source: "github", error: null };
       }
+      failure = "GitHub 返回的应用信息里没有 slug。";
+    } else if (response.status === 401) {
+      // 这是最常见的一种配错,直接把话说到位
+      failure =
+        "GitHub 拒绝了应用凭据(401)。最常见的原因是 GITHUB_APP_CLIENT_ID " +
+        "填成了 OAuth App 的 client id,或私钥与这个 App 不匹配 —— " +
+        "请到 GitHub App(不是 OAuth App)的设置页核对 Client ID 与私钥。";
+    } else {
+      failure = `向 GitHub 查询应用信息失败(HTTP ${response.status})${await readError(response)}`;
     }
-    logger.warn(
-      { status: response.status },
-      "向 GitHub 查询 App slug 失败,回退到环境变量",
-    );
-  } catch {
-    logger.warn({}, "向 GitHub 查询 App slug 出错,回退到环境变量");
+  } catch (e) {
+    failure =
+      e instanceof Error && e.name === "TimeoutError"
+        ? "向 GitHub 查询应用信息超时(10 秒)。"
+        : "无法连接 GitHub。";
   }
 
-  return config.slug;
+  logger.warn({ failure }, "查询 App slug 失败");
+
+  // 回退值仍然给,但明确标注未经查证 —— 让界面能把这件事告诉用户
+  return {
+    slug: config.slug,
+    source: config.slug ? "env" : "none",
+    error: failure,
+  };
 }
 
 export interface InstallationInfo {
