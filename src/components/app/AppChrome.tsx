@@ -35,6 +35,9 @@ export interface NavEntry {
 export const APP_NAV: readonly NavEntry[] = [
   { key: "today", label: "今日", icon: "today", href: "/today", available: true },
   { key: "assistant", label: "AI 助手", icon: "assistant", href: "/assistant", available: true },
+  // 智能体单独一条通道,不是 AI 助手里的一个开关。
+  // 两者的执行形态完全不同:一个只说话,一个动工作区。见 /api/agent。
+  { key: "agent", label: "智能体", icon: "bot", href: "/agent", available: true },
   { key: "workspace", label: "工作区", icon: "book", href: "/workspace", available: true },
   { key: "workflow", label: "工作流", icon: "workflow", href: "/workflow", available: false },
   { key: "knowledge", label: "知识库", icon: "knowledge", href: "/knowledge", available: false },

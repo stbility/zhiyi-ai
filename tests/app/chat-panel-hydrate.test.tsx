@@ -63,6 +63,7 @@ describe("助手页水合", () => {
   it("服务端输出能被客户端无错水合 —— 水合失败即白屏", async () => {
     const element = (
       <ChatPanel
+      channel="chat"
         models={MODELS}
         conversations={CONVERSATIONS}
         activeConversationId="c1"
@@ -104,7 +105,9 @@ describe("助手页水合", () => {
     expect(
       container.querySelector('[aria-label="添加文件夹"]'),
     ).toBeTruthy();
-    expect(container.textContent).toContain("智能体");
+    expect(container.textContent).toContain("联网");
+    // 智能体不在这条通道里 —— 它是 /agent,不是这里的一个开关
+    expect(container.textContent).not.toContain("智能体");
 
     consoleError.mockRestore();
     await act(async () => root.unmount());

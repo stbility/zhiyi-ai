@@ -1,0 +1,111 @@
+import "server-only";
+
+import type {
+  ConversationSummary,
+  InitialTurn,
+  ModelOption,
+} from "@/components/app/ChatPanel";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+
+/**
+ * AI 助手页与智能体页共用的读取逻辑。
+ *
+ * 两个页面是两条通道,但「有哪些模型可选」「这条对话说过什么」
+ * 是同一件事。抽出来免得两份查询慢慢长歪 —— 尤其是那两个过滤条件
+ * (模型启用、服务商启用、chat_unavailable_reason 为空),
+ * 少一个就会把用户明确停用的东西又拉回列表里。
+ */
+
+export async function loadModels(
+  organizationId: string,
+): Promise<ModelOption[]> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return [];
+
+  const { data } = await supabase
+    .from("ai_models")
+    .select("model_id, provider_id, ai_providers (display_name, enabled)")
+    .eq("organization_id", organizationId)
+    .eq("enabled", true)
+    // 实际调用过、确认不能对话的模型不再出现在选择列表里
+    .is("chat_unavailable_reason", null)
+    .order("model_id");
+
+  return (data ?? []).flatMap((row) => {
+    const provider = row.ai_providers as unknown as {
+      display_name: string;
+      enabled: boolean;
+    } | null;
+    if (!provider || provider.enabled === false) return [];
+
+    const providerId = row.provider_id as string;
+    const modelId = row.model_id as string;
+    return [
+      {
+        providerId,
+        providerName: provider.display_name,
+        modelId,
+        value: `${providerId}::${modelId}`,
+      },
+    ];
+  });
+}
+
+/**
+ * 某条通道的历史会话。
+ *
+ * 对话和消息一直都在库里,只是页面从不读取 —— 关掉标签页就等于全丢。
+ * 这对「长期使用」是致命的:用户没法接着昨天的思路继续,也无法回看
+ * 模型当时到底说了什么。
+ *
+ * 按 channel 过滤:AI 助手页不该列出智能体跑过的任务,反过来也一样。
+ * 见迁移 0023。
+ */
+export async function loadConversations(
+  organizationId: string,
+  channel: "chat" | "agent",
+): Promise<ConversationSummary[]> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return [];
+
+  // RLS 已限定只能读到自己的对话,这里不必再按 user_id 过滤
+  const { data } = await supabase
+    .from("conversations")
+    .select("id, title, created_at")
+    .eq("organization_id", organizationId)
+    .eq("channel", channel)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    title: (row.title as string | null) ?? "未命名对话",
+    createdAt: row.created_at as string,
+  }));
+}
+
+/** 某个对话的全部消息,用于恢复现场 */
+export async function loadTurns(
+  conversationId: string,
+): Promise<InitialTurn[]> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return [];
+
+  const { data } = await supabase
+    .from("messages")
+    .select(
+      "id, role, content, input_tokens, output_tokens, latency_ms, error_message",
+    )
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true });
+
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    role: row.role as "user" | "assistant",
+    content: (row.content as string | null) ?? "",
+    inputTokens: (row.input_tokens as number | null) ?? null,
+    outputTokens: (row.output_tokens as number | null) ?? null,
+    latencyMs: (row.latency_ms as number | null) ?? null,
+    error: (row.error_message as string | null) ?? null,
+  }));
+}

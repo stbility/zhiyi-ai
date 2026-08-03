@@ -1,23 +1,27 @@
-import { NextResponse, type NextRequest } from "next/server";
-import { z } from "zod";
+import type { NextRequest } from "next/server";
 
 import {
   explainEmptyResponse,
   ProviderCallError,
   streamChat,
-  type ChatMessage,
 } from "@/lib/ai/gateway";
-import { logDbFailure, logger } from "@/lib/log";
-import {
-  loadIntegrationCipher,
-  loadProviderCipher,
-} from "@/lib/ai/credentials";
+import { logger } from "@/lib/log";
 import { createStallWatchdog } from "@/lib/ai/stall-watchdog";
-import type { ProviderKind } from "@/lib/providers/registry";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  errorResponse,
+  insertAssistantMessage,
+  preflightTurn,
+} from "@/lib/ai/turn-preflight";
 
 /**
- * 流式对话接口。
+ * AI 助手的流式对话接口。**只管对话,不碰工作区。**
+ *
+ * 智能体在另一条通道:/api/agent。分开的理由见 lib/ai/turn-preflight.ts ——
+ * 简单说就是 Claude 的分法:claude.ai 是思考伙伴,Claude Code 是工程师,
+ * 两个真正不同的产品,默认能力面完全不同。
+ *
+ * 这条路由此前靠请求体里一个 `agent: true` 分岔到智能体循环,
+ * 于是「改一条弄坏另一条」反复发生。现在分岔点在路由层,不在函数里。
  *
  * 数据流向:客户端 → 本路由 → 模型服务商 → 逐字回传客户端。
  * 密钥全程只在服务端出现,解密后立即用于请求,不写日志、不回传浏览器。
@@ -69,363 +73,22 @@ const TOTAL_BUDGET_MS = 285_000;
  */
 const MAX_MODEL_ATTEMPTS = 3;
 
-const bodySchema = z.object({
-  conversationId: z.string().uuid().optional(),
-  providerId: z.string().uuid("请选择模型服务"),
-  model: z.string().trim().min(1, "请选择模型"),
-  content: z.string().trim().min(1, "请输入内容").max(32_000, "内容过长"),
-  /**
-   * 本轮是否联网检索。
-   *
-   * 由用户显式开启,而不是让模型自己决定 —— 模型判断「要不要搜」并不可靠,
-   * 而每次搜索都消耗配额。显式开关让成本和行为都可预期。
-   */
-  webSearch: z.boolean().optional(),
-  /**
-   * 本轮是否以智能体模式运行。
-   *
-   * 开启后模型可以连续调用文件工具,产物直接写进工作区,
-   * 而不是把代码贴在回答正文里。
-   */
-  agent: z.boolean().optional(),
-  /**
-   * 本轮附带的项目文件。
-   *
-   * 单独成一个字段而不是拼进 content:用户自己打的字要保持可读、可回看,
-   * 附件是另一回事。上限在服务端再校验一次 —— 浏览器侧的限制随时可以绕过。
-   */
-  attachments: z
-    .array(
-      z.object({
-        path: z.string().trim().min(1).max(400),
-        content: z.string().max(400_000),
-      }),
-    )
-    .optional()
-    // 不限文件个数,只约束总量 —— 真实项目动辄上千个文件,
-    // 卡个数只会把源码截断。总量上限来自请求体大小这个物理约束。
-    .refine(
-      (list) =>
-        (list ?? []).reduce((n, a) => n + a.content.length, 0) <= 1_200_000,
-      { message: "附件总量超过上限,请选择更小的目录" },
-    ),
-});
-
-function errorResponse(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status });
-}
-
-/**
- * 落库一条助手消息,失败时留痕。
- *
- * 这几处写入发生在模型调用**之后** —— 钱已经花了,撤不回来,所以不能
- * 像前面那样直接失败。但也绝不能像此前那样静默:RLS 拒绝时什么都没存下,
- * 用户下次进来发现回答不见了,而日志里一个字都没有,根本无从排查。
- * 而且 messages 是用量计费的唯一依据,丢一条就是账目对不上。
- *
- * 返回是否成功,让调用方决定要不要在回复里如实说明。
- */
-async function insertAssistantMessage(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
-  row: Record<string, unknown>,
-): Promise<string | null> {
-  if (!supabase) return null;
-  // 取回落库后的 id。
-  //
-  // 反馈按钮(👍/👎/我改成了这样)要用它:message_feedback.message_id 是
-  // 指向 messages 的外键,而客户端手里只有一个自己造的临时 id
-  // (`a-${Date.now()}`)。不把真实 id 发回去,刚生成的那条回答上
-  // 点任何反馈都会被 Zod 的 uuid 校验挡下 —— 而那恰恰是唯一想打分的时刻。
-  const { data, error } = await supabase
-    .from("messages")
-    .insert(row)
-    .select("id")
-    .single();
-  if (error || !data) {
-    logDbFailure("messages.insert(assistant)", error, {
-      conversationId: row["conversation_id"],
-      organizationId: row["organization_id"],
-      model: row["model_id"],
-    });
-    return null;
-  }
-  return data.id as string;
-}
-
 export async function POST(request: NextRequest) {
-  const supabase = await createSupabaseServerClient();
-  if (!supabase) return errorResponse("认证服务未配置。", 503);
-
+  // 鉴权、限流、服务商与对话归属、附件落库、上下文装配、用户消息留痕 ——
+  // 两条通道一字不差地都要做,所以共用同一个实现。见 lib/ai/turn-preflight.ts。
+  const pre = await preflightTurn(request, "chat");
+  if (!pre.ok) return pre.response;
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return errorResponse("登录状态已失效,请重新登录。", 401);
-
-  const parsed = bodySchema.safeParse(await request.json());
-  if (!parsed.success) {
-    return errorResponse(parsed.error.issues[0]?.message ?? "请求不合法", 400);
-  }
-
-  // 限流。放在最前面 —— 越早拒绝,越少浪费。
-  //
-  // 这是整个系统里唯一会造成直接金钱损失的缺口:此前只校验登录,
-  // 一个循环脚本就能把用户配置的服务商配额刷干,账单落在用户头上。
-  const { checkRateLimit } = await import("@/lib/services/rate-limit");
-  const limit = await checkRateLimit(`chat:${user.id}`);
-  if (!limit.allowed) {
-    return errorResponse(limit.reason ?? "请求过于频繁,请稍后再试。", 429);
-  }
-
-  const { providerId, model, content } = parsed.data;
-
-  // 读取 Provider —— 走用户身份客户端,RLS 保证只能读到自己组织的。
-  // 密文列不在这里取:迁移 0018 之后它对 authenticated 不可读了。
-  const { data: provider } = await supabase
-    .from("ai_providers")
-    .select("id, kind, base_url, organization_id, enabled")
-    .eq("id", providerId)
-    .maybeSingle();
-
-  if (!provider) return errorResponse("未找到该模型服务。", 404);
-  if (provider.enabled === false) {
-    return errorResponse("该模型服务已停用。", 400);
-  }
-
-  // 上面这一行能读到,就说明 RLS 认可此人有权访问这个服务商 ——
-  // 授权判断完成之后,才用 service_role 取密文。顺序不能颠倒:
-  // 反过来先取密文再判断,等于把 RLS 架空。
-  const apiKeyCipher = await loadProviderCipher(providerId);
-  if (!apiKeyCipher) {
-    return errorResponse("无法读取该模型服务的密钥,请重新填写。", 500);
-  }
-
-  const organizationId = provider.organization_id as string;
-
-  // 找到或新建对话
-  let conversationId = parsed.data.conversationId;
-
-  // 客户端传来的对话 id 必须校验归属。
-  //
-  // RLS 只保证「用户能看到自己的对话」,不保证「这个对话和这次用的服务商
-  // 属于同一个组织」。而下面写 messages 时,organization_id 取自 provider、
-  // conversation_id 取自客户端 —— 两者不一致的话,消息会带着 B 组织的
-  // organization_id 落进 A 组织的对话里。
-  // messages 正是「后续做用量计费与权益控制的唯一依据」(迁移 0006 原话),
-  // 归属错了等于计费依据被污染。
-  if (conversationId) {
-    const { data: conv } = await supabase
-      .from("conversations")
-      .select("id, organization_id")
-      .eq("id", conversationId)
-      .maybeSingle();
-
-    if (!conv) return errorResponse("未找到该对话。", 404);
-    if (conv.organization_id !== organizationId) {
-      return errorResponse(
-        "这个对话与所选模型服务不属于同一个组织,已拒绝。",
-        400,
-      );
-    }
-  }
-
-  if (!conversationId) {
-    const { data: created, error } = await supabase
-      .from("conversations")
-      .insert({
-        organization_id: organizationId,
-        user_id: user.id,
-        title: content.slice(0, 40),
-      })
-      .select("id")
-      .single();
-
-    if (error || !created) {
-      return errorResponse("无法创建对话。", 500);
-    }
-    conversationId = created.id as string;
-  }
-
-  // 本轮带来的附件先落到**对话**上,而不是塞进这一条消息。
-  //
-  // 此前附件只作用于发出的那一轮:用户贴了项目目录,第二句问「改一下这个
-  // 函数」,模型已经看不到代码了 —— 那不是智能体,是失忆的聊天框。
-  // 挂在对话上后,每个文件只存一份,而且每一轮都看得到。
-  const incoming = parsed.data.attachments ?? [];
-  if (incoming.length > 0) {
-    const { error: attachError } = await supabase
-      .from("conversation_attachments")
-      .upsert(
-        incoming.map((a) => ({
-          conversation_id: conversationId,
-          organization_id: organizationId,
-          path: a.path,
-          content: a.content,
-          size_chars: a.content.length,
-        })),
-        { onConflict: "conversation_id,path" },
-      );
-
-    // 存不下就别往下走。
-    //
-    // 此前这里不检查错误:RLS 拒绝时静默失败,但模型照常被调用、
-    // 配额照常消耗,而用户以为项目文件已经带上了 —— 得到的却是
-    // 一个没看过代码的回答。宁可当场失败,也不能让人拿到看似正常
-    // 实则缺了上下文的结果。
-    if (attachError) {
-      logDbFailure("conversation_attachments.upsert", attachError, {
-        conversationId,
-        organizationId,
-        count: incoming.length,
-      });
-      return errorResponse(
-        `项目文件未能保存,已中止本次调用(避免让你拿到一个没看过这些文件的回答):${attachError.message}`,
-        500,
-      );
-    }
-  }
-
-  const [{ data: attachmentRows }, { data: history }] = await Promise.all([
-    supabase
-      .from("conversation_attachments")
-      .select("path, content")
-      .eq("conversation_id", conversationId)
-      .order("path"),
-    supabase
-      .from("messages")
-      .select("role, content")
-      .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: true })
-      // 取得比预算需要的多一些,由预算决定实际带多少 ——
-      // 固定取 50 条是没有依据的数字,长对话照样会越来越贵
-      .limit(200),
-  ]);
-
-  // 在预算内装配上下文:先保项目文件(智能体干活的依据),
-  // 剩余额度给历史消息,历史从最近往前装。
-  // 装不下的如实统计,由界面告知用户 —— 静默截断会让模型看到残缺信息,
-  // 给出的建议全是错的,比不带更糟。见 lib/ai/context.ts。
-  // 联网检索。开启时先搜,再把结果连同来源交给模型 ——
-  // 模型本身没有联网能力,平台自带的搜索按钮是平台功能,
-  // 通过 OpenAI 兼容接口调用时拿不到。所以这一步必须我们自己做。
-  //
-  // 搜索失败不中断对话:模型基于既有知识作答并说明没搜到,
-  // 比整轮报错有用。
-  let searchBlock = "";
-  let searchNote: string | null = null;
-  if (parsed.data.webSearch === true) {
-    const { data: integration } = await supabase
-      .from("integrations")
-      .select("id, kind, enabled")
-      .eq("organization_id", organizationId)
-      .eq("kind", "tavily")
-      .maybeSingle();
-
-    if (!integration || integration.enabled === false) {
-      searchNote =
-        "未配置搜索集成,本轮未联网。可在「集成」页添加 Tavily 密钥后开启。";
-    } else {
-      const { tavilySearch, renderSearchContext } = await import(
-        "@/lib/integrations/tavily"
-      );
-      // 同样是先判权(上面那次查询过了 RLS)再取密文
-      const cipher = await loadIntegrationCipher(integration.id as string);
-      const outcome = cipher
-        ? await tavilySearch({ credentialCipher: cipher, query: content })
-        : {
-            ok: false,
-            results: [],
-            error: "无法读取检索服务的密钥,请到「集成」页重新填写。",
-          };
-      if (outcome.ok && outcome.results.length > 0) {
-        searchBlock = renderSearchContext(content, outcome.results);
-        searchNote = `已联网检索 ${outcome.results.length} 条结果,回答中的来源编号对应这些链接。`;
-      } else {
-        searchNote = outcome.ok
-          ? "本轮联网检索没有找到相关结果,以下回答基于模型既有知识。"
-          : `联网检索失败(${outcome.error ?? "未知原因"}),以下回答基于模型既有知识。`;
-      }
-    }
-  }
-
-  const { buildContext, describeTrimming } = await import("@/lib/ai/context");
-  const built = buildContext(
-    (attachmentRows ?? []).map((r) => ({
-      path: r.path as string,
-      content: r.content as string,
-    })),
-    (history ?? []).map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: (m.content as string | null) ?? "",
-    })),
-  );
-  const trimmingNote = describeTrimming(built.stats);
-
-  const messages: ChatMessage[] = [
-    ...built.messages,
-    {
-      role: "user" as const,
-      content: `${built.fileBlock}${searchBlock}${content}`,
-    },
-  ];
-
-  // 先落库用户消息 —— 即便后续模型调用失败,用户说过的话也不该丢。
-  // 存的是用户自己打的字,不含附件正文。
-  const { error: userMsgError } = await supabase.from("messages").insert({
-    conversation_id: conversationId,
-    organization_id: organizationId,
-    role: "user",
-    content,
-  });
-
-  // 用户消息都存不下,说明这次请求的写权限有问题 —— 继续调用模型只会
-  // 让对话记录出现「有回答没有提问」的断裂,而且钱照花。当场失败。
-  if (userMsgError) {
-    logDbFailure("messages.insert(user)", userMsgError, {
-      conversationId,
-      organizationId,
-    });
-    return errorResponse(
-      `消息未能保存,已中止本次调用:${userMsgError.message}`,
-      500,
-    );
-  }
-
-  // --- 智能体模式 -----------------------------------------------------------
-  //
-  // 与普通问答的根本区别:模型能连续调用工具改变工作区,而不只是输出文本。
-  // 这是「智能体」和「聊天助手」的分界线。
-  if (parsed.data.agent === true) {
-    // 挡在入口,而不是等跑到第一步再失败。
-    //
-    // callWithTools 里已经有这道判断,但那时智能体循环已经启动、
-    // 用户已经在等一个「正在思考」的界面 —— 一个必然失败的任务不该被开始。
-    // 更要紧的是:能力边界要说清楚是能力边界,不能让用户以为是配置错了。
-    const { supportsToolCalling } = await import("@/lib/ai/gateway");
-    const providerKind = provider.kind as ProviderKind;
-    if (!supportsToolCalling(providerKind)) {
-      return errorResponse(
-        `该服务商用的是 ${providerKind} 协议,本项目尚未为它实现工具调用适配,` +
-          `所以智能体模式暂时用不了 —— 这不是你的配置有问题。` +
-          `请改用 OpenAI 兼容接口的服务商,或关掉「智能体」按普通对话使用。`,
-        400,
-      );
-    }
-
-    const { runAgentTurn } = await import("@/lib/ai/agent-turn");
-    return runAgentTurn({
-      supabase,
-      userId: user.id,
-      organizationId,
-      conversationId,
-      providerId,
-      model,
-      // 凭据不再由这里传入:智能体的候选跨服务商,每个候选要用它自己那家的
-      // 密钥,所以由 agent-turn 按候选逐个取。见 lib/ai/candidates.ts。
-      userMessage: `${built.fileBlock}${searchBlock}${content}`,
-      history: built.messages,
-      signal: request.signal,
-    });
-  }
+    supabase,
+    organizationId,
+    conversationId,
+    providerId,
+    model,
+    messages,
+    searchNote,
+    trimmingNote,
+    filesIncluded,
+  } = pre.ctx;
 
   const startedAt = Date.now();
 
@@ -620,7 +283,7 @@ export async function POST(request: NextRequest) {
   const convId = conversationId;
   const trimming = trimmingNote;
   const search = searchNote;
-  const fileCount = built.stats.filesIncluded;
+  const fileCount = filesIncluded;
 
   const body = new ReadableStream<Uint8Array>({
     async start(streamController) {

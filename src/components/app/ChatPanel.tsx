@@ -245,11 +245,27 @@ function toTurn(t: InitialTurn): Turn {
  * 历史对话从数据库恢复:关掉页面再回来,能接着上次继续,也能回看模型当时说了什么。
  */
 export function ChatPanel({
+  channel,
   models,
   conversations,
   activeConversationId,
   initialTurns,
 }: {
+  /**
+   * 这个面板挂在哪条通道上。
+   *
+   * chat  —— AI 助手:单次流式生成,不碰工作区
+   * agent —— 智能体:多步工具循环,产物写进工作区
+   *
+   * 此前这不是一个通道,是输入框里一个开关,状态还存在 localStorage 里。
+   * 于是用户看不见自己处在哪种模式,每一句话都在悄悄走智能体;
+   * 而服务端两条线共用一个端点,改一条弄坏另一条反复发生。
+   *
+   * 现在按 Claude 的分法拆开:两个页面、两个端点、两套限流。
+   * 组件仍然共用,因为「渲染一段对话」这件事两边确实是同一件事 ——
+   * 分开的是执行形态,不是消息列表长什么样。
+   */
+  channel: "chat" | "agent";
   models: readonly ModelOption[];
   conversations: readonly ConversationSummary[];
   activeConversationId: string | null;
@@ -276,13 +292,6 @@ export function ChatPanel({
    * 而每次搜索都消耗配额。显式开关让成本和行为都可预期。
    */
   const [webSearch, setWebSearch] = usePersistentToggle("zhiyi-web-search");
-  /**
-   * 智能体模式。
-   *
-   * 开启后模型可以连续调用文件工具,产物直接写进工作区 ——
-   * 而不是把代码贴在回答正文里等人复制。这是「智能体」与「聊天助手」的分界。
-   */
-  const [agentMode, setAgentMode] = usePersistentToggle("zhiyi-agent-mode");
   /**
    * 本轮已等待的秒数,客户端本地计时。
    *
@@ -381,7 +390,11 @@ export function ChatPanel({
     };
 
     try {
-      const response = await fetch("/api/chat", {
+      // 通道决定端点。不再由请求体里一个布尔字段分岔 ——
+      // 那种写法让「这次到底走的哪条线」只能靠读代码才知道。
+      const response = await fetch(
+        channel === "agent" ? "/api/agent" : "/api/chat",
+        {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -391,7 +404,6 @@ export function ChatPanel({
           content,
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(webSearch ? { webSearch: true } : {}),
-          ...(agentMode ? { agent: true } : {}),
         }),
         signal: controller.signal,
       });
@@ -913,15 +925,6 @@ export function ChatPanel({
             >
               <Icon name="search" size={13} />
               联网
-            </Tag>
-
-            <Tag
-              active={agentMode}
-              onClick={() => setAgentMode((v) => !v)}
-              className="gap-1.5"
-            >
-              <Icon name="bot" size={13} />
-              智能体
             </Tag>
 
             <div className="flex-1" />
