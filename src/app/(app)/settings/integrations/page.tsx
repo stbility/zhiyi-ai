@@ -6,6 +6,7 @@ import {
   type IntegrationRow,
 } from "@/components/app/IntegrationManager";
 import { GitConnection } from "@/components/app/GitConnection";
+import { McpTokens, type McpTokenRow } from "@/components/app/McpTokens";
 import { isEncryptionAvailable } from "@/lib/crypto/secret-box";
 import {
   getAppSlug,
@@ -13,6 +14,7 @@ import {
   installUrl,
   issueState,
 } from "@/lib/integrations/github";
+import { getSiteUrl } from "@/lib/env/server";
 import { getMyOrganizations } from "@/lib/db/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -20,6 +22,33 @@ export const metadata: Metadata = { title: "集成 · 智一 AI" };
 export const dynamic = "force-dynamic";
 // 「测试连接」会真调一次外部接口,比普通页面动作耗时
 export const maxDuration = 60;
+
+/**
+ * 这个组织签发过的 MCP 令牌。
+ *
+ * 只取前缀,不取哈希 —— 迁移 0022 已经把 token_hash 从 authenticated
+ * 的列白名单里去掉了,这里就算写上也读不到。列出来是为了让成员看得见
+ * 「谁在通过 MCP 访问工作区」;撤销过的也留着,那是审计痕迹。
+ */
+async function loadMcpTokens(organizationId: string): Promise<McpTokenRow[]> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return [];
+
+  const { data } = await supabase
+    .from("mcp_access_tokens")
+    .select("id, name, token_prefix, created_at, last_used_at, revoked_at")
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false });
+
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    name: row.name as string,
+    tokenPrefix: row.token_prefix as string,
+    createdAt: row.created_at as string,
+    lastUsedAt: (row.last_used_at as string | null) ?? null,
+    revokedAt: (row.revoked_at as string | null) ?? null,
+  }));
+}
 
 async function loadIntegrations(
   organizationId: string,
@@ -115,6 +144,7 @@ export default async function IntegrationsPage({
     ? installUrl(slugResult.slug, issueState(org.id))
     : null;
   const params = await searchParams;
+  const mcpTokens = await loadMcpTokens(org.id);
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 md:px-8 md:py-10">
@@ -136,6 +166,13 @@ export default async function IntegrationsPage({
           ...(params.githubOk ? { ok: true } : {}),
           ...(params.githubError ? { error: params.githubError } : {}),
         }}
+      />
+
+      <McpTokens
+        organizationId={org.id}
+        tokens={mcpTokens}
+        canManage={canManage}
+        endpoint={`${getSiteUrl()}/api/mcp`}
       />
 
       <IntegrationManager
