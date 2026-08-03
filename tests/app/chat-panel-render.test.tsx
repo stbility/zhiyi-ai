@@ -79,11 +79,18 @@ describe("助手页渲染", () => {
     // 左侧对话列表
     expect(screen.getByText("第一次对话")).toBeTruthy();
     expect(screen.getByText("新对话")).toBeTruthy();
-    // 左下控件
-    // 控件是纯图标的,可发现性靠 aria-label 与 title
+    // 输入框下方的控件。
+    //
+    // 「联网」「智能体」是**模式**,用设计系统的 Tag(active 时填品牌色、
+    // 可点击时渲染成真 button)。它们有可见文字,所以无障碍名就是文字本身 ——
+    // 比此前那版纯图标 + aria-label 更好:看得见的标签和读屏念出来的
+    // 是同一个东西,不会对不上。
+    //
+    // 「添加文件夹」是一次性动作不是模式,仍用 IconButton + aria-label;
+    // 「发送」同理。
     expect(screen.getByLabelText("添加文件夹")).toBeTruthy();
-    expect(screen.getByLabelText("联网检索")).toBeTruthy();
-    expect(screen.getByLabelText("智能体")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "联网" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "智能体" })).toBeTruthy();
     expect(screen.getByLabelText("发送")).toBeTruthy();
   });
 

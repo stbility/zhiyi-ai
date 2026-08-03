@@ -12,11 +12,13 @@ import {
   type ReactNode,
 } from "react";
 
-import { Icon, type IconName } from "@/components/icons/Icon";
+import { Icon } from "@/components/icons/Icon";
 import { MessageFeedback } from "@/components/app/MessageFeedback";
+import { Badge } from "@/components/primitives/Badge";
 import { Button, buttonClasses } from "@/components/primitives/Button";
 import { IconButton } from "@/components/primitives/IconButton";
 import { Select } from "@/components/primitives/Select";
+import { Tag } from "@/components/primitives/Tag";
 import {
   collectFolderAttachments,
   describeSkipped,
@@ -219,50 +221,6 @@ function linkify(text: string): ReactNode[] {
 
   if (last < text.length) out.push(text.slice(last));
   return out;
-}
-
-/**
- * 输入框下方的图标开关。
- *
- * 只有图标,没有文字。开启状态用品牌色边框与填色表达 ——
- * 此前用「联网已开启」这样的变长文案,一开一关整行控件宽度就跳一次,
- * 而且四个文字标签横排占掉半个输入框的宽度。
- *
- * 无文字不等于无标签:aria-label 给读屏,title 给鼠标悬停,
- * 两者都不能省 —— 图标本身不构成可访问名称。
- */
-function IconToggle({
-  label,
-  hint,
-  icon,
-  active = false,
-  onClick,
-}: {
-  label: string;
-  hint: string;
-  icon: IconName;
-  active?: boolean | undefined;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      aria-pressed={active}
-      title={`${label} —— ${hint}`}
-      className={cn(
-        "rounded-control flex size-8 shrink-0 cursor-pointer items-center justify-center border",
-        "transition-colors duration-[var(--duration-hover)] ease-standard",
-        "focus-visible:outline-border-focus focus-visible:outline-2 focus-visible:outline-offset-2",
-        active
-          ? "border-brand bg-brand-tint text-brand"
-          : "border-border-default bg-surface-3 text-fg-secondary hover:bg-surface-4",
-      )}
-    >
-      <Icon name={icon} size={15} />
-    </button>
-  );
 }
 
 function toTurn(t: InitialTurn): Turn {
@@ -891,81 +849,10 @@ export function ChatPanel({
           )}
         </div>
 
-        {/* ── 模块一:模型配置 ──────────────────────────────
-            从输入区的图标行里独立出来。
-            混在「添加文件夹 / 联网 / 智能体 / 发送」那一排里时,
-            「用哪个模型」这个决定和几个一次性开关同等重量,而它其实是
-            **本次对话的前提**,不是一个顺手拨一下的东西。 */}
-        <div className="border-divider flex shrink-0 flex-wrap items-center gap-2 border-t px-3.5 py-2">
-          <span className="text-fg-tertiary text-label shrink-0">模型</span>
-          <Select
-            value={selected}
-            onChange={setSelected}
-            options={models.map((m) => ({
-              value: m.value,
-              label: `${m.providerName} · ${m.modelId}`,
-            }))}
-            className="text-caption min-h-8 min-w-0 max-w-full flex-1 px-2.5 py-0"
-          />
-          {/* 只有一家服务商时,降级链无处可换 —— 这是排队时「换个模型
-              重试」失效的真实原因,但它在界面上此前完全不可见:
-              用户只会看到一次次超时,不知道系统其实无路可走。 */}
-          {providerCount === 1 && (
-            <Link
-              href="/settings/models"
-              className="text-warning hover:text-fg text-label flex items-center gap-1 whitespace-nowrap"
-              title="当前只连了一家服务商。它排队或容量不足时,系统没有别家可以自动切换,只能等待或失败。"
-            >
-              <Icon name="alert" size={12} className="shrink-0" />
-              仅一家服务商,无法自动切换
-            </Link>
-          )}
-        </div>
-
         <form
           onSubmit={send}
           className="border-divider flex shrink-0 flex-col gap-2 border-t p-3.5"
         >
-          {/* 当前模式必须一眼可见。
-              上一版把这条状态带整个删了 —— 当时的理由是它在讲实现机制
-              (「先检索再作答」「代码写入工作区」),那部分确实该删。
-              但连**状态本身**一起删掉是过头了:开关只剩一个带色边框的
-              小图标,而这两个开关是记在 localStorage 里的**模式**,
-              开了就一直有效。用户完全可能在不知情的状态下,每一条消息
-              都走智能体路径(每步一次完整调用,慢得多),
-              然后判断为「AI 助手坏了」。
-              所以状态留下,机制不留。 */}
-          {(agentMode || webSearch) && (
-            <div className="border-brand bg-brand-tint rounded-control flex flex-wrap items-center gap-x-3 gap-y-1 border px-3 py-1.5">
-              {agentMode && (
-                <span className="text-brand text-label flex items-center gap-1.5">
-                  <Icon name="bot" size={13} className="shrink-0" />
-                  智能体模式
-                  <button
-                    type="button"
-                    onClick={() => setAgentMode(false)}
-                    className="hover:text-brand-hover cursor-pointer underline"
-                  >
-                    关闭
-                  </button>
-                </span>
-              )}
-              {webSearch && (
-                <span className="text-brand text-label flex items-center gap-1.5">
-                  <Icon name="search" size={13} className="shrink-0" />
-                  联网
-                  <button
-                    type="button"
-                    onClick={() => setWebSearch(false)}
-                    className="hover:text-brand-hover cursor-pointer underline"
-                  >
-                    关闭
-                  </button>
-                </span>
-              )}
-            </div>
-          )}
-
           {/* 只说结论,不说规则。
               取用规则那一长段搬到按钮的 title 里 —— 需要时悬停可见,
               不必每次都占掉输入区两行。 */}
@@ -1011,15 +898,26 @@ export function ChatPanel({
             className="bg-surface-2 border-border-default rounded-control text-fg placeholder:text-fg-tertiary focus:border-border-focus w-full resize-none border px-3 py-2.25 text-[14px] outline-none transition-colors duration-[var(--duration-hover)] ease-standard"
           />
 
-          {/* 一行里只有「发送」是主操作。
-              此前「联网已开启」也用 primary,两个同等强调的按钮并排,
-              用户一眼分不出哪个才是提交。开启状态改用边框与图标表达,
-              不靠提升按钮层级。
+          {/* 控件全部用设计系统的原生组件,不自己拼装。
 
-              尺寸统一用设计系统的 sm(min-h-8 / text-caption):md 的
-              min-h-10 放在输入框下面这一排太重,四个控件横过去很压视线。
-              这里是辅助操作区,不该和正文抢注意力。 */}
+              Tag 本来就是「可点击的状态标签」:active 时填品牌色,
+              可点击时渲染成真正的 button(键盘可达)。模式开关正是这个语义 ——
+              此前我另写了一个 IconToggle,既重复了 Tag 的职责,
+              开启态又只有一圈细边框,弱到用户分不清开没开。
+
+              开着还是关着,看填色就知道;要关掉,再点一下同一个东西 ——
+              不必另设一个「关闭」按钮,也不必在上方再挂一条状态带。 */}
           <div className="flex flex-wrap items-center gap-1.5">
+            <Select
+              value={selected}
+              onChange={setSelected}
+              options={models.map((m) => ({
+                value: m.value,
+                label: `${m.providerName} · ${m.modelId}`,
+              }))}
+              className="text-caption min-h-8 min-w-0 max-w-[15rem] px-2.5 py-0"
+            />
+
             <input
               ref={folderInputRef}
               type="file"
@@ -1032,33 +930,44 @@ export function ChatPanel({
               tabIndex={-1}
             />
 
-            {/* 纯图标形态。
-                文字标签在这一行是纯干扰 —— 四个控件横排占掉半个输入框宽度,
-                而这些都是低频的开关,不值得一直占着视线。
-                状态由上方提示条负责说清楚,这里只保留图标 + 开启态的边框。
-                每个都有 aria-label 与 title,可访问性与可发现性不受影响。 */}
-            <IconToggle
-              label="添加文件夹"
-              hint={FOLDER_HINT}
-              icon="folder"
+            {/* 添加文件夹是一次性**动作**,不是模式 —— 用 IconButton,
+                不能混进下面那两个 Tag 里,否则「点了会一直生效吗」说不清 */}
+            <IconButton
+              aria-label="添加文件夹"
+              title={FOLDER_HINT}
               onClick={() => folderInputRef.current?.click()}
-            />
-            <IconToggle
-              label="联网检索"
-              hint="开启后本轮会先联网检索,再让模型基于检索到的材料作答并标注来源"
-              icon="search"
+              size={32}
+            >
+              <Icon name="folder" size={15} />
+            </IconButton>
+
+            <Tag
               active={webSearch}
               onClick={() => setWebSearch((v) => !v)}
-            />
-            <IconToggle
-              label="智能体"
-              hint="开启后模型可以连续调用文件工具,产物直接写入工作区。受平台单次请求时限约束,一次最多 3 步 —— 适合能一次说清的任务,不适合从零生成整个项目"
-              icon="bot"
+              className="gap-1.5"
+            >
+              <Icon name="search" size={13} />
+              联网
+            </Tag>
+
+            <Tag
               active={agentMode}
               onClick={() => setAgentMode((v) => !v)}
-            />
+              className="gap-1.5"
+            >
+              <Icon name="bot" size={13} />
+              智能体
+            </Tag>
 
             <div className="flex-1" />
+
+            {/* 只连了一家服务商时,排队就无路可走。用 Badge —— 它是设计系统里
+                表达状态的那个组件,不是我再画一个带图标的链接 */}
+            {providerCount === 1 && (
+              <Link href="/settings/models" title="只连了一家服务商。它排队或容量不足时,系统没有别家可以自动切换。">
+                <Badge tone="warning">仅一家服务商</Badge>
+              </Link>
+            )}
 
             <Button
               type="submit"
