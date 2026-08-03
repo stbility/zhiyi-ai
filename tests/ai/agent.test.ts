@@ -193,7 +193,13 @@ describe("智能体循环", () => {
       signal: new AbortController().signal,
     });
 
-    expect(r.haltReason).toContain("不支持工具调用");
+    // 只陈述事实:没有输出,以及上游给的结束原因。
+    // 此前这里断言的是「不支持工具调用」——那是**猜测**,而真实原因
+    // 往往是第三种(上一次就是我们自己把请求发成了非流式)。
+    // 把猜测写进诊断,用户会照着去改一个没坏的地方。
+    expect(r.haltReason).toContain("没有输出任何内容");
+    expect(r.haltReason).toContain("stop");
+    expect(r.haltReason).not.toContain("可能是");
     vi.unstubAllGlobals();
   });
 

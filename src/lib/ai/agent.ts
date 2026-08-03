@@ -330,10 +330,19 @@ export async function runAgent({
     if (turn.toolCalls.length === 0) {
       answer = turn.text;
       if (turn.text.trim() === "") {
-        // 既不调工具也不说话 —— 这是异常,如实说明而不是给个空气泡
-        haltReason =
-          "模型既没有调用工具也没有给出回答。可能是该模型不支持工具调用," +
-          "或本轮被内容策略拦截。可换一个模型重试。";
+        // 既不调工具也不说话。
+        //
+        // 只陈述事实,不猜原因。此前这里写「可能是该模型不支持工具调用,
+        // 或本轮被内容策略拦截」—— 两条都是推测,而真实原因往往是第三种
+        // (上一次就是我们自己把请求发成了非流式,解析器却在读 SSE)。
+        // 把猜测写成诊断,用户会照着去改一个没坏的地方。
+        //
+        // finish_reason 是上游给的**权威信号**(Claude 的智能体文档原话:
+        // stop_reason「is the authoritative signal for what happens next」),
+        // 有就照实说,没有就说没有。
+        haltReason = turn.finishReason
+          ? `模型本轮没有输出任何内容,上游给出的结束原因是 ${turn.finishReason}。`
+          : "模型本轮没有输出任何内容,上游也没有给出结束原因。";
       }
       steps.push({ index, text: turn.text, tools: [] });
       reporter?.onStep?.({ index, text: turn.text, tools: [] });
@@ -442,9 +451,9 @@ export function summarizeRun(outcome: AgentOutcome): string {
   }
   if (outcome.answer.trim() !== "") parts.push(outcome.answer.trim());
   if (outcome.usedModels.length > 0) {
-    parts.push(
-      `运行中主模型不可用,已自动改用:${outcome.usedModels.join("、")}。`,
-    );
+    // 只说换过哪些 —— 「主模型不可用」是判决,而我们并不知道它是
+    // 真不可用、还是我们自己这一侧出了问题。换过就说换过,由用户去判断。
+    parts.push(`本次运行改用过:${outcome.usedModels.join("、")}。`);
   }
   if (outcome.haltReason) parts.push(outcome.haltReason);
 

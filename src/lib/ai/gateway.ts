@@ -945,7 +945,16 @@ export async function callWithTools({
         messages,
         tools,
         tool_choice: "auto",
-        stream: false,
+        // 流式。工具调用的参数分片到达,按 index 累积 —— 见 assembleToolStream。
+        //
+        // 这一行曾经是非流式,而解析器已经改成读 SSE 了:
+        // 请求回来的是单个 JSON,解析器一行 `data:` 都找不到,于是返回
+        // 空文本 + 零工具调用,智能体报「模型既没有调用工具也没有给出回答」。
+        // 而测试夹具当时已经是 SSE —— 测试全绿,生产全坏。
+        // 协议的两端必须一起改,这是同一个决定的两半。
+        stream: true,
+        // 用量在流的最后一帧给出,不请求的话拿不到
+        stream_options: { include_usage: true },
       }),
       signal: combined,
     });
@@ -1016,9 +1025,12 @@ async function assembleToolStream(
   let finishReason: string | null = null;
   const usage: ChatUsage = { inputTokens: null, outputTokens: null };
   const calls = new Map<number, { id: string; name: string; args: string }>();
+  /** 认出过几帧 SSE。一帧都没有 = 对面根本不是流,协议对不上 */
+  let frames = 0;
 
   for await (const line of readSseLines(body)) {
     if (!line.startsWith("data:")) continue;
+    frames += 1;
     const data = line.slice(5).trim();
     if (data === "[DONE]") break;
 
@@ -1083,6 +1095,19 @@ async function assembleToolStream(
       if (c.function?.arguments) acc.args += c.function.arguments;
       calls.set(i, acc);
     }
+  }
+
+  // 一帧 SSE 都没认出来 —— 对面回的不是流。
+  //
+  // 绝不能当作「模型什么都没说」返回空:那正是这个 bug 之前的形态 ——
+  // 请求写成了 stream: false,上游回单个 JSON,解析器一行 data: 都找不到,
+  // 于是静默返回空文本 + 零工具调用,智能体报「模型既没有调用工具也没有
+  // 给出回答」,而问题在我们这一侧。宁可明确失败,不可静默返回空。
+  if (frames === 0) {
+    throw new ProviderCallError(
+      "上游没有按流式协议返回内容 —— 这是接口协议不匹配,不是模型没有输出。",
+      502,
+    );
   }
 
   const toolCalls = [...calls.entries()]
