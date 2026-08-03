@@ -14,7 +14,6 @@ import {
 
 import { Icon } from "@/components/icons/Icon";
 import { MessageFeedback } from "@/components/app/MessageFeedback";
-import { Badge } from "@/components/primitives/Badge";
 import { Button, buttonClasses } from "@/components/primitives/Button";
 import { IconButton } from "@/components/primitives/IconButton";
 import { Select } from "@/components/primitives/Select";
@@ -323,15 +322,6 @@ export function ChatPanel({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   /** 桌面端历史栏是否展开。收起后输出区能多出 224px 宽度 */
   const [historyOpen, setHistoryOpen] = useState(true);
-
-  /**
-   * 连了几家服务商。
-   *
-   * 降级链只有跨**服务商**才真正起作用 —— 同一家的模型共用一个算力池,
-   * 那家堵的时候换它自己的另一个模型等于没换。只有一家时必须明说,
-   * 否则用户只会看到一次次超时,不知道系统其实无路可走。
-   */
-  const providerCount = new Set(models.map((m) => m.providerId)).size;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -992,14 +982,6 @@ export function ChatPanel({
             </Tag>
 
             <div className="flex-1" />
-
-            {/* 只连了一家服务商时,排队就无路可走。用 Badge —— 它是设计系统里
-                表达状态的那个组件,不是我再画一个带图标的链接 */}
-            {providerCount === 1 && (
-              <Link href="/settings/models" title="只连了一家服务商。它排队或容量不足时,系统没有别家可以自动切换。">
-                <Badge tone="warning">仅一家服务商</Badge>
-              </Link>
-            )}
 
             <Button
               type="submit"
