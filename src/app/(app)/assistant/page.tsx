@@ -74,17 +74,6 @@ async function loadConversations(
   }));
 }
 
-/** 本对话关联的项目文件数 —— 附件跨轮保留,进页面就要能看到 */
-async function countAttachments(conversationId: string): Promise<number> {
-  const supabase = await createSupabaseServerClient();
-  if (!supabase) return 0;
-  const { count } = await supabase
-    .from("conversation_attachments")
-    .select("id", { count: "exact", head: true })
-    .eq("conversation_id", conversationId);
-  return count ?? 0;
-}
-
 /** 某个对话的全部消息,用于恢复现场 */
 async function loadTurns(conversationId: string): Promise<InitialTurn[]> {
   const supabase = await createSupabaseServerClient();
@@ -146,9 +135,7 @@ export default async function AssistantPage({
       : (conversations.find((c) => c.id === requested) ??
         conversations[0] ??
         null);
-  const [initialTurns, initialFileCount] = active
-    ? await Promise.all([loadTurns(active.id), countAttachments(active.id)])
-    : [[], 0];
+  const initialTurns = active ? await loadTurns(active.id) : [];
 
   return (
     // 对话页占满整屏:页面本身不滚动,只有消息区滚动。
@@ -163,7 +150,6 @@ export default async function AssistantPage({
         conversations={conversations}
         activeConversationId={active?.id ?? null}
         initialTurns={initialTurns}
-        initialFileCount={initialFileCount}
       />
     </div>
   );

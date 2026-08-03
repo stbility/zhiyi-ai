@@ -160,7 +160,11 @@ describe("换服务商的说明", () => {
     // 悄悄换等于伪造来源:用户必须知道这次回答其实是别家跑的
     expect(text).toContain("nvidia");
     expect(text).toContain("deepseek");
-    expect(text).toContain("排队已满");
+    // 但**不复述上游原话**:它可能很长,而且对用户没有可操作性。
+    // 更要紧的是不下「谁不可用」的判决 —— 上游 529、我们自己协议写错、
+    // 网络抖动,表现是一样的,我们经常不知道真实原因。
+    expect(text).not.toContain("排队已满");
+    expect(text).not.toContain("不可用");
   });
 });
 

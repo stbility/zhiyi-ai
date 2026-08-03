@@ -181,15 +181,22 @@ export function createCredentialLoader(): (
   };
 }
 
-/** 换服务商时给用户看的说明。悄悄换等于伪造来源,必须说 */
+/**
+ * 换模型时给用户看的说明。
+ *
+ * 必须说 —— 悄悄换等于拿另一个模型的输出冒充他选的那个。
+ * 但只说**换过什么**,不说「谁不可用」:那是判决,而我们经常不知道
+ * 真实原因(上游 529、我们自己协议写错、网络抖动,表现是一样的)。
+ * 上游原话也不复述 —— 它可能很长,而且对用户没有可操作性。
+ */
 export function describeSwitch(
   from: ModelCandidate | { providerName: string; modelId: string },
   to: ModelCandidate,
-  reason: string,
+  _reason: string,
 ): string {
   const sameProvider = from.providerName === to.providerName;
   return sameProvider
-    ? `「${from.modelId}」当前不可用(${reason}),已自动改用同一服务商的「${to.modelId}」完成本次回复。`
-    : `「${from.providerName} · ${from.modelId}」当前不可用(${reason}),` +
-        `已自动改用「${to.providerName} · ${to.modelId}」完成本次回复。`;
+    ? `本次回复改用了「${to.modelId}」(你选的是「${from.modelId}」)。`
+    : `本次回复改用了「${to.providerName} · ${to.modelId}」` +
+        `(你选的是「${from.providerName} · ${from.modelId}」)。`;
 }

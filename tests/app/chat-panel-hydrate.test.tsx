@@ -67,7 +67,6 @@ describe("助手页水合", () => {
         conversations={CONVERSATIONS}
         activeConversationId="c1"
         initialTurns={TURNS}
-        initialFileCount={0}
       />
     );
 

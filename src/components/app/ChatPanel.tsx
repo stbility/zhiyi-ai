@@ -249,14 +249,11 @@ export function ChatPanel({
   conversations,
   activeConversationId,
   initialTurns,
-  initialFileCount,
 }: {
   models: readonly ModelOption[];
   conversations: readonly ConversationSummary[];
   activeConversationId: string | null;
   initialTurns: readonly InitialTurn[];
-  /** 本对话已关联的项目文件数 */
-  initialFileCount: number;
 }) {
   const router = useRouter();
   const [, deleteAction] = useActionState<AssistantActionState, FormData>(
@@ -272,8 +269,6 @@ export function ChatPanel({
   );
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachNote, setAttachNote] = useState<string | null>(null);
-  /** 本对话当前关联的项目文件数 —— 附件跨轮保留,不再只作用于一条消息 */
-  const [contextFiles, setContextFiles] = useState(initialFileCount);
   /**
    * 本轮是否联网。
    *
@@ -475,12 +470,8 @@ export function ChatPanel({
           if (event === "meta" && "conversationId" in payload) {
             setConversationId(payload.conversationId);
             if (payload.fallback) patchAssistant({ fallback: payload.fallback });
-            // 上下文被裁剪时如实告知 —— 不说的话,用户只会觉得模型「忘了」
-            if (payload.trimming) patchAssistant({ trimming: payload.trimming });
-            // 联网与否必须如实显示 —— 否则用户无从判断这个回答是基于
-            // 实时资料还是模型的旧知识
-            if (payload.search) patchAssistant({ search: payload.search });
-            if (typeof payload.files === "number") setContextFiles(payload.files);
+
+
           } else if (event === "delta" && "text" in payload) {
             text += payload.text;
             patchAssistant({ content: text });
@@ -797,24 +788,18 @@ export function ChatPanel({
                       <span className="text-fg-tertiary">
                         {turn.reasoning ? "正在思考" : "正在生成"}
                         {waitedMs >= 1000 && ` · 已等待 ${Math.round(waitedMs / 1000)} 秒`}
-                        {/* 超过半分钟还没出字,就该说清楚为什么 ——
-                            干等而不知道原因,和坏了没有区别 */}
-                        {waitedMs >= 30_000 && !turn.reasoning && (
-                          <span className="text-fg-tertiary block">
-                            推理模型会先思考很久才出第一个字;开了联网还要先检索。
-                            想更快可以换 deepseek-v4-flash 这类非推理模型,或关掉联网。
-                          </span>
-                        )}
+                        {/* 这里曾挂过一段「推理模型会先思考很久……想更快可以
+                            换 X 或关掉联网」的建议。删掉了:界面不是替用户
+                            出主意的地方,而且那段话是我的推断,不是事实。
+                            秒数在动本身已经说明它在跑。 */}
                       </span>
                     )}
                 </div>
 
-                {turn.fallback && (
-                  <p className="text-fg-secondary text-label">
-                    {turn.fallback}
-                  </p>
-                )}
-
+                {/* 这里曾显示「本次回复改用了 X」这类系统说明。
+                    不再显示 —— 用户明确要求界面上不要出现我生成的说明性文字。
+                    事实仍然完整留痕:messages.model_id 记的是**实际用上的**
+                    那个模型,查得到,只是不再往回答旁边贴一句解释。 */}
                 {turn.error && (
                   <p className="text-error text-label">{turn.error}</p>
                 )}
@@ -880,12 +865,6 @@ export function ChatPanel({
           {/* 只说结论,不说规则。
               取用规则那一长段搬到按钮的 title 里 —— 需要时悬停可见,
               不必每次都占掉输入区两行。 */}
-          {!attachNote && contextFiles > 0 && (
-            <p className="text-fg-secondary text-label">
-              已关联 {contextFiles} 个项目文件
-            </p>
-          )}
-
           {attachNote && (
             <div className="border-border-default bg-surface-2 rounded-control flex flex-wrap items-center gap-2 px-3 py-2">
               <span className="text-fg-secondary text-label">{attachNote}</span>
