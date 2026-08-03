@@ -95,13 +95,19 @@ export function GitConnection({
           )}
         </div>
       ) : canManage ? (
-        <a
-          href={installHref ?? "#"}
-          className={buttonClasses({ size: "sm" })}
-        >
-          <Icon name="link" size={14} />
-          连接 GitHub
-        </a>
+        installHref ? (
+          <a href={installHref} className={buttonClasses({ size: "sm" })}>
+            <Icon name="link" size={14} />
+            连接 GitHub
+          </a>
+        ) : (
+          // 拼不出安装地址时不给可点的按钮。
+          // 此前这里是 href={installHref ?? "#"} —— 取不到地址仍然渲染一个
+          // 看起来能点的按钮,点下去要么原地不动,要么跳到 404。
+          <p className="text-fg-tertiary text-caption">
+            暂时取不到应用的安装地址(向 GitHub 查询失败),请稍后重试。
+          </p>
+        )
       ) : (
         <p className="text-fg-tertiary text-caption">
           需要组织管理员才能连接仓库。

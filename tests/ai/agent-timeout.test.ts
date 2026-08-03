@@ -47,6 +47,20 @@ function hangingFetch() {
   );
 }
 
+/** 把「一个服务商 + 一个模型」包成候选,凭据跟着候选走 */
+function candidate(cipher: string, modelId: string, providerName = "测试服务商", providerId = "p1") {
+  return {
+    providerId,
+    providerName,
+    modelId,
+    credentials: {
+      kind: "openai_compatible" as const,
+      baseUrl: "https://api.example.com/v1",
+      apiKeyCipher: cipher,
+    },
+  };
+}
+
 describe("智能体单步超时", () => {
   it("上游一直不返回时,按 timeoutMs 中止,而不是无限挂着", async () => {
     const { gateway, cipher } = await load();
@@ -56,7 +70,7 @@ describe("智能体单步超时", () => {
     await expect(
       gateway.callWithTools({
         credentials: creds(cipher),
-        model: "slow-model",
+      model: "slow-model",
         messages: [{ role: "user", content: "写个文件" }],
         tools: [],
         signal: new AbortController().signal,
@@ -76,7 +90,7 @@ describe("智能体单步超时", () => {
     const err = await gateway
       .callWithTools({
         credentials: creds(cipher),
-        model: "slow-model",
+      model: "slow-model",
         messages: [],
         tools: [],
         signal: new AbortController().signal,
@@ -186,9 +200,7 @@ describe("智能体单步超时", () => {
     );
 
     const r = await agent.runAgent({
-      credentials: creds(cipher),
-      model: "slow",
-      fallbackModels: ["good"],
+      candidates: [candidate(cipher, "slow"), candidate(cipher, "good", "备用服务商", "p2")],
       userMessage: "建一个入口文件",
       history: [],
       toolContext: {
@@ -216,8 +228,11 @@ describe("智能体单步超时", () => {
     expect(files.get("src/app.ts")).toBe("export const a = 1;");
     expect(r.answer).toBe("写好了。");
     expect(r.haltReason).toBeNull();
-    // 换过模型必须如实告知 —— 悄悄换等于伪造来源
-    expect(r.usedModels).toContain("good");
+    // 换过模型必须如实告知 —— 悄悄换等于伪造来源。
+    // 现在连**换到了哪一家服务商**也一并说清楚:跨服务商降级之后,
+    // 只说模型名不够 —— 用户需要知道这次回答其实是别家跑的。
+    expect(r.usedModels.join("、")).toContain("good");
+    expect(r.usedModels.join("、")).toContain("备用服务商");
     vi.unstubAllGlobals();
   });
 
@@ -251,9 +266,7 @@ describe("智能体单步超时", () => {
 
     await agent
       .runAgent({
-        credentials: creds(cipher),
-        model: "a",
-        fallbackModels: ["b", "c"],
+        candidates: [candidate(cipher, "a"), candidate(cipher, "b", "备用服务商", "p2"), candidate(cipher, "c", "备用服务商", "p2")],
         userMessage: "干活",
         history: [],
         toolContext: {
@@ -325,7 +338,7 @@ describe("响应体挂住", () => {
     const err = await gateway
       .callWithTools({
         credentials: creds(cipher),
-        model: "slow",
+      model: "slow",
         messages: [{ role: "user", content: "x" }],
         tools: [],
         signal: new AbortController().signal,
@@ -353,7 +366,7 @@ describe("响应体挂住", () => {
     const promise = gateway
       .callWithTools({
         credentials: creds(cipher),
-        model: "m",
+      model: "m",
         messages: [{ role: "user", content: "x" }],
         tools: [],
         signal: controller.signal,
@@ -384,7 +397,7 @@ describe("响应体挂住", () => {
     const err = await gateway
       .callWithTools({
         credentials: creds(cipher),
-        model: "m",
+      model: "m",
         messages: [{ role: "user", content: "x" }],
         tools: [],
         signal: new AbortController().signal,

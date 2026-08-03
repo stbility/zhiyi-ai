@@ -8,6 +8,7 @@ import {
 import { GitConnection } from "@/components/app/GitConnection";
 import { isEncryptionAvailable } from "@/lib/crypto/secret-box";
 import {
+  getAppSlug,
   getGitHubAppConfig,
   installUrl,
   issueState,
@@ -98,9 +99,17 @@ export default async function IntegrationsPage({
   // 和放一个空按钮是同一类问题
   const appConfig = getGitHubAppConfig();
   const gitInstallation = await loadGitInstallation(org.id);
-  const installHref = appConfig
-    ? installUrl(appConfig.slug, issueState(org.id))
-    : null;
+
+  // slug 向 GitHub 查,不用环境变量里手填的那个。
+  //
+  // 填错的后果是「连接 GitHub」跳到 GitHub 的 404 —— 用户看到的不是
+  // 我们的报错,完全无从判断哪里配错了。实际发生过:GitHub App 叫
+  // zhiyi-ai-repo,而用户照着旧的 OAuth App 名字填了 zhiyi-ai。
+  //
+  // 取不到就**不生成链接**,由卡片显示「暂时取不到」——
+  // 给一个必然 404 的按钮,和放一个空按钮是同一类问题。
+  const slug = appConfig ? await getAppSlug() : null;
+  const installHref = slug ? installUrl(slug, issueState(org.id)) : null;
   const params = await searchParams;
 
   return (

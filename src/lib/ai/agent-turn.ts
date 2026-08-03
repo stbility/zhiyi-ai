@@ -2,14 +2,17 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { DEFAULT_LIMITS, runAgent, summarizeRun } from "@/lib/ai/agent";
+import {
+  DEFAULT_LIMITS,
+  runAgent,
+  summarizeRun,
+  type AgentModelOption,
+} from "@/lib/ai/agent";
 import type { GitToolContext } from "@/lib/ai/git-tools";
 import { listRepositories } from "@/lib/integrations/github";
 import { logger } from "@/lib/log";
-import { buildFallbackChain } from "@/lib/ai/fallback";
 import type { AgentStep } from "@/lib/ai/agent";
 import { ProviderCallError } from "@/lib/ai/gateway";
-import type { ProviderCredentials } from "@/lib/ai/gateway";
 import type { ToolContext } from "@/lib/ai/tools";
 
 /**
@@ -22,6 +25,15 @@ import type { ToolContext } from "@/lib/ai/tools";
  * 用户需要看到的是「正在写 src/app.ts」,不是模型在想什么。
  */
 
+/**
+ * 候选池大小。
+ *
+ * 比对话路径的 3 个略多:智能体要跑十几步,每一步都可能撞上不同的服务商故障,
+ * 多一个备选换来的是「前 10 步的产出不白费」。但也不能无限多 ——
+ * 每个候选都要解一次密钥,而且候选越多,轮完一圈的时间就越长。
+ */
+const MAX_AGENT_CANDIDATES = 4;
+
 export async function runAgentTurn({
   supabase,
   userId,
@@ -29,7 +41,6 @@ export async function runAgentTurn({
   conversationId,
   providerId,
   model,
-  credentials,
   userMessage,
   history,
   signal,
@@ -40,7 +51,6 @@ export async function runAgentTurn({
   conversationId: string;
   providerId: string;
   model: string;
-  credentials: ProviderCredentials;
   userMessage: string;
   history: readonly { role: "user" | "assistant"; content: string }[];
   signal: AbortSignal;
@@ -65,19 +75,53 @@ export async function runAgentTurn({
   // 并把有限的步数耗光。
   const gitContext = await loadGitContext(supabase, organizationId);
 
-  // 备用模型:智能体一跑十几步,中途撞限流是常态。
+  // 候选模型:智能体一跑十几步,中途撞限流是常态。
   // 没有备用的话,第 11 步一个 503 就把前 10 步打死。
-  const { data: availableRows } = await supabase
-    .from("ai_models")
-    .select("model_id")
-    .eq("provider_id", providerId)
-    .eq("enabled", true)
-    .is("chat_unavailable_reason", null);
+  //
+  // 候选跨**整个组织的全部服务商**,不再限于用户选中的那一个。
+  // 此前这里是 .eq("provider_id", providerId),于是英伟达容量塌陷时
+  // 四个候选全在英伟达、全部超时,而用户配好的 DeepSeek 官方一次都没试过。
+  // 凭据也必须跟着换 —— 拿 A 家的 key 调 B 家的模型只会得到 401。
+  const { loadOrgCandidates, orderCandidates, createCredentialLoader } =
+    await import("@/lib/ai/candidates");
 
-  const fallbackModels = buildFallbackChain(
-    (availableRows ?? []).map((r) => r.model_id as string),
+  const ordered = orderCandidates(
+    await loadOrgCandidates(supabase, organizationId),
+    providerId,
     model,
-  ).slice(1, 4);
+  ).slice(0, MAX_AGENT_CANDIDATES);
+
+  const credentialsFor = createCredentialLoader();
+  const candidates: AgentModelOption[] = [];
+  for (const c of ordered) {
+    const creds = await credentialsFor(c);
+    // 取不到密钥的候选直接不进候选池 —— 给一个必然 401 的候选,
+    // 只会在每一步白烧一次往返
+    if (!creds) {
+      logger.warn(
+        { providerId: c.providerId, organizationId },
+        "候选服务商密钥不可读,已从候选池剔除",
+      );
+      continue;
+    }
+    candidates.push({
+      providerId: c.providerId,
+      providerName: c.providerName,
+      modelId: c.modelId,
+      credentials: creds,
+    });
+  }
+
+  // 一个候选都没有:如实报错,而不是让循环空转到超时
+  if (candidates.length === 0) {
+    return new Response(
+      JSON.stringify({
+        error:
+          "没有可用的模型服务。请到「模型服务」确认已添加服务商、密钥有效且模型已启用。",
+      }),
+      { status: 503, headers: { "Content-Type": "application/json" } },
+    );
+  }
 
   const encoder = new TextEncoder();
   const startedAt = Date.now();
@@ -114,9 +158,7 @@ export async function runAgentTurn({
 
       try {
         const outcome = await runAgent({
-          credentials,
-          model,
-          fallbackModels,
+          candidates,
           userMessage,
           history,
           toolContext,

@@ -76,11 +76,19 @@ function scriptedModel(
   });
 }
 
-const creds = (cipher: string) => ({
-  kind: "openai_compatible" as const,
-  baseUrl: "https://api.example.com/v1",
-  apiKeyCipher: cipher,
-});
+/** 把「一个服务商 + 一个模型」包成候选,凭据跟着候选走 */
+function candidate(cipher: string, modelId: string, providerName = "测试服务商", providerId = "p1") {
+  return {
+    providerId,
+    providerName,
+    modelId,
+    credentials: {
+      kind: "openai_compatible" as const,
+      baseUrl: "https://api.example.com/v1",
+      apiKeyCipher: cipher,
+    },
+  };
+}
 
 describe("智能体循环", () => {
   it("模型调 write_file 时,文件真的落进工作区", async () => {
@@ -102,8 +110,7 @@ describe("智能体循环", () => {
     );
 
     const r = await agent.runAgent({
-      credentials: creds(cipher),
-      model: "m",
+      candidates: [candidate(cipher, "m")],
       userMessage: "建一个入口文件",
       history: [],
       toolContext: ws.ctx,
@@ -129,8 +136,7 @@ describe("智能体循环", () => {
     );
 
     const r = await agent.runAgent({
-      credentials: creds(cipher),
-      model: "m",
+      candidates: [candidate(cipher, "m")],
       userMessage: "干活",
       history: [],
       toolContext: ws.ctx,
@@ -166,8 +172,7 @@ describe("智能体循环", () => {
     );
 
     const r = await agent.runAgent({
-      credentials: creds(cipher),
-      model: "m",
+      candidates: [candidate(cipher, "m")],
       userMessage: "写个文件",
       history: [],
       toolContext: ws.ctx,
@@ -193,8 +198,7 @@ describe("智能体循环", () => {
     vi.stubGlobal("fetch", scriptedModel([{ text: "" }]));
 
     const r = await agent.runAgent({
-      credentials: creds(cipher),
-      model: "m",
+      candidates: [candidate(cipher, "m")],
       userMessage: "干活",
       history: [],
       toolContext: ws.ctx,
@@ -238,9 +242,7 @@ describe("智能体循环", () => {
     );
 
     const r = await agent.runAgent({
-      credentials: creds(cipher),
-      model: "busy-model",
-      fallbackModels: ["backup-model"],
+      candidates: [candidate(cipher, "busy-model"), candidate(cipher, "backup-model", "备用服务商", "p2")],
       userMessage: "干活",
       history: [],
       toolContext: ws.ctx,
@@ -249,7 +251,7 @@ describe("智能体循环", () => {
 
     expect(r.answer).toBe("换了模型也办好了。");
     // 换过模型必须留痕 —— 悄悄换等于伪造来源
-    expect(r.usedModels).toContain("backup-model");
+    expect(r.usedModels.join("、")).toContain("backup-model");
     vi.unstubAllGlobals();
   });
 
@@ -263,9 +265,7 @@ describe("智能体循环", () => {
 
     await expect(
       agent.runAgent({
-        credentials: creds(cipher),
-        model: "m",
-        fallbackModels: ["a", "b", "c"],
+        candidates: [candidate(cipher, "m"), candidate(cipher, "a", "备用服务商", "p2"), candidate(cipher, "b", "备用服务商", "p2"), candidate(cipher, "c", "备用服务商", "p2")],
         userMessage: "干活",
         history: [],
         toolContext: ws.ctx,
@@ -273,8 +273,14 @@ describe("智能体循环", () => {
       }),
     ).rejects.toThrow();
 
-    // 密钥错误换模型没有意义,只该试一次
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // 每家服务商只试一次,但不同的服务商都要试。
+    //
+    // 候选是 p1 一个 + p2 三个。401 是**整个服务商**级别的问题,
+    // 同一把密钥换几个模型结果完全一样,所以 p2 的三个候选只烧一次调用;
+    // 但 p1 的密钥失效绝不能成为「p2 也不试」的理由 —— 此前那样写会让
+    // 一把过期的旧密钥把整个组织的对话能力全部堵死。
+    // 所以期望是 2 次(两家各一次),不是 1 次也不是 4 次。
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     vi.unstubAllGlobals();
   });
 

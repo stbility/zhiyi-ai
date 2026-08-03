@@ -263,3 +263,59 @@ describe("安装令牌格式变更", () => {
     expect(seen.at(-1)?.["X-GitHub-Stateless-S2S-Token"]).toBeUndefined();
   });
 });
+
+/**
+ * 安装地址的 slug 必须问 GitHub 要,不能让人手填。
+ *
+ * 真实故障:GitHub App 叫 zhiyi-ai-repo,而用户照着旧的 OAuth App 名字
+ * 填了 zhiyi-ai —— 「连接 GitHub」按钮跳到 GitHub 的 404。
+ * 这个错误极难自查:用户看到的是 GitHub 的 404,不是我们的报错,
+ * 完全无从判断是哪里配错了。
+ *
+ * slug 本来就是 GitHub 那边的事实,问它就好。少一个能填错的变量,
+ * 就少一类故障。
+ */
+describe("应用 slug", () => {
+  function stubConfig(envSlug?: string) {
+    vi.stubEnv("GITHUB_APP_CLIENT_ID", CONFIG.clientId);
+    vi.stubEnv("GITHUB_APP_PRIVATE_KEY", privateKey);
+    vi.stubEnv("GITHUB_APP_SLUG", envSlug ?? "");
+  }
+
+  it("向 GitHub 查真实 slug,而不是用环境变量里填的", async () => {
+    stubConfig("填错的名字");
+    vi.stubGlobal("fetch", async () =>
+      new Response(JSON.stringify({ slug: "zhiyi-ai-repo" }), { status: 200 }),
+    );
+
+    const { getAppSlug } = await import("@/lib/integrations/github");
+    expect(await getAppSlug()).toBe("zhiyi-ai-repo");
+    vi.unstubAllGlobals();
+  });
+
+  it("查询失败时回退到环境变量 —— 网络抖一下不该让入口消失", async () => {
+    stubConfig("兜底名字");
+    vi.stubGlobal("fetch", async () => {
+      throw new TypeError("fetch failed");
+    });
+
+    const { getAppSlug } = await import("@/lib/integrations/github");
+    expect(await getAppSlug()).toBe("兜底名字");
+    vi.unstubAllGlobals();
+  });
+
+  it("查不到且没填环境变量时返回 null —— 不拼一个必然 404 的地址", async () => {
+    stubConfig();
+    vi.stubGlobal("fetch", async () => new Response("{}", { status: 500 }));
+
+    const { getAppSlug } = await import("@/lib/integrations/github");
+    expect(await getAppSlug()).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it("没填 GITHUB_APP_SLUG 也算配置完整 —— 它不再是必需项", async () => {
+    stubConfig();
+    const { getGitHubAppConfig } = await import("@/lib/integrations/github");
+    expect(getGitHubAppConfig()).not.toBeNull();
+  });
+});

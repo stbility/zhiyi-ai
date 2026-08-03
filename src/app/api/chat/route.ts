@@ -7,7 +7,6 @@ import {
   streamChat,
   type ChatMessage,
 } from "@/lib/ai/gateway";
-import { buildFallbackChain, describeFallback } from "@/lib/ai/fallback";
 import { logDbFailure, logger } from "@/lib/log";
 import {
   loadIntegrationCipher,
@@ -430,11 +429,8 @@ export async function POST(request: NextRequest) {
       conversationId,
       providerId,
       model,
-      credentials: {
-        kind: provider.kind as ProviderKind,
-        baseUrl: (provider.base_url as string | null) ?? null,
-        apiKeyCipher,
-      },
+      // 凭据不再由这里传入:智能体的候选跨服务商,每个候选要用它自己那家的
+      // 密钥,所以由 agent-turn 按候选逐个取。见 lib/ai/candidates.ts。
       userMessage: `${built.fileBlock}${searchBlock}${content}`,
       history: built.messages,
       signal: request.signal,
@@ -442,27 +438,34 @@ export async function POST(request: NextRequest) {
   }
 
   const startedAt = Date.now();
-  const credentials = {
-    kind: provider.kind as ProviderKind,
-    baseUrl: (provider.base_url as string | null) ?? null,
-    apiKeyCipher,
-  };
 
-  // 取当前可选模型,排出降级链。
+  // 取候选模型,排出降级链。
   //
   // 用户要的是「长期稳定执行任务」,而共享算力上的模型排队是常态,不是故障。
   // 稳定不能靠挑一个永不排队的模型(不存在),只能靠排队时自动换一个。
-  const { data: availableRows } = await supabase
-    .from("ai_models")
-    .select("model_id")
-    .eq("provider_id", providerId)
-    .eq("enabled", true)
-    .is("chat_unavailable_reason", null);
+  //
+  // 候选跨**整个组织的全部服务商**,不再限于用户选中的那一个。
+  // 此前这里是 .eq("provider_id", providerId) —— 三个候选全在同一家,
+  // 而一家的容量塌陷是整体性的:英伟达堵的时候它上面的
+  // deepseek-ai/…、z-ai/…、moonshotai/… 一起堵(vendorOf 按 `/` 前缀
+  // 把它们看成三个厂商,其实是同一个算力池)。于是「换一个模型」换了等于没换,
+  // 而用户配好的 DeepSeek 官方一次都没被试过。见 lib/ai/candidates.ts。
+  const { loadOrgCandidates, orderCandidates, createCredentialLoader, describeSwitch } =
+    await import("@/lib/ai/candidates");
 
-  const chain = buildFallbackChain(
-    (availableRows ?? []).map((r) => r.model_id as string),
+  const chain = orderCandidates(
+    await loadOrgCandidates(supabase, organizationId),
+    providerId,
     model,
   ).slice(0, MAX_MODEL_ATTEMPTS);
+
+  const credentialsFor = createCredentialLoader();
+  /** 用户最初选的那个,用于降级说明里的「从哪换到哪」 */
+  const requested = {
+    providerName:
+      chain.find((c) => c.providerId === providerId)?.providerName ?? "所选服务",
+    modelId: model,
+  };
 
   const { indicatesModelUnusable, isTransientFailure } = await import(
     "@/lib/providers/model-filter"
@@ -472,14 +475,21 @@ export async function POST(request: NextRequest) {
   let watchdog: ReturnType<typeof createStallWatchdog> | null = null;
   /** 实际用上的模型,可能不是用户选的那个 */
   let actualModel = model;
+  /** 实际用上的服务商 —— 换了服务商就必须按新的那个留痕,否则用量归属是错的 */
+  let actualProviderId = providerId;
   /** 降级说明。发生了就必须告诉用户 —— 悄悄换模型等于伪造来源 */
   let fallbackNote: string | null = null;
   let lastFailure = "调用模型服务失败。";
   let lastStatus: number | undefined;
   /** 真正发起过请求的模型 —— 报错文案只能提这些,不能提整条候选链 */
   const attempted: string[] = [];
+  /** 已确认整体不可用的服务商(密钥失效等),同一家的其余候选直接跳过 */
+  const deadProviders = new Set<string>();
 
   for (const candidate of chain) {
+    // 这家已经确认不可用,同一把密钥换个模型结果一样,不必再烧一次调用
+    if (deadProviders.has(candidate.providerId)) continue;
+
     // 总预算是整次请求共享的,不是每个模型各给一份 —— 否则四个模型轮下来
     // 早就撞上平台的函数时限了
     const remaining = TOTAL_BUDGET_MS - (Date.now() - startedAt);
@@ -498,18 +508,34 @@ export async function POST(request: NextRequest) {
       `模型在 ${Math.round(FIRST_CHUNK_TIMEOUT_MS / 1000)} 秒内没有返回任何内容,通常是该模型正在排队。`,
     );
 
-    attempted.push(candidate);
+    attempted.push(candidate.modelId);
+
+    // 每个候选用**它自己服务商**的密钥。
+    // 拿 A 家的 key 去调 B 家的模型只会得到 401 —— 跨服务商降级的前提
+    // 就是凭据也跟着换。
+    const candidateCreds = await credentialsFor(candidate);
+    if (!candidateCreds) {
+      wd.clear();
+      lastFailure = `无法读取「${candidate.providerName}」的密钥,已跳过。`;
+      logger.warn(
+        { providerId: candidate.providerId, organizationId },
+        "候选服务商密钥不可读,跳过",
+      );
+      continue;
+    }
+
     try {
       result = await streamChat({
-        credentials,
-        model: candidate,
+        credentials: candidateCreds,
+        model: candidate.modelId,
         messages,
         signal: wd.signal,
       });
       watchdog = wd;
-      actualModel = candidate;
-      if (candidate !== model) {
-        fallbackNote = describeFallback(model, candidate, lastFailure);
+      actualModel = candidate.modelId;
+      actualProviderId = candidate.providerId;
+      if (candidate.providerId !== providerId || candidate.modelId !== model) {
+        fallbackNote = describeSwitch(requested, candidate, lastFailure);
       }
       break;
     } catch (e) {
@@ -534,8 +560,8 @@ export async function POST(request: NextRequest) {
       // 此前全站没有日志,每次都只能靠翻数据库里的 error_message 反推。
       logger.warn(
         {
-          model: candidate,
-          providerId,
+          model: candidate.modelId,
+          providerId: candidate.providerId,
           organizationId,
           status: lastStatus,
           reason: lastFailure,
@@ -547,19 +573,22 @@ export async function POST(request: NextRequest) {
         await supabase
           .from("ai_models")
           .update({ last_error: lastFailure })
-          .eq("provider_id", providerId)
-          .eq("model_id", candidate);
+          .eq("provider_id", candidate.providerId)
+          .eq("model_id", candidate.modelId);
       }
 
-      // 只有临时性失败才值得换模型。
+      // 永久性失败:跳过**同一个服务商**的其余候选,但继续试别的服务商。
       //
-      // 密钥被拒(401/403)是**整个服务商**级别的问题,同一把密钥换几个模型
-      // 结果完全一样 —— 白烧三次调用、多等三个往返,最后给出的报错还像是
-      // 模型的问题(「已依次尝试 3 个模型:…」),把用户引去怀疑模型。
+      // 密钥被拒(401/403)是整个服务商级别的问题,同一把密钥换几个模型
+      // 结果完全一样 —— 白烧三次调用,最后的报错还像是模型的问题,
+      // 把用户引去怀疑模型,而问题在密钥。
       //
-      // 智能体循环里早就有这个判断,而这条普通对话的链路一直没有 ——
-      // 同一策略只做了一半,两边行为不一致。
-      if (!isTransientFailure(lastStatus, lastFailure)) break;
+      // 但此前这里是直接 break 掉整条链。那在「候选全在同一家」的年代是对的,
+      // 现在候选跨服务商:A 家的密钥失效不能成为「B 家也不试」的理由 ——
+      // 那会让一把过期的旧密钥把整个组织的对话能力全部堵死。
+      if (!isTransientFailure(lastStatus, lastFailure)) {
+        deadProviders.add(candidate.providerId);
+      }
       // 临时性失败(排队、限流、5xx)才继续尝试链上的下一个模型
     }
   }
@@ -592,6 +621,9 @@ export async function POST(request: NextRequest) {
 
   // 收窄成 const,闭包里才拿得到非空类型
   const chosen = result;
+  // 换过服务商时必须按**实际用上的**那个留痕:messages 是用量计费的唯一依据,
+  // 记成用户最初选的那家,账就算到了没干活的服务商头上。
+  const usedProviderId = actualProviderId;
   const wd = watchdog;
   const usedModel = actualModel;
   const note = fallbackNote;
@@ -646,8 +678,18 @@ export async function POST(request: NextRequest) {
         for await (const chunk of chosen.stream) {
           producedChars += chunk.text.length;
 
-          // 吞吐太低就当这个模型此刻不可用,交给降级链换一个。
-          // 抛的是可重试错误,外层的 for 循环会接住并试下一个模型。
+          // 吞吐太低就当这个模型此刻不可用,中止并说清楚。
+          //
+          // 注意这里**不会**换模型,原来的注释写错了:这段代码跑在
+          // ReadableStream 的 start() 里,而选模型的那个 for 循环在
+          // streamChat 拿到响应头时就已经结束了 —— 抛出去只会被下面的
+          // catch 接住、发一个 error 事件,链上的下一个候选根本不会被试。
+          //
+          // 真正能自动换模型的是**首片超时**(45 秒没有任何输出),
+          // 它发生在选择循环内部,而且现在的候选是跨服务商的。
+          // 这里管的是另一种情况:一直在吐字、但慢到没有意义。
+          // 那时已经有内容发给用户了,中途换模型会让两个模型的话接在一起,
+          // 所以只能如实收尾,把「换一家」的决定交回给用户。
           const elapsed = Date.now() - streamStartedAt;
           if (
             elapsed > THROUGHPUT_GRACE_MS &&
@@ -656,7 +698,9 @@ export async function POST(request: NextRequest) {
             throw new ProviderCallError(
               `模型 ${usedModel} 在 ${Math.round(elapsed / 1000)} 秒内只产出了 ` +
                 `${producedChars} 个字符,吞吐远低于可用水平 —— 通常是该服务商此刻` +
-                `容量不足或排队严重。已中止,换一个模型重试。`,
+                `容量不足或排队严重。已中止,上面是已经生成的部分。\n` +
+                `建议在模型选择器里换一个**别家服务商**的模型重试 —— ` +
+                `同一家的其它模型多半一起堵。`,
               503,
             );
           }
@@ -692,7 +736,7 @@ export async function POST(request: NextRequest) {
             organization_id: organizationId,
             role: "assistant",
             content: "",
-            provider_id: providerId,
+            provider_id: usedProviderId,
             model_id: usedModel,
             latency_ms: Date.now() - startedAt,
             error_message: reason,
@@ -707,7 +751,7 @@ export async function POST(request: NextRequest) {
           organization_id: organizationId,
           role: "assistant",
           content: full,
-          provider_id: providerId,
+          provider_id: usedProviderId,
           model_id: usedModel,
           input_tokens: chosen.usage.inputTokens,
           output_tokens: chosen.usage.outputTokens,
@@ -753,7 +797,7 @@ export async function POST(request: NextRequest) {
             organization_id: organizationId,
             role: "assistant",
             content: full,
-            provider_id: providerId,
+            provider_id: usedProviderId,
             model_id: usedModel,
             latency_ms: Date.now() - startedAt,
             error_message: message,

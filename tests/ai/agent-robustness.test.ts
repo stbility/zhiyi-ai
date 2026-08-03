@@ -42,6 +42,20 @@ function jsonOnce(payload: unknown) {
     .mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }));
 }
 
+/** 把「一个服务商 + 一个模型」包成候选,凭据跟着候选走 */
+function candidate(cipher: string, modelId: string, providerName = "测试服务商", providerId = "p1") {
+  return {
+    providerId,
+    providerName,
+    modelId,
+    credentials: {
+      kind: "openai_compatible" as const,
+      baseUrl: "https://api.example.com/v1",
+      apiKeyCipher: cipher,
+    },
+  };
+}
+
 describe("推理模型只给 reasoning_content 时", () => {
   it("content 是空串也要回退到思考过程,不能判成「什么都没说」", async () => {
     const { gateway, cipher } = await load();
@@ -135,8 +149,7 @@ describe("输出被长度上限截断时", () => {
     );
 
     const r = await agent.runAgent({
-      credentials: creds(cipher),
-      model: "m",
+      candidates: [candidate(cipher, "m")],
       userMessage: "写个大文件",
       history: [],
       toolContext: memoryTools(),

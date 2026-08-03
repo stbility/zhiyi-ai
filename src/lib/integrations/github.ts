@@ -70,7 +70,18 @@ function statelessTokenHeader(): Record<string, string> {
 export interface GitHubAppConfig {
   readonly clientId: string;
   readonly privateKey: string;
-  readonly slug: string;
+  /**
+   * 安装页用的 slug。
+   *
+   * 可以不填 —— 填了只当兜底。真实值由 getAppSlug() 向 GitHub 查询。
+   *
+   * 为什么不让用户填:填错的代价是「连接 GitHub」按钮跳到一个 404 页面,
+   * 而这个错误极难自查 —— 用户看到的是 GitHub 的 404,不是我们的报错,
+   * 完全无从判断是哪里配错了。实际发生过:GitHub App 叫 zhiyi-ai-repo,
+   * 而用户照着旧的 OAuth App 名字填了 zhiyi-ai。
+   * slug 本来就是 GitHub 那边的事实,问它就好,不该让人手抄一遍。
+   */
+  readonly slug: string | null;
 }
 
 /**
@@ -80,8 +91,15 @@ export interface GitHubAppConfig {
 export function getGitHubAppConfig(): GitHubAppConfig | null {
   const clientId = process.env["GITHUB_APP_CLIENT_ID"];
   const rawKey = process.env["GITHUB_APP_PRIVATE_KEY"];
-  const slug = process.env["GITHUB_APP_SLUG"];
-  if (!clientId || !rawKey || !slug) return null;
+  // slug 不再是必需项 —— 它由 getAppSlug() 向 GitHub 查询。
+  //
+  // 这里不能用 ??:环境变量存在但为空串时(在 Vercel 上很常见 ——
+  // 建了变量没填值就是空串),?? 不会回退,于是拿到一个空 slug,
+  // 拼出 https://github.com/apps//installations/new 这种必然 404 的地址。
+  // 和 gateway 里 content ?? reasoning_content 是同一个陷阱:
+  // 判空要按「有没有值」判,不是按「是不是 null」判。
+  const slug = process.env["GITHUB_APP_SLUG"] || null;
+  if (!clientId || !rawKey) return null;
 
   // 环境变量里换行常被写成字面量 \n(Vercel 的输入框就是这样),
   // 不还原的话 PEM 解析会直接失败,而报错信息是「不是合法的私钥」——
@@ -156,7 +174,7 @@ export async function getInstallationToken(
     return {
       ok: false,
       error:
-        "尚未配置 GitHub App(缺少 GITHUB_APP_CLIENT_ID / GITHUB_APP_PRIVATE_KEY / GITHUB_APP_SLUG)。",
+        "尚未配置 GitHub App(缺少 GITHUB_APP_CLIENT_ID 或 GITHUB_APP_PRIVATE_KEY)。",
     };
   }
 
@@ -239,6 +257,58 @@ async function readError(response: Response): Promise<string> {
   } catch {
     return "";
   }
+}
+
+/**
+ * 应用 slug 的缓存。
+ *
+ * 它几乎不变(改名才会变),而每次渲染集成页都要用它拼安装地址 ——
+ * 每次都去问一遍是白白多一个往返。缓存在模块作用域即可:
+ * 函数实例回收就没了,不必落库。
+ */
+let cachedSlug: string | null = null;
+
+/**
+ * 向 GitHub 查这个 App 的 slug。
+ *
+ * 安装页地址是 https://github.com/apps/<slug>/installations/new,
+ * slug 错了就是一个 GitHub 的 404 —— 用户看到的不是我们的报错,
+ * 完全无从判断哪里配错了。所以不让人手填,直接问 GitHub。
+ *
+ * GET /app 用 App JWT 认证,返回里就有 slug。
+ * 来源:https://docs.github.com/en/rest/apps/apps
+ *
+ * 查不到时回退到环境变量里那个(如果填了)—— 网络抖一下不该让
+ * 整个连接入口消失;但如果两者都没有,就如实返回 null,
+ * 由调用方显示「暂时取不到」,而不是拼一个必然 404 的地址。
+ */
+export async function getAppSlug(): Promise<string | null> {
+  if (cachedSlug) return cachedSlug;
+
+  const config = getGitHubAppConfig();
+  if (!config) return null;
+
+  try {
+    const response = await fetch(`${API}/app`, {
+      headers: headers(signAppJwt(config)),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (response.ok) {
+      const payload = (await response.json()) as { slug?: string };
+      if (payload.slug) {
+        cachedSlug = payload.slug;
+        return cachedSlug;
+      }
+    }
+    logger.warn(
+      { status: response.status },
+      "向 GitHub 查询 App slug 失败,回退到环境变量",
+    );
+  } catch {
+    logger.warn({}, "向 GitHub 查询 App slug 出错,回退到环境变量");
+  }
+
+  return config.slug;
 }
 
 export interface InstallationInfo {

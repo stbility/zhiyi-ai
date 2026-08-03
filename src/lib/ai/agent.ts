@@ -96,6 +96,21 @@ export function capToolResult(content: string): string {
   );
 }
 
+/**
+ * 一个可用的「服务商 + 模型」组合。
+ *
+ * 智能体的降级必须带上凭据一起换:此前只换模型名、凭据固定是用户选的
+ * 那一家,于是所谓的降级永远出不了那个服务商 —— 而服务商的容量塌陷
+ * 是整体性的,同一家里换几个模型等于没换。见 lib/ai/candidates.ts。
+ */
+export interface AgentModelOption {
+  readonly providerId: string;
+  /** 服务商显示名,用于向用户如实说明换到了哪一家 */
+  readonly providerName: string;
+  readonly modelId: string;
+  readonly credentials: ProviderCredentials;
+}
+
 /** 循环过程中的进度回调,用于把每一步实时推给前端 */
 export interface AgentReporter {
   onStep?(step: AgentStep): void;
@@ -108,9 +123,7 @@ export interface AgentReporter {
  * @param history 之前的对话,按时间正序
  */
 export async function runAgent({
-  credentials,
-  model,
-  fallbackModels = [],
+  candidates,
   userMessage,
   history,
   toolContext,
@@ -119,16 +132,17 @@ export async function runAgent({
   limits = DEFAULT_LIMITS,
   reporter,
 }: {
-  credentials: ProviderCredentials;
-  model: string;
   /**
-   * 备用模型,按优先级排列。
+   * 候选「服务商 + 模型」,按优先级排列,第一个是用户选的那个。
    *
-   * 智能体一跑就是十几步,中途撞上限流或排队是常态。没有备用模型的话,
+   * 智能体一跑就是十几步,中途撞上限流或排队是常态。没有备用的话,
    * 第 11 步一个 503 就把前 10 步的工作全打死 —— 而那些文件其实已经写好了。
-   * 普通对话早有跨厂商降级,智能体循环当初漏接了,这里补上。
+   *
+   * 关键是候选要**跨服务商**。此前只换模型名、凭据固定用第一家的,
+   * 于是英伟达容量塌陷时三个候选全在英伟达,全部超时,而用户配好的
+   * DeepSeek 官方一次都没被试过 —— 这正是「智能体不工作」的根因。
    */
-  fallbackModels?: readonly string[];
+  candidates: readonly AgentModelOption[];
   userMessage: string;
   history: readonly { role: "user" | "assistant"; content: string }[];
   toolContext: ToolContext;
@@ -158,10 +172,18 @@ export async function runAgent({
   let consecutiveFailures = 0;
   let answer = "";
   let haltReason: string | null = null;
-  /** 当前实际在用的模型,降级后会变 */
-  let activeModel = model;
-  /** 本次运行中用过的备用模型 —— 换过模型必须告诉用户,不能悄悄换 */
+  const primary = candidates[0];
+  if (!primary) {
+    throw new ProviderCallError(
+      "没有可用的模型。请到「模型服务」添加服务商并测试连接。",
+    );
+  }
+  /** 当前实际在用的「服务商 + 模型」,降级后会变 */
+  let active: AgentModelOption = primary;
+  /** 本次运行中换用过的候选 —— 换过必须告诉用户,悄悄换等于伪造来源 */
   const switchedModels = new Set<string>();
+  /** 已确认整体不可用的服务商(密钥失效等),同一家的其余候选直接跳过 */
+  const deadProviders = new Set<string>();
 
   for (let index = 1; index <= limits.maxSteps; index++) {
     if (Date.now() - startedAt > limits.budgetMs) {
@@ -184,8 +206,17 @@ export async function runAgent({
     // 更糟的是下面那句 candidate !== activeModel 会因此成立,
     // 于是把用户自己选的 A 记进「换过的模型」,最后报告
     // 「运行中主模型不可用,已自动改用:A」—— A 正是他选的那个。
-    const order = [activeModel, ...fallbackModels.filter((m) => m !== activeModel)];
+    const current = active;
+    const order: readonly AgentModelOption[] = [
+      current,
+      ...candidates.filter(
+        (c) => !(c.providerId === current.providerId && c.modelId === current.modelId),
+      ),
+    ];
     for (const candidate of order) {
+      // 这家已经确认不可用(密钥失效等),同一把密钥换个模型结果一样
+      if (deadProviders.has(candidate.providerId)) continue;
+
       // 单步超时按**剩余预算**收窄,而不是每个候选各给一份 120 秒 ——
       // 否则三个候选轮下来就是 360 秒,早就撞破总预算和平台时限了。
       const remaining = limits.budgetMs - (Date.now() - startedAt);
@@ -194,16 +225,21 @@ export async function runAgent({
 
       try {
         turn = await callWithTools({
-          credentials,
-          model: candidate,
+          // 每个候选用**它自己服务商**的密钥 —— 拿 A 家的 key 调 B 家的模型
+          // 只会得到 401,跨服务商降级的前提就是凭据也跟着换
+          credentials: candidate.credentials,
+          model: candidate.modelId,
           messages,
           tools: gitContext ? [...FILE_TOOLS, ...GIT_TOOLS] : FILE_TOOLS,
           signal,
           timeoutMs: stepTimeout,
         });
-        if (candidate !== activeModel) {
-          activeModel = candidate;
-          switchedModels.add(candidate);
+        if (
+          candidate.providerId !== current.providerId ||
+          candidate.modelId !== current.modelId
+        ) {
+          active = candidate;
+          switchedModels.add(`${candidate.providerName} · ${candidate.modelId}`);
         }
         lastError = null;
         break;
@@ -213,7 +249,12 @@ export async function runAgent({
             ? e
             : new ProviderCallError("调用模型服务失败。");
         lastError = err;
-        if (!isTransientFailure(err.status, err.message)) break;
+        // 永久性失败:整家跳过,但继续试**别的**服务商。
+        // 此前是 break 掉整轮 —— 那在「候选全在同一家」的年代是对的,
+        // 现在候选跨服务商,一把过期密钥不该把整个组织的能力堵死。
+        if (!isTransientFailure(err.status, err.message)) {
+          deadProviders.add(candidate.providerId);
+        }
       }
     }
 
