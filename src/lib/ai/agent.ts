@@ -2,6 +2,7 @@ import "server-only";
 
 import { ProviderCallError, callWithTools } from "@/lib/ai/gateway";
 import { isTransientFailure } from "@/lib/providers/model-filter";
+import { logger } from "@/lib/log";
 import type { ProviderCredentials } from "@/lib/ai/gateway";
 import { GIT_TOOLS, executeGitTool, type GitToolContext } from "@/lib/ai/git-tools";
 import {
@@ -226,7 +227,7 @@ export async function runAgent({
     // 第 2 步到第 12 步每一步都要先撞一次已知在排队的 A,白白多等一轮。
     // 更糟的是下面那句 candidate !== activeModel 会因此成立,
     // 于是把用户自己选的 A 记进「换过的模型」,最后报告
-    // 「运行中主模型不可用,已自动改用:A」—— A 正是他选的那个。
+    // 最后把用户自己选的那个也报成「换过的模型」。
     const current = active;
     const order: readonly AgentModelOption[] = [
       current,
@@ -330,19 +331,17 @@ export async function runAgent({
     if (turn.toolCalls.length === 0) {
       answer = turn.text;
       if (turn.text.trim() === "") {
-        // 既不调工具也不说话。
+        // 模型既没有调工具也没有说话。
         //
-        // 只陈述事实,不猜原因。此前这里写「可能是该模型不支持工具调用,
-        // 或本轮被内容策略拦截」—— 两条都是推测,而真实原因往往是第三种
-        // (上一次就是我们自己把请求发成了非流式,解析器却在读 SSE)。
-        // 把猜测写成诊断,用户会照着去改一个没坏的地方。
-        //
-        // finish_reason 是上游给的**权威信号**(Claude 的智能体文档原话:
-        // stop_reason「is the authoritative signal for what happens next」),
-        // 有就照实说,没有就说没有。
-        haltReason = turn.finishReason
-          ? `模型本轮没有输出任何内容,上游给出的结束原因是 ${turn.finishReason}。`
-          : "模型本轮没有输出任何内容,上游也没有给出结束原因。";
+        // 不写任何叙述:空回答本身就是事实,而任何解释都是我在猜
+        // (上一次猜「不支持工具调用/内容策略拦截」,真实原因是我们自己
+        // 把请求发成了非流式 —— 用户照着那句话查了一星期)。
+        // 排查要用的东西在留痕里:messages 有 model_id 与耗时,
+        // 日志里有上游的 finish_reason。
+        logger.warn(
+          { model: current.modelId, finishReason: turn.finishReason },
+          "智能体本轮无输出",
+        );
       }
       steps.push({ index, text: turn.text, tools: [] });
       reporter?.onStep?.({ index, text: turn.text, tools: [] });
@@ -426,38 +425,13 @@ export async function runAgent({
  * 这里只列清单 —— 把文件内容再贴一遍正是我们要消灭的行为。
  */
 export function summarizeRun(outcome: AgentOutcome): string {
-  const written = new Set<string>();
-  const read = new Set<string>();
-
-  for (const step of outcome.steps) {
-    for (const t of step.tools) {
-      if (!t.ok) continue;
-      if (t.name === "write_file") {
-        // 工具结果文案形如「已写入 src/app.ts(123 字符)。」
-        const m = /^已写入\s+(\S+?)(?:[(（]|$)/.exec(t.content);
-        if (m?.[1]) written.add(m[1]);
-      } else if (t.name === "read_file") {
-        read.add(t.name);
-      }
-    }
-  }
-
-  const parts: string[] = [];
-  if (written.size > 0) {
-    parts.push(
-      `本次共写入 ${written.size} 个文件:\n` +
-        [...written].map((p) => `· ${p}`).join("\n"),
-    );
-  }
-  if (outcome.answer.trim() !== "") parts.push(outcome.answer.trim());
-  if (outcome.usedModels.length > 0) {
-    // 只说换过哪些 —— 「主模型不可用」是判决,而我们并不知道它是
-    // 真不可用、还是我们自己这一侧出了问题。换过就说换过,由用户去判断。
-    parts.push(`本次运行改用过:${outcome.usedModels.join("、")}。`);
-  }
-  if (outcome.haltReason) parts.push(outcome.haltReason);
-
-  return parts.length === 0
-    ? "本次运行没有产生任何输出。"
-    : parts.join("\n\n");
+  // 只回模型自己说的话。
+  //
+  // 这里曾经由我拼一段叙述:写了几个文件、换过哪些模型、为什么停下。
+  // 用户明确要求这些不要出现在界面和代码里 —— 那些话是系统在旁白,
+  // 不是模型的回答,而对话框里应当只有「模型说了什么」。
+  //
+  // 事实并没有丢:产物在工作区里看得见,用过哪个模型 messages.model_id
+  // 记着,每一步的工具执行由 SSE 的 step 事件实时推过。
+  return outcome.answer.trim();
 }

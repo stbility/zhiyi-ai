@@ -180,7 +180,7 @@ describe("智能体循环", () => {
     vi.unstubAllGlobals();
   });
 
-  it("模型既不调工具也不说话时,如实说明而不是给个空气泡", async () => {
+  it("模型既不调工具也不说话时,不编任何解释", async () => {
     const { agent, cipher } = await load();
     const ws = memoryWorkspace();
     vi.stubGlobal("fetch", scriptedModel([{ text: "" }]));
@@ -193,13 +193,12 @@ describe("智能体循环", () => {
       signal: new AbortController().signal,
     });
 
-    // 只陈述事实:没有输出,以及上游给的结束原因。
-    // 此前这里断言的是「不支持工具调用」——那是**猜测**,而真实原因
-    // 往往是第三种(上一次就是我们自己把请求发成了非流式)。
-    // 把猜测写进诊断,用户会照着去改一个没坏的地方。
-    expect(r.haltReason).toContain("没有输出任何内容");
-    expect(r.haltReason).toContain("stop");
-    expect(r.haltReason).not.toContain("可能是");
+    // 这里曾写「可能是该模型不支持工具调用,或本轮被内容策略拦截」——
+    // 两条都是猜测,而真实原因是我们自己把请求发成了非流式,
+    // 用户照着那句话查了一星期。所以现在一个字都不编:
+    // 空回答本身就是事实,排查线索在留痕与日志里。
+    expect(r.haltReason).toBeNull();
+    expect(r.answer).toBe("");
     vi.unstubAllGlobals();
   });
 
@@ -273,7 +272,7 @@ describe("智能体循环", () => {
     vi.unstubAllGlobals();
   });
 
-  it("总结只列文件清单,不重复贴文件内容", async () => {
+  it("总结只回模型自己说的话,不由系统拼叙述", async () => {
     const { agent } = await load();
     const summary = agent.summarizeRun({
       answer: "已完成登录页。",
@@ -294,12 +293,15 @@ describe("智能体循环", () => {
       inputTokens: 1,
       outputTokens: 1,
       haltReason: null,
-      usedModels: [],
+      usedModels: ["备用服务商 · backup"],
     });
 
-    expect(summary).toContain("src/login.tsx");
-    expect(summary).toContain("已完成登录页");
-    // 把文件内容再贴一遍正是我们要消灭的行为
-    expect(summary).not.toContain("2000 字符)");
+    // 只剩模型说的那句话。系统不再往里拼任何东西 ——
+    // 写了几个文件、换过哪些模型、为什么停下,那些是旁白不是回答。
+    // 事实没丢:产物在工作区看得见,用过哪个模型 messages.model_id 记着。
+    expect(summary).toBe("已完成登录页。");
+    expect(summary).not.toContain("src/login.tsx");
+    expect(summary).not.toContain("backup");
+    expect(summary).not.toContain("本次");
   });
 });
