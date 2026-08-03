@@ -18,7 +18,15 @@ import { getMyOrganizations } from "@/lib/db/queries";
  * 文件工具,产物直接写进工作区,而不是把代码贴在回答正文里等人复制。
  * 贴在正文里的东西还要手工复制粘贴,那等于没做。
  *
- * 页面是**两栏**的,这一点很要紧:左边是过程,右边是产物。
+ * 页面是**两块平铺的窗格**:左边是过程,右边是产物。
+ *
+ * 布局照 Claude Code 桌面版:它是一套可平铺的窗格(chat / file / preview /
+ * diff),文件树**持续可见并随智能体创建文件实时更新**,预览窗格
+ * 直接渲染 HTML —— 产物看得见摸得着,不用切到别处去找。
+ *
+ * 有一条是踩出来的:**没有产物时不留空窗格**。此前右边固定挂一个
+ * 380px 的框,工作区是空的时候就是一大块白,既没信息又把对话挤窄。
+ * 现在没有文件就整幅让给对话,有了文件才平铺成两块。
  *
  * 此前这个页面只是把 AI 助手的面板原样搬过来 —— 同样的气泡、同样的
  * 输入框,没有工作区、没有文件列表、没有步骤显示。后端确实走的是
@@ -82,6 +90,13 @@ export default async function AgentPage({
       ])
     : [[], null];
 
+  // 有产物才平铺成两块。
+  //
+  // 没有产物时右边那一块是纯粹的空白 —— 它不提供任何信息,只是把对话
+  // 挤窄。空工作区本来就是正常状态(工作区是用到时才建的),
+  // 不需要用一个框去宣告它。
+  const 有产物 = workspace !== null && workspace.files.length > 0;
+
   return (
     <div className="flex h-full w-full overflow-hidden">
       <div className="flex min-w-0 flex-1 overflow-hidden">
@@ -95,29 +110,20 @@ export default async function AgentPage({
         />
       </div>
 
-      {/* 产物栏。
-          窄屏隐藏 —— 手机上两栏谁都读不清,产物在「工作区」页面照样看得到。
+      {/* 产物窗格。与对话等宽平铺,不是挂在边上的一条。
+          用的是「工作区」页面同一个 WorkspaceBrowser —— 文件列表、
+          HTML 预览、源码、全屏都在里面,不另起一套。
+          窄屏不平铺:一块屏放两栏谁都读不清,产物在「工作区」页面照样看得到。
           ChatPanel 跑完一轮会 router.refresh(),这一栏跟着刷新。 */}
-      <aside className="border-divider hidden w-[380px] shrink-0 flex-col overflow-y-auto border-l xl:flex">
-        {workspace ? (
-          <div className="p-3">
-            <WorkspaceBrowser
-              id={workspace.id}
-              name={workspace.name}
-              files={workspace.files}
-            />
-          </div>
-        ) : (
-          <div className="p-4">
-            <p className="text-fg-tertiary text-label">
-              这条会话还没有产出文件。
-            </p>
-            {/* 到此为止。不在后面追一句撺掇用户去用它的话 ——
-                界面不是我们给用户出主意的地方,而且「还没有产出」
-                本来就是一个正常状态,不需要解释,更不需要推销。 */}
-          </div>
-        )}
-      </aside>
+      {有产物 && workspace ? (
+        <aside className="border-divider hidden min-w-0 flex-1 overflow-y-auto border-l p-4 xl:block">
+          <WorkspaceBrowser
+            id={workspace.id}
+            name={workspace.name}
+            files={workspace.files}
+          />
+        </aside>
+      ) : null}
     </div>
   );
 }

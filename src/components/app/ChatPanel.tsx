@@ -544,13 +544,20 @@ export function ChatPanel({
     }
   }
 
+  // 侧栏里的链接必须指回**本通道**。
+  //
+  // 这两处此前写死成 /assistant:在智能体页面点「新对话」或点任何一条
+  // 历史记录,人就被悄悄送到 AI 助手去了 —— 而两条通道的执行形态完全不同。
+  // 用户报的就是这个:「新对话点击跳转到 ai 助手的对话框」。
+  const basePath = channel === "agent" ? "/agent" : "/assistant";
+
   // 侧栏沿用设计系统导航项的写法(SidebarNavigation):同样的圆角、间距、
   // 选中态 bg-brand-tint text-brand。自己另起一套样式正是「拼装感」的来源。
   const sidebar = (
     <div className="flex h-full flex-col">
       <div className="px-3 pt-3 pb-2">
         <Link
-          href="/assistant?c=new"
+          href={`${basePath}?c=new`}
           onClick={() => setSidebarOpen(false)}
           className={buttonClasses({
             variant: "secondary",
@@ -578,7 +585,7 @@ export function ChatPanel({
               // 所以外面套一层 group,按钮与链接是兄弟节点。
               <div key={c.id} className="group relative">
                 <Link
-                  href={`/assistant?c=${c.id}`}
+                  href={`${basePath}?c=${c.id}`}
                   aria-current={active ? "page" : undefined}
                   onClick={() => setSidebarOpen(false)}
                   title={c.title}
@@ -590,7 +597,11 @@ export function ChatPanel({
                       : "text-fg-secondary hover:bg-surface-2",
                   )}
                 >
-                  <Icon name="assistant" size={15} className="shrink-0" />
+                  <Icon
+                    name={channel === "agent" ? "bot" : "assistant"}
+                    size={15}
+                    className="shrink-0"
+                  />
                   <span className="min-w-0 truncate">{c.title}</span>
                 </Link>
 

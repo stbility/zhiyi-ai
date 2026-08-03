@@ -165,3 +165,66 @@ describe("工具结果回喂给模型时", () => {
     expect(agent.capToolResult("短内容")).toBe("短内容");
   });
 });
+
+describe("路径参数不该白烧一步", () => {
+  /**
+   * 真实故障:模型 list_files 看到空工作区,接着用 `/index.html` 去
+   * read_file,撞上「路径必须是相对路径」,然后把 285 秒预算耗光,
+   * 工作区一个文件都没有。
+   *
+   * 我们的路径是数据库里的键,不是磁盘路径 —— `/index.html` 和
+   * `index.html` 本来就该是同一个文件。拒绝前者没有任何安全收益,
+   * 代价却是实打实的一次运行。真正要防的是路径穿越,那条一步没松。
+   */
+  it("开头的斜杠规范化掉,不当错误", async () => {
+    vi.resetModules();
+    vi.doMock("server-only", () => ({}));
+    const { writeFileSchema } = await import("@/lib/ai/tools");
+
+    const r = writeFileSchema.safeParse({ path: "/index.html", content: "x" });
+    expect(r.success, "开头的斜杠仍然被当成错误").toBe(true);
+    if (r.success) expect(r.data.path).toBe("index.html");
+  });
+
+  it("路径穿越仍然挡住 —— 规范化不能顺手把安全一起放了", async () => {
+    vi.resetModules();
+    vi.doMock("server-only", () => ({}));
+    const { writeFileSchema } = await import("@/lib/ai/tools");
+
+    // 这一条是上一条的正向对照:证明放行斜杠不是把校验整个关掉了
+    for (const bad of ["../etc/passwd", "a/../../b", "/../x", "///"]) {
+      expect(
+        writeFileSchema.safeParse({ path: bad, content: "x" }).success,
+        `${bad} 被放行了`,
+      ).toBe(false);
+    }
+  });
+
+  it("参数报错要把出错的值回给模型,否则它只会原样再试一次", async () => {
+    vi.resetModules();
+    vi.doMock("server-only", () => ({}));
+    const { executeTool } = await import("@/lib/ai/tools");
+
+    const r = await executeTool(
+      {
+        id: "c1",
+        name: "write_file",
+        rawArguments: JSON.stringify({ path: "../x", content: "y" }),
+      },
+      {
+        async readFile() {
+          return null;
+        },
+        async writeFile() {},
+        async listFiles() {
+          return [];
+        },
+      },
+    );
+
+    expect(r.ok).toBe(false);
+    // 哪个参数、当时收到的是什么 —— 缺了这两样,模型无从修正
+    expect(r.content).toContain("path");
+    expect(r.content).toContain("../x");
+  });
+});

@@ -136,3 +136,27 @@ describe("前端也要分开", () => {
     expect(AGENT_PAGE).toMatch(/loadConversations\(org\.id, "agent"\)/);
   });
 });
+
+describe("侧栏链接必须指回本通道", () => {
+  /**
+   * 用户报的 bug:「新对话点击跳转到 ai 助手的对话框」。
+   *
+   * 「新对话」和历史记录两处都写死成 /assistant —— 在智能体页面上点任何
+   * 一个,人就被悄悄送到另一条通道去了。而两条通道的执行形态完全不同:
+   * 一个写工作区,一个不碰。用户以为自己还在智能体页面,实际已经不是。
+   */
+  it("不写死 /assistant,由 channel 决定", () => {
+    expect(CHAT_PANEL).toMatch(
+      /const basePath = channel === "agent" \? "\/agent" : "\/assistant"/,
+    );
+    // 写死的字符串链接一处都不许留
+    expect(CHAT_PANEL, "又写死了 /assistant 链接").not.toMatch(
+      /href="\/assistant/,
+    );
+  });
+
+  it("新对话与历史记录都用 basePath", () => {
+    expect(CHAT_PANEL).toMatch(/href=\{`\$\{basePath\}\?c=new`\}/);
+    expect(CHAT_PANEL).toMatch(/href=\{`\$\{basePath\}\?c=\$\{c\.id\}`\}/);
+  });
+});

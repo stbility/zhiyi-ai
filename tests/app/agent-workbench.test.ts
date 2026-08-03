@@ -84,8 +84,25 @@ describe("智能体页面能看见产物", () => {
     expect(ASSISTANT_PAGE).not.toMatch(/WorkspaceBrowser/);
   });
 
-  it("没有产物时如实说,不给建议", () => {
-    expect(AGENT_PAGE).toMatch(/还没有产出文件/);
+  it("没有产物时不留空窗格", () => {
+    // 用户的原话:「不是你现在设计的右边一个空白框破坏整体视觉效果」。
+    // 那个 380px 的框在工作区为空时就是一大块白 —— 不提供任何信息,
+    // 只是把对话挤窄。而空工作区本来就是正常状态(工作区用到时才建),
+    // 不需要用一个框去宣告它。
+    expect(AGENT_PAGE).toMatch(/workspace\.files\.length > 0/);
+    // 渲染必须挂在这个条件上,不能无条件铺出来
+    expect(AGENT_PAGE).toMatch(/有产物 && workspace \? \(/);
+  });
+
+  it("产物窗格与对话**等宽平铺**,不是挂在边上的一条", () => {
+    // Claude Code 桌面版是一套可平铺的窗格。此前这里写死 w-[380px],
+    // 产物被压在一条窄边里,预览的 HTML 根本看不清。
+    const 产物栏 = AGENT_PAGE.slice(AGENT_PAGE.indexOf("<aside"));
+    expect(产物栏).toMatch(/flex-1/);
+    expect(产物栏, "又写死成固定窄宽了").not.toMatch(/w-\[\d+px\]/);
+  });
+
+  it("产物窗格不给用户出主意", () => {
     expect(AGENT_PAGE).not.toMatch(/试试|不妨|建议你|帮你写/);
   });
 });

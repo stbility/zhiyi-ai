@@ -54,7 +54,17 @@ const pathSchema = z
   .trim()
   .min(1, "路径不能为空")
   .max(400, "路径过长")
-  .refine((p) => !p.startsWith("/"), "路径必须是相对路径")
+  // 开头的 `/` 规范化掉,不当错误。
+  //
+  // 我们的路径是数据库里的键,不是磁盘路径 —— `/index.html` 和
+  // `index.html` 本来就该是同一个文件,拒绝前者没有任何安全收益。
+  // 而它的代价是实打实的:一次真实运行里,模型 list_files 看到空工作区、
+  // 接着用 `/index.html` 去 read_file,撞上「路径必须是相对路径」,
+  // 然后把 285 秒预算耗光,工作区一个文件都没有。
+  //
+  // 真正要防的是路径穿越,那由下面的 `..` 那条守着,一步没松。
+  .transform((p) => p.replace(/^\/+/, ""))
+  .refine((p) => p.length > 0, "路径不能只有斜杠")
   .refine((p) => !p.split("/").includes(".."), "路径不能包含 ..")
   .refine((p) => !/[\u0000-\u001f]/.test(p), "路径含非法字符");
 
@@ -69,6 +79,29 @@ export const listFilesSchema = z.object({
   /** 只列这个前缀下的文件,留空列全部 */
   prefix: z.string().trim().max(400).optional(),
 });
+
+/**
+ * 把参数校验失败说成模型能照着改的话。
+ *
+ * 只回一句「参数不合法:路径必须是相对路径」是不够的 —— 模型不知道
+ * 是哪个参数、当时传的是什么,于是它下一步很可能原样再试一次,
+ * 而每试一次都在烧本次运行的预算。真实后果:一次运行就这么耗光了,
+ * 工作区一个文件都没写出来。
+ *
+ * 所以把出错的字段名和它当时收到的值一起回去。
+ */
+function describeBadArgs(error: z.ZodError, args: unknown): string {
+  const issue = error.issues[0];
+  const field = issue?.path.join(".") ?? "";
+  const got = (args as Record<string, unknown> | null)?.[field];
+  const 实收 =
+    typeof got === "string"
+      ? `,收到的是「${got.slice(0, 120)}」`
+      : got === undefined
+        ? ",这个参数没有传"
+        : "";
+  return `参数 ${field || "(未知)"} 不合法:${issue?.message ?? "未知"}${实收}。请修正后重新调用。`;
+}
 
 /**
  * 工具声明。
@@ -170,7 +203,7 @@ export async function executeTool(
       case "write_file": {
         const parsed = writeFileSchema.safeParse(args);
         if (!parsed.success) {
-          return fail(`参数不合法:${parsed.error.issues[0]?.message ?? "未知"}`);
+          return fail(describeBadArgs(parsed.error, args));
         }
         await ctx.writeFile(parsed.data.path, parsed.data.content);
         return {
@@ -184,7 +217,7 @@ export async function executeTool(
       case "read_file": {
         const parsed = readFileSchema.safeParse(args);
         if (!parsed.success) {
-          return fail(`参数不合法:${parsed.error.issues[0]?.message ?? "未知"}`);
+          return fail(describeBadArgs(parsed.error, args));
         }
         const content = await ctx.readFile(parsed.data.path);
         if (content === null) {
@@ -207,7 +240,7 @@ export async function executeTool(
       case "list_files": {
         const parsed = listFilesSchema.safeParse(args);
         if (!parsed.success) {
-          return fail(`参数不合法:${parsed.error.issues[0]?.message ?? "未知"}`);
+          return fail(describeBadArgs(parsed.error, args));
         }
         const files = await ctx.listFiles(parsed.data.prefix);
         if (files.length === 0) {
@@ -255,6 +288,8 @@ export const AGENT_SYSTEM_PROMPT = `你是一个能直接操作工作区文件�
 1. 产出任何代码、配置或文档时,一律 write_file。回答正文里不出现文件内容。
 2. 修改已有文件前,先用 read_file 读一遍确认现状,不要凭记忆改。
 3. 开始一项任务前,先用 list_files 看看工作区里已经有什么,避免重复创建或覆盖不该动的文件。
+   **list_files 说工作区是空的,就直接开始 write_file** —— 空工作区里没有任何文件可读,
+   再去 read_file 只会白跑一趟,而每一趟都在消耗本次运行有限的时间。
 4. 回答正文只写:做了什么、为什么这么做、还剩什么没做。文件内容在工作区里,不必重复。
 5. 工具调用失败时,读懂失败原因并改正后重试,不要忽略它继续往下走。
 
