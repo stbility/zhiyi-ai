@@ -54,7 +54,19 @@ export interface InitialTurn {
 }
 
 interface Turn {
+  /** 渲染用的稳定 id。刚发出的那条是客户端造的临时值 `a-${Date.now()}` */
   id: string;
+  /**
+   * 数据库里的真实消息 id。
+   *
+   * 反馈按钮(👍/👎/我改成了这样)必须用它 —— message_feedback.message_id
+   * 是指向 messages 的外键,服务端还会用 Zod 校验它是不是 uuid。
+   * 此前这里传的是上面那个临时 id,于是**刚生成的回答点反馈必然失败**,
+   * 而那正是唯一想打分的时刻;只有刷新后从历史加载的消息才碰巧能用。
+   *
+   * 历史消息在 toTurn 里直接带上;新生成的那条由 done 事件回填。
+   */
+  dbId?: string;
   role: "user" | "assistant";
   content: string;
   /** 助手消息的调用留痕,生成完成后才有 */
@@ -253,21 +265,9 @@ function IconToggle({
   );
 }
 
-/**
- * 这条消息是否已经落库。
- *
- * 前端在流式生成期间用的是临时 id(不是 UUID),那时消息还没写进
- * messages 表 —— 对它提交反馈只会得到「找不到这条消息」。
- * 按 UUID 形状判断,比另加一个字段简单且不会忘记维护。
- */
-function isPersistedId(id: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-    id,
-  );
-}
-
 function toTurn(t: InitialTurn): Turn {
-  const turn: Turn = { id: t.id, role: t.role, content: t.content };
+  // 从库里恢复的消息,id 本身就是真实的 message id
+  const turn: Turn = { id: t.id, dbId: t.id, role: t.role, content: t.content };
   if (t.error) turn.error = t.error;
   if (t.latencyMs !== null) {
     turn.meta = {
@@ -343,6 +343,15 @@ export function ChatPanel({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   /** 桌面端历史栏是否展开。收起后输出区能多出 224px 宽度 */
   const [historyOpen, setHistoryOpen] = useState(true);
+
+  /**
+   * 连了几家服务商。
+   *
+   * 降级链只有跨**服务商**才真正起作用 —— 同一家的模型共用一个算力池,
+   * 那家堵的时候换它自己的另一个模型等于没换。只有一家时必须明说,
+   * 否则用户只会看到一次次超时,不知道系统其实无路可走。
+   */
+  const providerCount = new Set(models.map((m) => m.providerId)).size;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -508,12 +517,21 @@ export function ChatPanel({
             reasoning += payload.text;
             patchAssistant({ reasoning });
           } else if (event === "done" && "latencyMs" in payload) {
+            const done = payload as {
+              inputTokens: number | null;
+              outputTokens: number | null;
+              latencyMs: number;
+              messageId?: string;
+            };
             patchAssistant({
               meta: {
-                inputTokens: payload.inputTokens,
-                outputTokens: payload.outputTokens,
-                latencyMs: payload.latencyMs,
+                inputTokens: done.inputTokens,
+                outputTokens: done.outputTokens,
+                latencyMs: done.latencyMs,
               },
+              // 真实 id 回填 —— 没有它反馈按钮点不动。
+              // 落库失败时服务端不会带这个字段,那时按钮就不该出现。
+              ...(done.messageId ? { dbId: done.messageId } : {}),
             });
           } else if (event === "step" && "index" in payload) {
             // 智能体每完成一步就推一条 —— 跑几分钟期间什么都不显示,
@@ -741,6 +759,9 @@ export function ChatPanel({
           </IconButton>
         </div>
 
+        {/* ── 模块二:AI 助手 ──────────────────────────────
+            对话与输入。与上面的「模型配置」分开,是因为两者的性质不同:
+            一个是本次对话的前提(选完就不动),一个是持续的来回。 */}
         <div
           ref={scrollRef}
           className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-[18px] py-5"
@@ -844,8 +865,8 @@ export function ChatPanel({
                 {turn.role === "assistant" &&
                   turn.content !== "" &&
                   !turn.error &&
-                  isPersistedId(turn.id) && (
-                    <MessageFeedback messageId={turn.id} />
+                  turn.dbId !== undefined && (
+                    <MessageFeedback messageId={turn.dbId} />
                   )}
               </div>
             ))
@@ -870,6 +891,37 @@ export function ChatPanel({
           )}
         </div>
 
+        {/* ── 模块一:模型配置 ──────────────────────────────
+            从输入区的图标行里独立出来。
+            混在「添加文件夹 / 联网 / 智能体 / 发送」那一排里时,
+            「用哪个模型」这个决定和几个一次性开关同等重量,而它其实是
+            **本次对话的前提**,不是一个顺手拨一下的东西。 */}
+        <div className="border-divider flex shrink-0 flex-wrap items-center gap-2 border-t px-3.5 py-2">
+          <span className="text-fg-tertiary text-label shrink-0">模型</span>
+          <Select
+            value={selected}
+            onChange={setSelected}
+            options={models.map((m) => ({
+              value: m.value,
+              label: `${m.providerName} · ${m.modelId}`,
+            }))}
+            className="text-caption min-h-8 min-w-0 max-w-full flex-1 px-2.5 py-0"
+          />
+          {/* 只有一家服务商时,降级链无处可换 —— 这是排队时「换个模型
+              重试」失效的真实原因,但它在界面上此前完全不可见:
+              用户只会看到一次次超时,不知道系统其实无路可走。 */}
+          {providerCount === 1 && (
+            <Link
+              href="/settings/models"
+              className="text-warning hover:text-fg text-label flex items-center gap-1 whitespace-nowrap"
+              title="当前只连了一家服务商。它排队或容量不足时,系统没有别家可以自动切换,只能等待或失败。"
+            >
+              <Icon name="alert" size={12} className="shrink-0" />
+              仅一家服务商,无法自动切换
+            </Link>
+          )}
+        </div>
+
         <form
           onSubmit={send}
           className="border-divider flex shrink-0 flex-col gap-2 border-t p-3.5"
@@ -877,36 +929,12 @@ export function ChatPanel({
           {/* 「这一条会怎么执行」必须在发送前就看得见。
               状态集中放在这里说,按钮标签就能一直保持短 ——
               标签跟着状态变长会把整行控件撑开,反而更难扫。 */}
-          {(agentMode || webSearch) && (
-            <div className="border-brand bg-brand-tint rounded-control flex flex-wrap items-center gap-x-3 gap-y-1 border px-3 py-1.5">
-              {webSearch && (
-                <span className="text-brand text-label flex items-center gap-1.5">
-                  <Icon name="search" size={13} className="shrink-0" />
-                  联网:先检索再作答,并标注来源
-                </span>
-              )}
-              {agentMode && (
-                <span className="text-brand text-label flex items-center gap-1.5">
-                  <Icon name="bot" size={13} className="shrink-0" />
-                  智能体:代码写入
-                  <a
-                    href="/workspace"
-                    className="hover:text-brand-hover underline"
-                  >
-                    工作区
-                  </a>
-                  ,不贴在回答里
-                </span>
-              )}
-            </div>
-          )}
-
           {/* 只说结论,不说规则。
               取用规则那一长段搬到按钮的 title 里 —— 需要时悬停可见,
               不必每次都占掉输入区两行。 */}
           {!attachNote && contextFiles > 0 && (
             <p className="text-fg-secondary text-label">
-              本对话已关联 {contextFiles} 个项目文件,每轮提问模型都能看到。
+              已关联 {contextFiles} 个项目文件
             </p>
           )}
 
@@ -915,10 +943,6 @@ export function ChatPanel({
               <span className="text-fg-secondary text-label">{attachNote}</span>
               {attachments.length > 0 && (
                 <>
-                  {/* 如实说明作用范围,免得用户以为文件会一直跟着对话 */}
-                  <span className="text-fg-tertiary text-label">
-                    将保留在本对话,后续每轮都可见
-                  </span>
                   <button
                     type="button"
                     onClick={() => {
@@ -959,16 +983,6 @@ export function ChatPanel({
               min-h-10 放在输入框下面这一排太重,四个控件横过去很压视线。
               这里是辅助操作区,不该和正文抢注意力。 */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <Select
-              value={selected}
-              onChange={setSelected}
-              options={models.map((m) => ({
-                value: m.value,
-                label: `${m.providerName} · ${m.modelId}`,
-              }))}
-              className="text-caption min-h-8 min-w-0 max-w-full px-2.5 py-0"
-            />
-
             <input
               ref={folderInputRef}
               type="file"
@@ -1001,7 +1015,7 @@ export function ChatPanel({
             />
             <IconToggle
               label="智能体"
-              hint="开启后模型可以连续调用文件工具,产物直接写入工作区,而不是把代码贴在回答里"
+              hint="开启后模型可以连续调用文件工具,产物直接写入工作区。受平台单次请求时限约束,一次最多 3 步 —— 适合能一次说清的任务,不适合从零生成整个项目"
               icon="bot"
               active={agentMode}
               onClick={() => setAgentMode((v) => !v)}

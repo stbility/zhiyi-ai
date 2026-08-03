@@ -47,31 +47,33 @@ export interface AgentOutcome {
 }
 
 export interface AgentLimits {
-  /** 最多几步 —— 防止模型在工具之间反复横跳 */
+  /**
+   * 最多几步。
+   *
+   * **3 不是保守,是这个运行环境能容纳的上限。**
+   *
+   * 生产实测的单次调用耗时(全部成功):
+   *   41s · 41s · 65s · 70s · 98s · 111s · 139s · 154s
+   * 中位数约 84 秒,最长 154 秒。而 Vercel 的函数上限是 300 秒、
+   * 本次运行的预算是 240 秒 —— 也就是**最多装得下 2~3 步**。
+   *
+   * 此前这里写的是 12。按中位数算需要 1000 秒以上,从写下的第一天起
+   * 就不可能达成:实际表现永远是跑两三步、预算耗尽、报「已达到时间上限」。
+   * 承诺一个做不到的数字,和界面上写「已接通」而其实没通是同一件事。
+   *
+   * 真正的长任务要靠后台 Worker,不是靠把这个数字调大。
+   */
   readonly maxSteps: number;
   /** 总时间预算(毫秒),必须留在平台函数时限之内 */
   readonly budgetMs: number;
   /** 连续失败多少次就停 —— 一直失败说明它没在改正,再试也是浪费 */
   readonly maxConsecutiveFailures: number;
-  /**
-   * 单步等待上限(毫秒)。
-   *
-   * budgetMs 只在每步**开始前**判断,拦不住一个已经挂住的调用 ——
-   * 而智能体的每一步都是一次非流式请求,上游不回就一个字节都没有。
-   * 没有这一项时,服务商容量塌陷会让一步挂满整个函数时限,
-   * 最后被平台强杀、连接断开,浏览器只报「Failed to fetch」。
-   *
-   * 取 120 秒:正常模型写完一个文件远用不到,而慢到这个程度的
-   * 服务商本来就该被换掉。实际生效值还会被剩余预算进一步收窄。
-   */
-  readonly stepTimeoutMs: number;
 }
 
 export const DEFAULT_LIMITS: AgentLimits = {
-  maxSteps: 12,
+  maxSteps: 3,
   budgetMs: 240_000,
   maxConsecutiveFailures: 3,
-  stepTimeoutMs: 120_000,
 };
 
 /**
@@ -219,9 +221,19 @@ export async function runAgent({
 
       // 单步超时按**剩余预算**收窄,而不是每个候选各给一份 120 秒 ——
       // 否则三个候选轮下来就是 360 秒,早就撞破总预算和平台时限了。
+      // 单步超时 = **剩余预算**,不再另设一个固定上限。
+      //
+      // 原来是 Math.min(stepTimeoutMs=120秒, remaining)。那个 120 秒
+      // 比模型的正常工作时间还短:生产上 8 次成功调用里有 2 次是
+      // 139 秒和 154 秒,固定上限会误杀四分之一的正常请求 ——
+      // 而它们本来都能跑完。08-03 那次智能体运行就是这么死的:
+      // 第一步在 117 秒被掐断,换候选,预算烧光,0 字符输出。
+      //
+      // 仍然要有超时,但界限只能是「本次运行还剩多少时间」:
+      // callWithTools 是非流式的,上游不回就一个字节都收不到,
+      // 没有超时会一路挂到平台强杀、连接直接断开。
       const remaining = limits.budgetMs - (Date.now() - startedAt);
       if (remaining <= 0) break;
-      const stepTimeout = Math.min(limits.stepTimeoutMs, remaining);
 
       try {
         turn = await callWithTools({
@@ -232,7 +244,7 @@ export async function runAgent({
           messages,
           tools: gitContext ? [...FILE_TOOLS, ...GIT_TOOLS] : FILE_TOOLS,
           signal,
-          timeoutMs: stepTimeout,
+          timeoutMs: remaining,
         });
         if (
           candidate.providerId !== current.providerId ||

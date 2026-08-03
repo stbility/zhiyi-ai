@@ -38,6 +38,16 @@ export interface ModelRow {
   unavailableReason: string | null;
   /** 上次调用失败的原因。仅作留痕,不影响该模型是否可选 */
   lastError: string | null;
+  /**
+   * 是否出现在助手页的模型选择器里。
+   *
+   * 首次接入时探测**明确失败**的模型会被默认停用 —— 此前它们照样进选择器,
+   * 于是清理垃圾的活全落到用户头上(生产上他手工删了 75 个,还误删了
+   * kimi-k2.6 这样的好模型,因为光看名字分不出哪个能用)。
+   */
+  enabled: boolean;
+  /** 最近一次真实调通对话的时间。为空=未验证,不代表不可用 */
+  lastVerifiedAt: string | null;
 }
 
 export interface ProviderRow {
@@ -125,31 +135,61 @@ function ModelList({
       {expanded && (
         <>
           <ul className="flex flex-col gap-1">
-            {usable.map((m) => (
-              <li key={m.modelId} className="flex items-start gap-1.5">
-                <Icon
-                  name={m.lastError ? "alert" : "check"}
-                  size={12}
-                  className={cn(
-                    "mt-1 shrink-0",
-                    m.lastError ? "text-warning" : "text-success",
-                  )}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="text-fg-secondary text-label font-mono break-all">
-                    {m.modelId}
-                  </span>
-                  {/* 上次失败只是留痕,模型仍然可选 —— 说清楚这一点,
-                      否则用户会以为它又被系统禁用了 */}
-                  {m.lastError && (
-                    <span className="text-fg-tertiary text-label block">
-                      上次调用失败(仍可选用):{m.lastError}
+            {usable.map((m) => {
+              /* 三种状态,依据是「有没有真的调通过」而不是「名字像不像」。
+                 用户此前只能看模型名猜哪个能用,结果手工删了 75 个,
+                 还误删了 kimi-k2.6、gpt-oss-120b 这些好模型。 */
+              const verified = m.lastVerifiedAt !== null;
+              const state = !m.enabled
+                ? {
+                    icon: "x" as const,
+                    tone: "text-error",
+                    label: "已停用(探测未通过)",
+                  }
+                : verified
+                  ? {
+                      icon: "check" as const,
+                      tone: "text-success",
+                      label: "已验证可对话",
+                    }
+                  : {
+                      icon: "alert" as const,
+                      tone: "text-warning",
+                      label: "未验证",
+                    };
+              return (
+                <li key={m.modelId} className="flex items-start gap-1.5">
+                  <Icon
+                    name={state.icon}
+                    size={12}
+                    className={cn("mt-1 shrink-0", state.tone)}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="text-fg-secondary text-label font-mono break-all">
+                      {m.modelId}
                     </span>
-                  )}
-                </span>
-                {canManage && removeButton(m.modelId)}
-              </li>
-            ))}
+                    <span className={cn("text-label ml-1.5", state.tone)}>
+                      {state.label}
+                    </span>
+                    {/* 「未验证」不等于不可用 —— 说清楚,否则用户会把它当坏的删掉,
+                        而误删好模型正是上一次事故里发生过的事 */}
+                    {m.enabled && !verified && !m.lastError && (
+                      <span className="text-fg-tertiary text-label block">
+                        本次测试连接没轮到它,不代表不可用,可以直接试。
+                      </span>
+                    )}
+                    {m.lastError && (
+                      <span className="text-fg-tertiary text-label block">
+                        {m.enabled
+                          ? `上次调用失败(仍可选用):${m.lastError}`
+                          : m.lastError}
+                      </span>
+                    )}
+                  </span>
+                  {canManage && removeButton(m.modelId)}
+                </li>
+              );
+            })}
             {blocked.map((m) => (
               <li key={m.modelId} className="flex items-start gap-1.5">
                 <Icon name="x" size={12} className="text-error mt-1 shrink-0" />

@@ -145,7 +145,6 @@ describe("智能体循环", () => {
         maxSteps: 3,
         budgetMs: 60_000,
         maxConsecutiveFailures: 99,
-        stepTimeoutMs: 30_000,
       },
     });
 
@@ -181,7 +180,6 @@ describe("智能体循环", () => {
         maxSteps: 10,
         budgetMs: 60_000,
         maxConsecutiveFailures: 2,
-        stepTimeoutMs: 30_000,
       },
     });
 

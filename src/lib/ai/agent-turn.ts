@@ -199,23 +199,29 @@ export async function runAgentTurn({
               "或把任务说得更具体一些(例如「用 write_file 分别创建 A、B、C 三个文件」)。"
             : summarizeRun(outcome);
 
-        await supabase.from("messages").insert({
-          conversation_id: conversationId,
-          organization_id: organizationId,
-          role: "assistant",
-          content: summary,
-          provider_id: providerId,
-          model_id: model,
-          input_tokens: outcome.inputTokens,
-          output_tokens: outcome.outputTokens,
-          latency_ms: Date.now() - startedAt,
-        });
+        // 取回 id:反馈按钮要用它。见 route.ts 的 insertAssistantMessage
+        const { data: savedRow } = await supabase
+          .from("messages")
+          .insert({
+            conversation_id: conversationId,
+            organization_id: organizationId,
+            role: "assistant",
+            content: summary,
+            provider_id: providerId,
+            model_id: model,
+            input_tokens: outcome.inputTokens,
+            output_tokens: outcome.outputTokens,
+            latency_ms: Date.now() - startedAt,
+          })
+          .select("id")
+          .single();
 
         send("delta", { text: summary });
         send("done", {
           inputTokens: outcome.inputTokens,
           outputTokens: outcome.outputTokens,
           latencyMs: Date.now() - startedAt,
+          ...(savedRow?.id ? { messageId: savedRow.id as string } : {}),
         });
       } catch (e) {
         const message =

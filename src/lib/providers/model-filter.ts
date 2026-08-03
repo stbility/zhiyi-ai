@@ -42,10 +42,96 @@ const NON_CHAT_PATTERNS: readonly RegExp[] = [
   /diffusion/i,
   /video-detector/i,
   /(^|[-/])(nv)?clip([-/]|$)/i,
+
+  // —— 以下七类是生产事故补上的 ——
+  //
+  // 真实经过:英伟达目录有 78+ 个模型,上面这些规则只挡下十来个,
+  // 其余全量导入进用户的模型选择器。用户随手点一个,可能是视觉模型
+  // (调 /chat/completions 直接失败)、翻译模型(只会翻译)、
+  // 阿拉伯语模型(用中文问、用阿拉伯语答 —— 用户报告为「乱码」)。
+  // 最后他手工删了 75 个,连 kimi-k2.6、gpt-oss-120b 这些好模型
+  // 都误删了 —— 因为光看模型名根本分不出哪个能用。
+  //
+  // 这些模型不是「坏」,是**用途不对**。把它们放进对话选择器,
+  // 就是拿「服务商目录里有」冒充「用户能用」,和本项目一直反对的
+  // 「未接通却标记为已就绪」是同一件事。
+
+  // 语音:识别与合成,没有 /chat/completions 端点
+  /whisper/i,
+  /(^|[-/])(tts|asr|stt)([-/]|$)/i,
+  /speech/i,
+  /(^|[-/])riva([-/]|$)/i,
+
+  // 视觉语言:需要图像输入,纯文本对话调用会失败或答非所问
+  /(^|[-/])vision([-/]|$)/i,
+  /(^|[-/])vl([-/]|$)/i,
+  /(^|[-/])fuyu([-/]|$)/i,
+  /kosmos/i,
+  /(^|[-/])neva([-/]|$)/i,
+  /(^|[-/])vila([-/]|$)/i,
+
+  // 翻译专用 —— 只做翻译,不是通用助手
+  /translate/i,
+
+  // 代码补全(FIM):按前后文补全代码片段,不是对话模型
+  /starcoder/i,
+  /codegemma/i,
+  /codellama/i,
+  /codestral/i,
+  /(^|[-/])[\w.]*code-instruct([-/]|$)/i,
+
+  // 校准/研究用途,不面向终端用户
+  /calibration/i,
 ];
 
+/**
+ * 中文工作流里事实上不可用的模型。
+ *
+ * 与上面不同:这些**能**对话,只是对中文用户没有意义 ——
+ * 语种专用模型会用它自己的语言回答(生产上 allam-2-7b 用阿拉伯语
+ * 回答中文提问,用户判断为「乱码」),极小模型的中文能力接近于零。
+ *
+ * 单独成一组是因为判定依据不同:上面那组是「协议上调不通」,
+ * 这组是「调得通但答非所问」。将来若要支持多语种界面,该放开的是这一组。
+ */
+const NOT_FOR_CHINESE_PATTERNS: readonly RegExp[] = [
+  // 只收语种/地区专用模型 —— 它们会用**自己的语言**回答中文提问,
+  // 这正是用户报告的「乱码」:allam-2-7b 用阿拉伯语回了中文问题。
+  /(^|[-/])allam([-/]|$)/i, // 阿拉伯语
+  /sea-lion/i, // 东南亚语种
+  /(^|[-/])jais([-/]|$)/i, // 阿拉伯语
+];
+
+// 刻意**不**收的两类,尽管用户这次把它们也删了:
+//
+//   垂直领域(palmyra-med / palmyra-fin)—— 它们是能对话的,只是偏科。
+//   参数量小的模型(1B~3B)—— 中文差,但在本地 Ollama 上是合理选择。
+//
+// 这两类是「质量判断」,不是「用途判断」。本文件的既定原则是
+// 「宁可放过,不可错杀 —— 错杀会让用户找不到本来能用的模型」,
+// 而删除权本来就在用户手里(ai_model_exclusions)。系统只负责
+// 把结构上用不了的挡住,不替用户判断好不好用。
+
 export function isLikelyChatModel(modelId: string): boolean {
-  return !NON_CHAT_PATTERNS.some((pattern) => pattern.test(modelId));
+  return (
+    !NON_CHAT_PATTERNS.some((pattern) => pattern.test(modelId)) &&
+    !NOT_FOR_CHINESE_PATTERNS.some((pattern) => pattern.test(modelId))
+  );
+}
+
+/**
+ * 为什么被挡下 —— 界面要能解释,否则用户以为模型「丢了」。
+ *
+ * 返回 null 表示这个模型可以进选择器。
+ */
+export function whyNotChatModel(modelId: string): string | null {
+  if (NON_CHAT_PATTERNS.some((p) => p.test(modelId))) {
+    return "该模型的用途不是对话(嵌入/语音/视觉/翻译/代码补全/安全分类等),没有对话端点。";
+  }
+  if (NOT_FOR_CHINESE_PATTERNS.some((p) => p.test(modelId))) {
+    return "该模型是特定语种专用模型,会用它自己的语言回答中文提问。";
+  }
+  return null;
 }
 
 /** 从服务商返回的模型列表中筛出可用于对话的部分 */

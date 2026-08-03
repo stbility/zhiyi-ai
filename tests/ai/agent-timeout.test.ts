@@ -133,11 +133,17 @@ describe("智能体单步超时", () => {
     vi.unstubAllGlobals();
   });
 
-  it("主模型慢到不可用时,自动换备用模型并把活干完", async () => {
-    // 这条是「智能体能正常工作」的定义,也是生产上真实发生过的场景:
-    // NVIDIA 上的模型 15 秒才挤出一个 token,而同一时刻别家好好的。
-    // 期望的行为不是报错,是换一个把任务完成 —— 用户不该为服务商的
-    // 容量问题买单。
+  it("主模型快速失败时,自动换备用模型并把活干完", async () => {
+    // 这条是「智能体能正常工作」的定义。
+    //
+    // 注意用的是**快速失败**(503)而不是挂住不返回:单步超时取消固定上限
+    // 之后,界限只剩「本次运行还剩多少时间」—— 一个真正挂住的上游会把整个
+    // 预算吃光,后面的候选连启动的机会都没有。这是刻意的取舍:原来那个
+    // 120 秒固定上限比模型的正常工作时间(生产实测 100~154 秒)还短,
+    // 会误杀四分之一的正常请求,代价比「挂死时没有备用」大得多。
+    //
+    // 而真实世界里绝大多数服务商故障是快速失败的(503 排队、401 密钥、
+    // 404 模型不存在),那些情况下降级链照常工作 —— 这条测的就是它。
     const { agent, cipher } = await load();
     const files = new Map<string, string>();
 
@@ -147,15 +153,13 @@ describe("智能体单步超时", () => {
       vi.fn().mockImplementation(
         (_url: string, init: { body: string; signal: AbortSignal }) => {
           const model = (JSON.parse(init.body) as { model: string }).model;
-          // slow 永远不回,只能靠超时切断
+          // slow 立刻回 503(排队)—— 服务商故障最常见的形态
           if (model === "slow") {
-            return new Promise((_r, reject) => {
-              init.signal.addEventListener("abort", () =>
-                reject(
-                  Object.assign(new Error("aborted"), { name: "AbortError" }),
-                ),
-              );
-            });
+            return Promise.resolve(
+              new Response("ResourceExhausted: Worker limit reached", {
+                status: 503,
+              }),
+            );
           }
           // good 正常干活:先写文件,再收尾
           call += 1;
@@ -219,8 +223,6 @@ describe("智能体单步超时", () => {
         maxSteps: 5,
         budgetMs: 20_000,
         maxConsecutiveFailures: 3,
-        // 200 毫秒就判定 slow 不可用 —— 生产里是 120 秒,量级不同、逻辑一样
-        stepTimeoutMs: 200,
       },
     });
 
@@ -283,13 +285,12 @@ describe("智能体单步超时", () => {
           maxSteps: 3,
           budgetMs: 300,
           maxConsecutiveFailures: 3,
-          stepTimeoutMs: 120_000,
         },
       })
       .catch(() => undefined);
 
     expect(seen.length).toBeGreaterThan(0);
-    // 每一次都不超过总预算 —— 而不是每个候选各拿 120 秒
+    // 每一次都不超过总预算 —— 单步不再另设固定上限,界限只有「还剩多少时间」
     for (const t of seen) expect(t).toBeLessThanOrEqual(300);
     vi.unstubAllGlobals();
     vi.restoreAllMocks();

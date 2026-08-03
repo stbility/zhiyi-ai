@@ -78,7 +78,7 @@ async function loadModels(
 
   const { data } = await supabase
     .from("ai_models")
-    .select("provider_id, model_id, chat_unavailable_reason, last_error")
+    .select("provider_id, model_id, chat_unavailable_reason, last_error, enabled, last_verified_at")
     .eq("organization_id", organizationId)
     .order("model_id");
 
@@ -90,6 +90,8 @@ async function loadModels(
       unavailableReason:
         (row.chat_unavailable_reason as string | null) ?? null,
       lastError: (row.last_error as string | null) ?? null,
+      enabled: (row.enabled as boolean | null) ?? true,
+      lastVerifiedAt: (row.last_verified_at as string | null) ?? null,
     });
   }
   return byProvider;

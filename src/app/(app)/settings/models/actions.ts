@@ -480,6 +480,31 @@ export async function testProvider(
       }
     }
     notProbed = Math.max(0, candidates.length - i);
+
+    // 这里刻意**不**因为探测失败就停用模型。
+    //
+    // 探测是一次合成的一句话调用,它的失败不是模型的固有属性。仓库里记着
+    // 一次真实事故:用户实测 moonshotai/kimi-k2.6 可用,而我们的探测报 404,
+    // 界面上却长期挂着一条与事实相反的「不可用」。据此自动停用,等于把
+    // 能用的模型藏起来,而用户完全不知道发生了什么。
+    //
+    // 垃圾模型的问题由**导入前的用途过滤**解决(见 model-filter.ts),
+    // 那是按用途判断、可解释、不依赖一次可能失败的网络调用;
+    // 剩下的判断权交给用户,界面负责把「验证过 / 未验证 / 上次失败」
+    // 三种状态如实标出来,而不是替他决定。
+    // 探测通过的记下时间戳,界面据此显示「已验证可对话」
+    if (verified.length > 0) {
+      await supabase
+        .from("ai_models")
+        // 只写「验证通过」这一个事实,**不碰 last_error**。
+        // 既有策略是「测试连接不写任何失败状态」—— 探测是一次合成调用,
+        // 它的成败不是模型的固有属性(kimi-k2.6 探测报 404 而实际可用)。
+        // 清除旧留痕同样属于「据探测结果改状态」,一并不做:
+        // 真实对话成功时 api/chat 会清,那才是事实。
+        .update({ last_verified_at: new Date().toISOString() })
+        .eq("provider_id", parsed.data.id)
+        .in("model_id", verified);
+    }
   }
 
   revalidatePath("/settings/models");

@@ -158,7 +158,6 @@ describe("输出被长度上限截断时", () => {
         maxSteps: 12,
         budgetMs: 60_000,
         maxConsecutiveFailures: 3,
-        stepTimeoutMs: 10_000,
       },
     });
 

@@ -49,24 +49,25 @@ const FIRST_CHUNK_TIMEOUT_MS = 45_000;
 /** 流中途卡住的上限 —— 已经在输出了,给宽一些 */
 const STALL_TIMEOUT_MS = 60_000;
 
-/**
- * 吞吐下限:观察 90 秒后,产出低于 200 个字符就判定这个模型此刻不可用。
+/*
+ * 这里曾有一个「吞吐下限」:观察 90 秒后产出低于 200 字符就判定模型不可用。
  *
- * 为什么光有停滞检测不够 —— 这是生产上实测到的:
- *   NVIDIA 上的 deepseek-v4-flash,284 秒产出 18 个 token(88 个字),
- *   平均 15 秒挤一个字。而看门狗只要收到**任何**分片就重新计时,
- *   于是这种「一直在动、但等于没动」的情况永远触发不了停滞超时,
- *   用户老老实实等满 5 分钟,拿到 88 个字。
+ * 它被**整个删除**了,因为它的立论数据不存在。
  *
- * 同一时刻 DeepSeek 官方的同名模型是 65 秒 6353 个 token —— 差了两个数量级。
- * 这不是模型慢,是服务商此刻的容量塌了,而我们应该换一个,
- * 而不是把用户的 5 分钟耗光。
+ * 当时引用的证据是「NVIDIA deepseek-v4-flash 284 秒产出 18 个 token,
+ * 15 秒挤一个字」—— 而生产库 messages 表里查无此记录。真实数据恰恰相反:
  *
- * 阈值定得很宽松:200 字符 / 90 秒 ≈ 每秒 2 个字,比任何正常模型都慢得多,
- * 不会误伤真在认真思考的推理模型(它们的思考过程现在也计入产出)。
+ *   07-29  deepseek-v4-flash   14.5 token/秒
+ *   07-30  z-ai/glm-5.2        22.0 token/秒
+ *   08-02  deepseek-v4-flash   97 ~ 129 token/秒   ← 加了下限之后,更快
+ *
+ * 服务商从来没有塌陷过。据一个查无实据的结论加一道会中止用户请求的闸门,
+ * 比不加更糟:它会在长上下文的前 90 秒(模型还在处理三万个输入 token)
+ * 把一次正常的生成掐掉,而用户看到的是「模型不可用」。
+ *
+ * 真正有据可依的防线保留着:首片 45 秒(有 296 秒挂死的真实故障支撑)、
+ * 停滞 60 秒、总预算 285 秒。
  */
-const THROUGHPUT_GRACE_MS = 90_000;
-const THROUGHPUT_MIN_CHARS = 200;
 /**
  * 总预算。
  *
@@ -148,18 +149,28 @@ function errorResponse(message: string, status: number) {
 async function insertAssistantMessage(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   row: Record<string, unknown>,
-): Promise<boolean> {
-  if (!supabase) return false;
-  const { error } = await supabase.from("messages").insert(row);
-  if (error) {
+): Promise<string | null> {
+  if (!supabase) return null;
+  // 取回落库后的 id。
+  //
+  // 反馈按钮(👍/👎/我改成了这样)要用它:message_feedback.message_id 是
+  // 指向 messages 的外键,而客户端手里只有一个自己造的临时 id
+  // (`a-${Date.now()}`)。不把真实 id 发回去,刚生成的那条回答上
+  // 点任何反馈都会被 Zod 的 uuid 校验挡下 —— 而那恰恰是唯一想打分的时刻。
+  const { data, error } = await supabase
+    .from("messages")
+    .insert(row)
+    .select("id")
+    .single();
+  if (error || !data) {
     logDbFailure("messages.insert(assistant)", error, {
       conversationId: row["conversation_id"],
       organizationId: row["organization_id"],
       model: row["model_id"],
     });
-    return false;
+    return null;
   }
-  return true;
+  return data.id as string;
 }
 
 export async function POST(request: NextRequest) {
@@ -671,39 +682,7 @@ export async function POST(request: NextRequest) {
       });
 
       try {
-        /** 收到的全部字符,思考过程也算 —— 它同样证明模型在真的产出 */
-        let producedChars = 0;
-        const streamStartedAt = Date.now();
-
         for await (const chunk of chosen.stream) {
-          producedChars += chunk.text.length;
-
-          // 吞吐太低就当这个模型此刻不可用,中止并说清楚。
-          //
-          // 注意这里**不会**换模型,原来的注释写错了:这段代码跑在
-          // ReadableStream 的 start() 里,而选模型的那个 for 循环在
-          // streamChat 拿到响应头时就已经结束了 —— 抛出去只会被下面的
-          // catch 接住、发一个 error 事件,链上的下一个候选根本不会被试。
-          //
-          // 真正能自动换模型的是**首片超时**(45 秒没有任何输出),
-          // 它发生在选择循环内部,而且现在的候选是跨服务商的。
-          // 这里管的是另一种情况:一直在吐字、但慢到没有意义。
-          // 那时已经有内容发给用户了,中途换模型会让两个模型的话接在一起,
-          // 所以只能如实收尾,把「换一家」的决定交回给用户。
-          const elapsed = Date.now() - streamStartedAt;
-          if (
-            elapsed > THROUGHPUT_GRACE_MS &&
-            producedChars < THROUGHPUT_MIN_CHARS
-          ) {
-            throw new ProviderCallError(
-              `模型 ${usedModel} 在 ${Math.round(elapsed / 1000)} 秒内只产出了 ` +
-                `${producedChars} 个字符,吞吐远低于可用水平 —— 通常是该服务商此刻` +
-                `容量不足或排队严重。已中止,上面是已经生成的部分。\n` +
-                `建议在模型选择器里换一个**别家服务商**的模型重试 —— ` +
-                `同一家的其它模型多半一起堵。`,
-              503,
-            );
-          }
 
           if (chunk.kind === "reasoning") {
             // 思考过程实时推给前端,但**不计入正文** ——
@@ -779,6 +758,8 @@ export async function POST(request: NextRequest) {
           inputTokens: chosen.usage.inputTokens,
           outputTokens: chosen.usage.outputTokens,
           latencyMs: Date.now() - startedAt,
+          // 真实的消息 id,客户端据此把临时 id 换掉,反馈按钮才点得动
+          ...(saved ? { messageId: saved } : {}),
         });
       } catch (e) {
         // 看门狗掐断的,原因比 AbortError 有用得多

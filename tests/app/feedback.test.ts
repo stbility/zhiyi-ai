@@ -83,7 +83,13 @@ describe("界面", () => {
 
   it("只挂在已落库的助手消息上", () => {
     // 正在生成的那条还没有真实 id,给它一个必然报错的按钮不如不给
-    expect(PANEL).toContain("isPersistedId(turn.id)");
-    expect(PANEL).toMatch(/isPersistedId[\s\S]{0,400}\[0-9a-f\]\{8\}/);
+    expect(PANEL).toContain("turn.dbId !== undefined");
+    // 真实 id 必须由服务端回传,不能靠前端猜。
+    //
+    // 上一版是前端按 UUID 形状判断(isPersistedId):形状不像就把按钮
+    // 藏起来。结果是**刚生成的回答上永远没有按钮** —— 而那正是唯一
+    // 会打分的时刻,这个功能等于从没生效过。现在服务端在 done 事件里
+    // 带回落库的 id,前端回填到 dbId。
+    expect(PANEL).toMatch(/done\.messageId[\s\S]{0,200}dbId/);
   });
 });
