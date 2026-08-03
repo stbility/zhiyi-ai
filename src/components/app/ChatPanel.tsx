@@ -821,8 +821,16 @@ export function ChatPanel({
 
                 {/* 用户自己写的长提示词同样需要复制 —— 常要改一版重发 */}
                 {turn.content !== "" && (
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
                     <CopyButton text={turn.content} />
+                    {/* 反馈并进同一条操作行 —— 参考 Claude:赞/踩与「复制」
+                        同尺寸、同灰度、同 hover。此前它单独占一行,
+                        三个动作横在回答下面比回答本身还抢眼 */}
+                    {turn.role === "assistant" &&
+                      !turn.error &&
+                      turn.dbId !== undefined && (
+                        <MessageFeedback messageId={turn.dbId} />
+                      )}
                     {turn.meta && (
                       <span className="text-fg-tertiary text-label font-mono">
                         {turn.meta.latencyMs} ms
@@ -842,12 +850,6 @@ export function ChatPanel({
                     这是整条链路上唯一一件现在不做以后补不回来的事:
                     历史对话随时能回捞,但用户当时想把这句话改成什么,
                     过后没人记得。 */}
-                {turn.role === "assistant" &&
-                  turn.content !== "" &&
-                  !turn.error &&
-                  turn.dbId !== undefined && (
-                    <MessageFeedback messageId={turn.dbId} />
-                  )}
               </div>
             ))
           )}

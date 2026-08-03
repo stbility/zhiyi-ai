@@ -2,8 +2,9 @@
 
 import { useActionState, useState } from "react";
 
+import { Icon } from "@/components/icons/Icon";
 import { Button } from "@/components/primitives/Button";
-import { Tag } from "@/components/primitives/Tag";
+import { cn } from "@/lib/cn";
 import { SubmitButton } from "@/components/primitives/SubmitButton";
 import {
   submitFeedback,
@@ -41,24 +42,61 @@ export function MessageFeedback({ messageId }: { messageId: string }) {
    * 用设计系统的 Tag:它本来就是「可点击的状态标签」,
    * 选中后填品牌色,和输入区那两个模式开关同一套视觉。
    */
-  const verdictTag = (verdict: "good" | "bad", label: string) => (
+  /**
+   * 判定按钮。
+   *
+   * 参考 Claude 的做法:赞/踩用 thumbs 图标,和「复制」放在**同一个操作条**里、
+   * 用同一套样式;选中后点亮(赞=成功色,踩=警告色),并保持在选中态。
+   *
+   * 前面错了两次,记在这里:
+   *   ✓ / ✗  —— 读起来是「这个答案对不对」,不是「有没有用」。
+   *             用户看到每条回答下面挂个叉号,以为是「这条回答报错了」。
+   *   纯文字  —— 「有用 / 没帮上 / 我改成了这样」三个词一字排开,
+   *             比回答本身还抢眼,而这是低频动作,不该占这么重的视觉。
+   */
+  const verdictButton = (
+    verdict: "good" | "bad",
+    icon: "thumbsUp" | "thumbsDown",
+    label: string,
+    activeTone: string,
+  ) => (
     <form action={action} className="contents">
       <input type="hidden" name="messageId" value={messageId} />
       <input type="hidden" name="verdict" value={verdict} />
-      <button type="submit" onClick={() => setChosen(verdict)} className="contents">
-        <Tag active={chosen === verdict}>{label}</Tag>
+      <button
+        type="submit"
+        aria-label={label}
+        title={label}
+        aria-pressed={chosen === verdict}
+        onClick={() => setChosen(verdict)}
+        className={cn(
+          "inline-flex cursor-pointer items-center transition-colors duration-[var(--duration-hover)] ease-standard",
+          chosen === verdict
+            ? activeTone
+            : "text-fg-tertiary hover:text-fg-secondary",
+        )}
+      >
+        <Icon name={icon} size={13} />
       </button>
     </form>
   );
 
   return (
-    <div className="mt-1.5 flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-1">
-        {verdictTag("good", "有用")}
-        {verdictTag("bad", "没帮上")}
-        <Tag active={editing} onClick={() => setEditing((v) => !v)}>
+    <div className="flex flex-col gap-2">
+      {/* 与「复制」同一条操作行:图标同尺寸、同灰度、同 hover 行为 */}
+      <div className="flex flex-wrap items-center gap-3">
+        {verdictButton("good", "thumbsUp", "这个回答有用", "text-success")}
+        {verdictButton("bad", "thumbsDown", "这个回答没帮上", "text-warning")}
+
+        {/* 「我改成了这样」是最值钱的那条数据,但它是次要动作 ——
+            用文字链而不是按钮,不和上面两个图标抢重量 */}
+        <button
+          type="button"
+          onClick={() => setEditing((v) => !v)}
+          className="text-fg-tertiary hover:text-fg-secondary text-label cursor-pointer"
+        >
           {editing ? "收起" : "我改成了这样"}
-        </Tag>
+        </button>
 
         {state.ok && <span className="text-success text-label">{state.ok}</span>}
         {state.error && (
