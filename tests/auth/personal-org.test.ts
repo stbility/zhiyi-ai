@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+
+const { personalOrgSlug } = await import("@/lib/auth/personal-org");
 
 /**
  * 注册后自动建组织必须真的成功。
@@ -17,8 +21,13 @@ import { describe, expect, it } from "vitest";
  */
 
 const ROOT = resolve(__dirname, "../..");
+
+// 建组织的实现已经从注册动作里提到 lib/auth/personal-org.ts —— 注册和
+// 「登录时发现没有组织就补建」两条路必须用**同一份**实现。
+// 各写一份的话,slug 规则、必填列、回滚逻辑迟早分叉,而分叉的表现
+// 就是「注册的人没事,补建的人建出一个撞 CHECK 的标识」这种极难查的故障。
 const REGISTER_RAW = readFileSync(
-  resolve(ROOT, "src/app/(auth)/register/actions.ts"),
+  resolve(ROOT, "src/lib/auth/personal-org.ts"),
   "utf8",
 );
 
@@ -73,9 +82,20 @@ describe("注册后自动建个人组织", () => {
 
   it("user id 取自 createUser 的返回值,不去翻全站用户表", () => {
     // listUsers() 默认每页 50 条 —— 平台用户超过 50 之后新用户就不在第一页,
-    // 找不到就不建成员关系,还会留下一个谁都看不见的孤儿组织
-    expect(REGISTER).not.toContain("listUsers");
-    expect(REGISTER).toMatch(/data:\s*createdUser[\s\S]*?createUser\(/);
+    // 找不到就不建成员关系,还会留下一个谁都看不见的孤儿组织。
+    //
+    // 这一条守的是**注册动作**那一侧(它负责拿到 userId),
+    // 而 created_by 写没写在建组织那一侧 —— 两个文件各看各的,
+    // 混在一起搜的话,哪边坏了都指不出来。
+    const ACTIONS = readFileSync(
+      resolve(ROOT, "src/app/(auth)/register/actions.ts"),
+      "utf8",
+    );
+    expect(ACTIONS).not.toContain("listUsers");
+    expect(ACTIONS).toMatch(/data:\s*createdUser[\s\S]*?createUser\(/);
+    expect(ACTIONS).toMatch(
+      /createPersonalOrganization\(\s*admin,\s*email,\s*createdUser\.user\.id/,
+    );
     expect(REGISTER).toContain("created_by: userId");
   });
 
@@ -103,17 +123,11 @@ describe("组织标识生成", () => {
     return new RegExp(m?.[1] ?? "^$");
   })();
 
-  /** 复刻实现里的生成逻辑,对着真实约束验 */
-  function slugFor(email: string): string {
-    const local = email.split("@")[0] ?? "user";
-    const base = local
-      .toLowerCase()
-      .replace(/[^a-z0-9-]/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 30)
-      .replace(/-+$/, "");
-    return `${base || "user"}-${"a1b2c3"}`;
-  }
+  // 直接用**真实实现**,不复刻。
+  // 复刻的那一份只能证明"我脑子里的逻辑对",证明不了线上跑的那份对 ——
+  // 上一版就得再补一条源码正则去追认,而正则一改写法就失效。
+  const slugFor = (email: string) =>
+    personalOrgSlug(email, "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d");
 
   it("约束确实要求首尾是字母或数字 —— 前提校验", () => {
     expect(CHECK.source).toContain("^[a-z0-9]");
@@ -135,8 +149,16 @@ describe("组织标识生成", () => {
     expect(CHECK.test(slug), `不满足约束的标识:${slug}`).toBe(true);
   });
 
-  it("实现里确实剥掉了首尾连字符", () => {
-    // 只验行为不够 —— 上面那个 slugFor 是复刻的。这里确认真实代码也做了
-    expect(REGISTER).toMatch(/replace\(\/\^-\+\|-\+\$\/g, ""\)/);
+  it("后缀从 userId 派生,同一个用户永远得到同一个标识", () => {
+    // 这是自愈的幂等保证:两个并发请求同时发现"没有组织"时,
+    // 随机后缀会各建一个、用户凭空多出一个组织;确定后缀会让第二个
+    // 撞上 organizations_slug_key(UNIQUE),重查即可拿到第一个建好的。
+    // 用数据库已有的唯一约束做互斥,不必自己加锁。
+    const a = personalOrgSlug("x@y.com", "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d");
+    const b = personalOrgSlug("x@y.com", "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d");
+    expect(a).toBe(b);
+
+    const 另一个人 = personalOrgSlug("x@y.com", "ffffffff-4e5f-4a6b-8c7d-9e0f1a2b3c4d");
+    expect(另一个人, "不同用户撞到了同一个标识").not.toBe(a);
   });
 });

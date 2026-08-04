@@ -1,5 +1,6 @@
 import "server-only";
 
+import { ensurePersonalOrganization } from "@/lib/auth/personal-org";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
@@ -49,17 +50,52 @@ export async function getProfile(): Promise<Profile | null> {
 
 /** 当前用户所属的组织。新用户为空数组 —— 这是合法状态,不是错误。 */
 export async function getMyOrganizations(): Promise<readonly Organization[]> {
+  const rows = await queryMyMemberships();
+  if (rows === null) return [];
+
+  // 一个组织都没有 —— 补建一个再查一遍。
+  //
+  // 【为什么自愈放在这里,而不是布局或登录回调里】
+  //
+  // 这是**唯一漏不掉的收口**。需要组织的地方有 9 处,其中
+  // api/integrations/github/callback 和 settings/integrations/git-actions
+  // 都不经过 (app) 布局 —— 放布局里就会漏掉它们,而"某条路径忘了处理"
+  // 正是这类 bug 一再出现的方式。
+  //
+  // 代价是一个读函数带了写副作用。这里认这个代价:漏掉一条路径的后果是
+  // 用户在那条路径上依然是空的,而那正是要修的病。
+  //
+  // 只在**确认为空**时才动手,正常用户多花的是零成本的一次判断。
+  if (rows.length === 0) {
+    const 补建了 = await ensurePersonalOrganization();
+    if (补建了) {
+      const again = await queryMyMemberships();
+      return again === null ? [] : toOrganizations(again);
+    }
+    return [];
+  }
+
+  return toOrganizations(rows);
+}
+
+/** 原始成员关系行。null 表示查询本身失败(与「查到 0 条」是两回事) */
+async function queryMyMemberships(): Promise<unknown[] | null> {
   const supabase = await createSupabaseServerClient();
-  if (!supabase) return [];
+  if (!supabase) return null;
 
   const { data, error } = await supabase
     .from("memberships")
     .select("role, organizations (id, name, slug)")
     .eq("status", "active");
 
-  if (error || !data) return [];
+  // 查询出错时返回 null,不返回空数组 —— 否则一次网络抖动会被当成
+  // 「这个用户没有组织」,触发一次毫无必要的补建
+  if (error || !data) return null;
+  return data;
+}
 
-  return data.flatMap((row) => {
+function toOrganizations(data: readonly unknown[]): readonly Organization[] {
+  return (data as { role: string; organizations: unknown }[]).flatMap((row) => {
     const org = row.organizations as unknown as {
       id: string;
       name: string;

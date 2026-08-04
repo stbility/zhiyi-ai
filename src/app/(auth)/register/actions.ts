@@ -3,13 +3,9 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
-import { randomUUID } from "node:crypto";
-
 import { headers } from "next/headers";
-import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { logger } from "@/lib/log";
-
+import { createPersonalOrganization } from "@/lib/auth/personal-org";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   REGISTER_LIMITS,
@@ -155,78 +151,4 @@ function translate(message: string): string {
     return "该邮箱地址无法使用,请换一个。";
   }
   return message;
-}
-
-/**
- * 给新用户建一个个人组织并把他设为 owner。
- *
- * 走 service role 而不是用户身份客户端:此刻会话 Cookie 刚写进响应、
- * 还没回到浏览器,服务端这一侧拿不到已登录的用户身份 ——
- * 用用户身份客户端会被 RLS 挡下。
- *
- * 这是 service role 的正当用途:用户身份客户端在这个时点确实做不到。
- * 范围也严格限定 —— 只建一个组织、只给这一个用户一条成员关系。
- */
-async function createPersonalOrganization(
-  admin: SupabaseClient,
-  email: string,
-  userId: string,
-): Promise<void> {
-  const local = email.split("@")[0] ?? "user";
-
-  // 组织标识的约束是 ^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$(迁移 0001)——
-  // **必须以字母或数字开头和结尾**,不只是「只含小写字母数字连字符」。
-  //
-  // 上一版只做了字符替换就直接用,于是 `-foo@x.com` 会得到 `-foo-abc123`、
-  // `___@x.com` 会得到 `----abc123`,两者都以连字符开头,插入时撞 CHECK,
-  // 整个自动建组织再次静默失败 —— 和刚修好的 N1 是同一类问题:
-  // 光看「字段给了没」不够,还得看「值满足约束没」。
-  //
-  // 所以替换之后必须把首尾的连字符剥掉。结尾由随机十六进制后缀保证,
-  // 它永远是字母数字。
-  const base = local
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 30)
-    .replace(/-+$/, "");
-  const slug = `${base || "user"}-${randomUUID().slice(0, 6)}`;
-
-  const { data: org, error } = await admin
-    .from("organizations")
-    .insert({
-      name: `${local} 的空间`,
-      slug,
-      // organizations.created_by 是 NOT NULL(迁移 0001)。
-      // 上一版漏了这个字段,于是每次注册都撞 23502、走进下面的 error 分支
-      // 静默返回 —— 「新用户注册即可用」这个功能从来没有生效过,
-      // 而且因为失败被设计成不阻断注册,没有任何用户可见的迹象。
-      created_by: userId,
-    })
-    .select("id")
-    .single();
-
-  if (error || !org) {
-    logger.error({ dbError: error?.message, slug }, "自动创建个人组织失败");
-    return;
-  }
-
-  // user id 直接来自 createUser 的返回值。
-  //
-  // 上一版是调 listUsers() 再按邮箱找 —— 那个接口默认每页 50 条,
-  // 平台用户超过 50 之后新用户就不在第一页里,找不到 → 不建成员关系,
-  // 而且那条分支不回滚已建的组织,库里会留下一个谁都看不见的孤儿组织。
-  // createUser 本来就返回 user.id,根本不必去翻全站用户表。
-  const { error: memberError } = await admin.from("memberships").insert({
-    organization_id: org.id,
-    user_id: userId,
-    role: "owner",
-    status: "active",
-  });
-
-  if (memberError) {
-    // 留下一个谁都看不见的组织比没有更糟 —— 回滚
-    await admin.from("organizations").delete().eq("id", org.id);
-    logger.error({ dbError: memberError.message }, "自动建立成员关系失败,已回滚");
-  }
 }
