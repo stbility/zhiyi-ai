@@ -6,6 +6,12 @@ import { z } from "zod";
 import type { ChatMessage } from "@/lib/ai/gateway";
 import { logDbFailure } from "@/lib/log";
 import {
+  isPlatformProviderId,
+  loadPlatformCandidates,
+  type PlatformCandidate,
+} from "@/lib/ai/platform-models";
+import { getMyOrganizations } from "@/lib/db/queries";
+import {
   loadIntegrationCipher,
   loadProviderCipher,
 } from "@/lib/ai/credentials";
@@ -209,33 +215,96 @@ export async function preflightTurn(
 
   const { providerId, model, content } = parsed.data;
 
-  // 读取 Provider —— 走用户身份客户端,RLS 保证只能读到自己组织的。
-  // 密文列不在这里取:迁移 0018 之后它对 authenticated 不可读了。
-  const { data: provider } = await supabase
-    .from("ai_providers")
-    .select("id, kind, base_url, organization_id, enabled")
-    .eq("id", providerId)
-    .maybeSingle();
+  // 平台免费档走另一条授权路径。
+  //
+  // 它在 ai_providers 里**没有行** —— 那张表按组织存 BYOK,而平台档
+  // 是所有组织共享的。所以既不能靠 RLS 判权限,也不能从 provider 行上
+  // 取 organization_id。两件事分别重做:
+  //   · 组织:取当前用户自己的组织(与页面上看到的是同一个)
+  //   · 授权:重新跑一遍 loadPlatformCandidates —— 它内部按 free_only
+  //     过滤,所以「这个档位能不能用这个模型」的判定只有一处实现
+  //
+  // 关键:**不能因为 providerId 长得像平台标识就放行**。那个值是客户端
+  // 传上来的,客户端传什么都不构成授权 —— 必须落到候选列表里才算数。
+  let organizationId: string;
+  let apiKeyCipher: string;
+  // kind 与 base_url 两条路都要有 —— 下游用它们决定走哪个适配器、请求打到哪
+  let providerKind: string;
+  let providerBaseUrl: string | null;
 
-  if (!provider) {
-    return { ok: false, response: errorResponse("未找到该模型服务。", 404) };
-  }
-  if (provider.enabled === false) {
-    return { ok: false, response: errorResponse("该模型服务已停用。", 400) };
-  }
+  if (isPlatformProviderId(providerId)) {
+    const orgs = await getMyOrganizations();
+    const org = orgs[0];
+    if (!org) {
+      return {
+        ok: false,
+        response: errorResponse("你还没有可用的组织,无法发起对话。", 403),
+      };
+    }
 
-  // 上面这一行能读到,就说明 RLS 认可此人有权访问这个服务商 ——
-  // 授权判断完成之后,才用 service_role 取密文。顺序不能颠倒:
-  // 反过来先取密文再判断,等于把 RLS 架空。
-  const apiKeyCipher = await loadProviderCipher(providerId);
-  if (!apiKeyCipher) {
-    return {
-      ok: false,
-      response: errorResponse("无法读取该模型服务的密钥,请重新填写。", 500),
-    };
-  }
+    const { data: orgRow } = await supabase
+      .from("organizations")
+      .select("free_only")
+      .eq("id", org.id)
+      .maybeSingle();
 
-  const organizationId = provider.organization_id as string;
+    // 读不到时按免费档处理 —— 出错时选代价小的默认值,
+    // 少给几个模型好过把付费模型送给一个档位未知的组织
+    const list = await loadPlatformCandidates(
+      supabase,
+      orgRow?.free_only !== false,
+    );
+    const hit = list.find(
+      (c: PlatformCandidate) =>
+        c.providerId === providerId && c.modelId === model,
+    );
+    if (!hit) {
+      return {
+        ok: false,
+        response: errorResponse(
+          "这个模型当前不可用。它属于平台免费档 —— 可能是服务端未配置密钥,或你的组织不在该档位。",
+          403,
+        ),
+      };
+    }
+
+    organizationId = org.id;
+    providerKind = hit.kind;
+    providerBaseUrl = hit.baseUrl;
+    // 平台密钥来自环境变量,装载时已就地加密成与 BYOK 同一种形态
+    apiKeyCipher = hit.apiKeyCipher;
+  } else {
+    // 读取 Provider —— 走用户身份客户端,RLS 保证只能读到自己组织的。
+    // 密文列不在这里取:迁移 0018 之后它对 authenticated 不可读了。
+    const { data: provider } = await supabase
+      .from("ai_providers")
+      .select("id, kind, base_url, organization_id, enabled")
+      .eq("id", providerId)
+      .maybeSingle();
+
+    if (!provider) {
+      return { ok: false, response: errorResponse("未找到该模型服务。", 404) };
+    }
+    if (provider.enabled === false) {
+      return { ok: false, response: errorResponse("该模型服务已停用。", 400) };
+    }
+
+    // 上面这一行能读到,就说明 RLS 认可此人有权访问这个服务商 ——
+    // 授权判断完成之后,才用 service_role 取密文。顺序不能颠倒:
+    // 反过来先取密文再判断,等于把 RLS 架空。
+    const cipher = await loadProviderCipher(providerId);
+    if (!cipher) {
+      return {
+        ok: false,
+        response: errorResponse("无法读取该模型服务的密钥,请重新填写。", 500),
+      };
+    }
+
+    organizationId = provider.organization_id as string;
+    providerKind = provider.kind as string;
+    providerBaseUrl = provider.base_url as string | null;
+    apiKeyCipher = cipher;
+  }
 
   // 找到或新建对话
   let conversationId = parsed.data.conversationId;
@@ -464,8 +533,8 @@ export async function preflightTurn(
       organizationId,
       conversationId,
       providerId,
-      providerKind: provider.kind as string,
-      providerBaseUrl: provider.base_url as string | null,
+      providerKind,
+      providerBaseUrl,
       apiKeyCipher,
       model,
       content,

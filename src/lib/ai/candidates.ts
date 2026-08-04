@@ -5,6 +5,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadProviderCipher } from "@/lib/ai/credentials";
 import type { ProviderCredentials } from "@/lib/ai/gateway";
 import { vendorOf } from "@/lib/ai/fallback";
+import {
+  isPlatformProviderId,
+  loadPlatformCandidates,
+} from "@/lib/ai/platform-models";
 import type { ProviderKind } from "@/lib/providers/registry";
 
 /**
@@ -50,6 +54,40 @@ export interface ModelCandidate {
  * 且所属服务商也是启用的 —— 否则会把用户明确停用的服务商又拉回来用。
  */
 export async function loadOrgCandidates(
+  supabase: SupabaseClient,
+  organizationId: string,
+): Promise<readonly ModelCandidate[]> {
+  // 平台免费档 + 用户自己的 BYOK,合成一条候选链。
+  //
+  // 顺序上把 BYOK 放前面:那是用户自己付费、自己选的服务商,
+  // 他的意图优先。平台档是兜底 —— 但对新注册用户来说,
+  // 兜底就是全部,而这正是「注册完直接能对话」的实现。
+  const [own, platform] = await Promise.all([
+    loadByokCandidates(supabase, organizationId),
+    loadPlatformFor(supabase, organizationId),
+  ]);
+  return [...own, ...platform];
+}
+
+/** 读组织的 free_only 开关,再据此取平台模型 */
+async function loadPlatformFor(
+  supabase: SupabaseClient,
+  organizationId: string,
+): Promise<readonly ModelCandidate[]> {
+  const { data } = await supabase
+    .from("organizations")
+    .select("free_only")
+    .eq("id", organizationId)
+    .maybeSingle();
+
+  // 读不到时按**免费档**处理,不是按「全放行」。
+  // 出错时的默认值要选代价小的那个:少给几个模型,总好过把付费模型
+  // 白送给一个我们其实不知道档位的组织。
+  const freeOnly = data?.free_only !== false;
+  return loadPlatformCandidates(supabase, freeOnly);
+}
+
+async function loadByokCandidates(
   supabase: SupabaseClient,
   organizationId: string,
 ): Promise<readonly ModelCandidate[]> {
@@ -167,6 +205,17 @@ export function createCredentialLoader(): (
   return async (candidate) => {
     const hit = cache.get(candidate.providerId);
     if (hit !== undefined) return hit;
+
+    // 平台模型的密钥来自环境变量,在装载时就地加密好了 ——
+    // 它在 ai_providers 里没有对应的行,拿 providerId 去查密文只会得到 null。
+    if (isPlatformProviderId(candidate.providerId)) {
+      const cipher = (candidate as { apiKeyCipher?: string }).apiKeyCipher;
+      const creds: ProviderCredentials | null = cipher
+        ? { kind: candidate.kind, baseUrl: candidate.baseUrl, apiKeyCipher: cipher }
+        : null;
+      cache.set(candidate.providerId, creds);
+      return creds;
+    }
 
     const cipher = await loadProviderCipher(candidate.providerId);
     const creds: ProviderCredentials | null = cipher

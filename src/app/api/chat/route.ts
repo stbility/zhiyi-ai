@@ -6,7 +6,13 @@ import {
   streamChat,
   type ProviderCredentials,
 } from "@/lib/ai/gateway";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { logger } from "@/lib/log";
+import {
+  isPlatformProviderId,
+  loadPlatformCandidates,
+} from "@/lib/ai/platform-models";
 import { createStallWatchdog } from "@/lib/ai/stall-watchdog";
 import {
   errorResponse,
@@ -124,24 +130,22 @@ export async function POST(request: NextRequest) {
   // 而且自动换在生产上造成过更糟的事:留痕记的是他选的那个,
   // 正文里写着换过别的,同一条记录两个模型名 —— 从他那一侧看,
   // 这和编造无法区分。智能体那条线 08-03 删了,对话这条线现在跟上。
-  const { data: providerRow } = await supabase
-    .from("ai_providers")
-    .select("kind, base_url, enabled")
-    .eq("id", providerId)
-    .eq("organization_id", organizationId)
-    .maybeSingle();
-
-  const credentials =
-    providerRow && providerRow.enabled !== false
-      ? {
-          kind: providerRow.kind as ProviderCredentials["kind"],
-          baseUrl: providerRow.base_url as string | null,
-          apiKeyCipher: cipher,
-        }
-      : null;
+  // 平台免费档的模型不在 ai_providers 里 —— 它没有属于任何组织的行。
+  //
+  // 这一支必须走**同一个** loadPlatformCandidates:授权判定(free_only、
+  // 环境变量配没配、模型有没有下架)只能有一处实现。在这里另写一遍
+  // 「是平台模型就放行」,等于给免费档开了一个不受档位约束的后门。
+  const credentials = isPlatformProviderId(providerId)
+    ? await platformCredentialsFor(supabase, organizationId, providerId, model)
+    : await byokCredentials(supabase, organizationId, providerId, cipher);
 
   if (!credentials) {
-    return errorResponse("这个服务商当前不可用。请到「模型服务」确认它已启用。", 503);
+    return errorResponse(
+      isPlatformProviderId(providerId)
+        ? "这个模型当前不可用。它属于平台免费档 —— 可能是服务端未配置密钥,或你的组织不在该档位。"
+        : "这个服务商当前不可用。请到「模型服务」确认它已启用。",
+      503,
+    );
   }
 
   // 这不是时限,是**收尾信号**。
@@ -430,4 +434,58 @@ export async function POST(request: NextRequest) {
       "X-Accel-Buffering": "no",
     },
   });
+}
+
+/**
+ * 平台免费档的凭据。
+ *
+ * 必须**重新走一遍授权判定**(free_only、环境变量、模型是否下架),
+ * 不能因为 providerId 长得像平台标识就放行 —— 那个标识是客户端传上来的,
+ * 而客户端传什么都不能构成授权。
+ */
+async function platformCredentialsFor(
+  supabase: SupabaseClient,
+  organizationId: string,
+  providerId: string,
+  modelId: string,
+): Promise<ProviderCredentials | null> {
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("free_only")
+    .eq("id", organizationId)
+    .maybeSingle();
+
+  // 读不到时按免费档处理 —— 出错时选代价小的默认值
+  const list = await loadPlatformCandidates(supabase, org?.free_only !== false);
+  const hit = list.find(
+    (c) => c.providerId === providerId && c.modelId === modelId,
+  );
+  if (!hit) return null;
+
+  return {
+    kind: hit.kind,
+    baseUrl: hit.baseUrl,
+    apiKeyCipher: hit.apiKeyCipher,
+  };
+}
+
+async function byokCredentials(
+  supabase: SupabaseClient,
+  organizationId: string,
+  providerId: string,
+  cipher: string,
+): Promise<ProviderCredentials | null> {
+  const { data: providerRow } = await supabase
+    .from("ai_providers")
+    .select("kind, base_url, enabled")
+    .eq("id", providerId)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (!providerRow || providerRow.enabled === false) return null;
+  return {
+    kind: providerRow.kind as ProviderCredentials["kind"],
+    baseUrl: providerRow.base_url as string | null,
+    apiKeyCipher: cipher,
+  };
 }

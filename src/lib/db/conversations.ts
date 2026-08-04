@@ -6,6 +6,9 @@ import type {
   InitialTurn,
   ModelOption,
 } from "@/components/app/ChatPanel";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { loadPlatformCandidates } from "@/lib/ai/platform-models";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
@@ -39,7 +42,7 @@ export async function loadModels(
     // 我们不替他关。
     .order("model_id");
 
-  return (data ?? []).flatMap((row) => {
+  const own: ModelOption[] = (data ?? []).flatMap((row) => {
     const provider = row.ai_providers as unknown as {
       display_name: string;
       enabled: boolean;
@@ -57,6 +60,48 @@ export async function loadModels(
       },
     ];
   });
+
+  // 平台免费档也要出现在选择器里 —— 否则新用户看到的仍是一个空列表,
+  // 「注册完直接能对话」照样不成立。
+  //
+  // 排在用户自己的模型之后:BYOK 是他自己配的,意图优先。
+  // 但对新注册用户来说 own 是空的,平台档就是全部。
+  //
+  // free_only 的判定与候选链**共用同一个函数**(loadPlatformCandidates),
+  // 不在这里另写一遍过滤 —— 两处各写一份的话,迟早出现
+  // 「选择器里看得到、真调用时被拒」或者反过来「选不到但降级会用到」。
+  const platform = await loadPlatformFor(supabase, organizationId);
+
+  return [...own, ...platform];
+}
+
+/**
+ * 平台档在选择器里的呈现。
+ *
+ * 只暴露 providerId / modelId / 显示名 —— 密钥(哪怕是密文)绝不进入
+ * 这个返回值:它会被序列化下发到浏览器。
+ * loadPlatformCandidates 返回的对象里带着 apiKeyCipher,
+ * 所以这里必须**逐字段挑出来**,不能整个对象展开。
+ */
+async function loadPlatformFor(
+  supabase: SupabaseClient,
+  organizationId: string,
+): Promise<ModelOption[]> {
+  const { data } = await supabase
+    .from("organizations")
+    .select("free_only")
+    .eq("id", organizationId)
+    .maybeSingle();
+
+  // 读不到时按免费档处理 —— 出错时的默认值要选代价小的那个
+  const list = await loadPlatformCandidates(supabase, data?.free_only !== false);
+
+  return list.map((c) => ({
+    providerId: c.providerId,
+    providerName: c.providerName,
+    modelId: c.modelId,
+    value: `${c.providerId}::${c.modelId}`,
+  }));
 }
 
 /**
