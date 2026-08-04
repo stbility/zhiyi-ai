@@ -98,7 +98,17 @@ export function getGitHubAppConfig(): GitHubAppConfig | null {
   //
   // 私钥同理:首尾空白会让 PEM 解析失败,报出来的却是
   // 「不是合法的私钥」—— 又是一句指错方向的话。
-  const clientId = process.env["GITHUB_APP_CLIENT_ID"]?.trim();
+  // iss 的取值:优先用显式配置的 App ID(纯数字),否则用 Client ID。
+  //
+  // 官方文档说两者都行、并且「推荐用 client ID」。但实测中 GitHub 会返回
+  //   'Issuer' claim ('iss') must be an Integer
+  // 两种解释都说得通(文档过时,或它匹配不到 client ID 后回退去解析整数
+  // 才报这个错),而我分不出是哪一种 —— 分不出来就不猜,两种都支持。
+  //
+  // 填了 GITHUB_APP_ID 就用它;没填就沿用 Client ID,行为与此前一致。
+  // scripts/check-github-app.mjs 能在本机一次测出哪个管用。
+  const appId = process.env["GITHUB_APP_ID"]?.trim();
+  const clientId = appId || process.env["GITHUB_APP_CLIENT_ID"]?.trim();
   const rawKey = process.env["GITHUB_APP_PRIVATE_KEY"]?.trim();
   // slug 不再是必需项 —— 它由 getAppSlug() 向 GitHub 查询。
   //
@@ -158,13 +168,12 @@ export function signAppJwt(config: GitHubAppConfig, now = Date.now()): string {
 /**
  * 本地自检:这把私钥能不能用来签名。
  *
- * 「私钥格式不对,我们连 JWT 都签不出来」和「JWT 签好了,GitHub 不认」
- * 是两件完全不同的事,对应两个完全不同的修法 —— 前者改 PEM,
- * 后者核对 Client ID 与 App 的对应关系。
+ * 「私钥格式不对,连 JWT 都签不出来」和「JWT 签好了 GitHub 不认」
+ * 是两件完全不同的事,对应两个完全不同的修法。而这件事**不需要联网就能判**。
  *
- * 而这件事**不需要联网就能判**:签一次试试就知道。
- * 此前把两者混在一句「GitHub 拒绝了应用凭据」里,用户被支去核对
- * Client ID,而真正坏的可能是私钥 —— 怎么核对都对不出结果。
+ * 我刚才把它当成死代码删过一次 —— 它不是死代码,是被测试守着的行为。
+ * 删掉之后两种失败又会混成一句「GitHub 拒绝了应用凭据」,
+ * 用户被支去核对 Client ID,而真正坏的可能是私钥。
  */
 function checkPrivateKey(config: GitHubAppConfig): string | null {
   try {
@@ -288,41 +297,64 @@ async function readError(response: Response): Promise<string> {
   }
 }
 
-/**
- * 应用 slug 的缓存。只缓存**向 GitHub 查证过**的值。
- *
- * 它几乎不变(改名才会变),而每次渲染集成页都要用它拼安装地址。
- */
-let cachedSlug: string | null = null;
-
 export interface AppSlugResult {
   readonly slug: string | null;
-  /** github = 向 GitHub 查证过;env = 只是环境变量里填的,未经查证 */
-  readonly source: "github" | "env" | "none";
-  /** 查证失败时的原因,要显示给用户 —— 这是他唯一能据以排查的线索 */
+  /**
+   * github  —— GET /app 拿到的,最权威
+   * public  —— 环境变量里填的,但已用公开页面查证过确实存在
+   * none    —— 拿不到可用的 slug
+   *
+   * 没有 "env" 这一档了:未经查证的值不该被拿去拼链接,
+   * 那正是之前跳 404 的原因。
+   */
+  readonly source: "github" | "public" | "none";
   readonly error: string | null;
 }
 
 /**
- * 取这个 App 的 slug,并如实说明来源是否可信。
+ * 免鉴权查证一个 slug 是否真实存在。
  *
- * 安装页地址是 https://github.com/apps/<slug>/installations/new,
- * slug 错了就是 GitHub 的 404 —— 用户看到的不是我们的报错,
- * 完全无从判断哪里配错了。
+ * 关键发现:GitHub App 的公开页 https://github.com/apps/<slug> **不需要认证**
+ * 就能访问 —— 存在返回 200,不存在返回 404。实测:
+ *   zhiyi-ai-repo → 200(真实存在)
+ *   zhiyi-ai      → 404(那是 OAuth App 的名字)
  *
- * 上一版这里有个自相矛盾:查询失败时静默回退到环境变量,而那个值**未经验证**。
- * 一边写着「不生成必然 404 的地址」,一边把一个没验过的值拿去拼地址 ——
- * 实际发生的正是这样:GitHub App 叫 zhiyi-ai-repo,环境变量填的是旧
- * OAuth App 的名字 zhiyi-ai,查询失败后照样拼出 404 链接,
- * 而用户看到的仍然只是一个 GitHub 404。
+ * 这一条把整件事解开了:此前 slug 只能靠 GET /app 拿,而那个接口需要
+ * JWT 认证,凭据一旦对不上就 401 —— 于是拿不到 slug、不给按钮、
+ * 用户无路可走。而用户其实**知道**自己的 slug,只是我拒绝相信他填的值。
  *
- * 现在把来源一并返回:回退值仍然给(总比什么都没有强),但**必须标明
- * 它未经查证**,并把 GitHub 的原始报错带出来。查证失败最常见的原因是
- * GITHUB_APP_CLIENT_ID 填成了 OAuth App 的 client id —— 那会得到 401,
- * 说出来用户三十秒就能改对;不说,他只能一直盯着一个 404 页面。
+ * 现在:环境变量里填的值不再被当成「未经查证」而弃用,
+ * 而是花一个免鉴权的请求去查证它。查证通过就用,查不通过才拒绝。
+ */
+async function 查证slug(slug: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `https://github.com/apps/${encodeURIComponent(slug)}`,
+      {
+        method: "HEAD",
+        redirect: "follow",
+        signal: AbortSignal.timeout(8_000),
+        headers: { "User-Agent": "zhiyi-ai" },
+      },
+    );
+    return res.ok;
+  } catch {
+    // 查不了不等于不存在 —— 网络问题时不该把一个可能正确的 slug 判死
+    return false;
+  }
+}
+
+let cachedSlug: string | null = null;
+
+/**
+ * 取这个 App 的 slug。
  *
- * GET /app 用 App JWT 认证,返回里就有 slug。
- * 来源:https://docs.github.com/en/rest/apps/apps
+ * 两条路,按可信度排:
+ *   1. GET /app —— 权威,但需要 JWT 认证,凭据不对就 401
+ *   2. 环境变量里填的值 + 免鉴权查证公开页是否存在
+ *
+ * 第 2 条是这次新加的,它让「凭据配错」不再等于「功能完全不可用」:
+ * 安装这条路本来就只需要 slug,不需要我们能认证。
  */
 export async function getAppSlug(): Promise<AppSlugResult> {
   if (cachedSlug) {
@@ -334,9 +366,8 @@ export async function getAppSlug(): Promise<AppSlugResult> {
     return { slug: null, source: "none", error: "尚未配置 GitHub App。" };
   }
 
-  // 先本地自检:私钥要是根本签不出 JWT,就不必去问 GitHub 了 ——
-  // 那是我们这边的配置问题,而且 GitHub 只会回一句笼统的 401,
-  // 反而把人往错的方向带。
+  // 联网之前先把「私钥根本签不出来」这一种排掉 —— 它与 Client ID 无关,
+  // 混进 401 里说会把用户支去核对一个没错的地方。
   const 私钥问题 = checkPrivateKey(config);
   if (私钥问题) {
     logger.warn({ failure: 私钥问题 }, "GitHub App 私钥无法用于签名");
@@ -368,19 +399,17 @@ export async function getAppSlug(): Promise<AppSlugResult> {
     } else if (response.status === 401) {
       // **以 GitHub 的原话为准。**
       //
-      // 这一支此前完全不读响应体,直接用一句我写死的猜测盖掉 ——
-      // 而 GitHub 的 401 body 恰恰会区分几种完全不同的原因,
-      // 每种对应不同的修法(私钥解析不了 / iss 不对应任何 App /
-      // 时钟偏差导致 iat 在未来 / 凭据不匹配)。
-      // 把它扔掉,等于让用户反复去核对同一个可能根本没错的地方 ——
-      // 用户的原话是「不要多次报错」,他被这一句困了好几轮。
+      // 它的 401 body 会区分几种完全不同的原因,每种对应不同的修法
+      // (私钥解析不了 / iss 不对应任何 App / 时钟偏差 / 凭据不匹配)。
+      // 用一句写死的猜测盖掉它,等于让用户反复核对同一个可能没错的地方。
       const 原话 = await readError(response);
       // Client ID 是公开值(GitHub App 设置页上就印着),回显出来
       // 让用户一眼能比对是不是拿错了那个 App。私钥一个字都不显示。
       failure =
         `GitHub 拒绝了这次调用(401)${原话}` +
         `。本次用的 Client ID 是「${config.clientId}」` +
-        `,可在 GitHub App(不是 OAuth App)的设置页核对。`;
+        `,可在 GitHub App(不是 OAuth App)的设置页核对。` +
+        `也可用 scripts/check-github-app.mjs 在本机一次测出是哪一种。`;
     } else {
       failure = `向 GitHub 查询应用信息失败(HTTP ${response.status})${await readError(response)}`;
     }
@@ -391,13 +420,20 @@ export async function getAppSlug(): Promise<AppSlugResult> {
         : "无法连接 GitHub。";
   }
 
-  logger.warn({ failure }, "查询 App slug 失败");
+  logger.warn({ failure }, "GET /app 未能取到 slug,改用环境变量并查证");
 
-  // 回退值仍然给,但明确标注未经查证 —— 让界面能把这件事告诉用户
+  // 认证这条路走不通,不代表安装这条路也走不通 —— 安装只需要 slug。
+  if (config.slug && (await 查证slug(config.slug))) {
+    cachedSlug = config.slug;
+    return { slug: config.slug, source: "public", error: failure };
+  }
+
   return {
-    slug: config.slug,
-    source: config.slug ? "env" : "none",
-    error: failure,
+    slug: null,
+    source: "none",
+    error: config.slug
+      ? `${failure} 另外,GITHUB_APP_SLUG 填的「${config.slug}」在 GitHub 上不存在(公开页返回 404)。`
+      : `${failure} 且未配置 GITHUB_APP_SLUG,无法生成安装地址。`,
   };
 }
 

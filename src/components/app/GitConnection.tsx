@@ -103,32 +103,17 @@ export function GitConnection({
             连接 GitHub
           </LinkButton>
         ) : (
-          // 拼不出安装地址时,不给假按钮,但也**不能让路断掉**。
+          // 拿不到查证过的 slug 时不给按钮。
           //
-          // 此前这里只有一句「暂时无法连接」,构成了一个死锁:
-          // slug 查不到 → 没按钮 → 用户无路可走。而 GitHub 的应用列表页
-          // 是公开地址,不需要我们拼 slug 也能到 —— 用户在那里点 Install,
-          // 装完照样会跳回我们的回调。
-          //
-          // 所以:说清楚发生了什么,同时给出仍然走得通的那条路。
-          // 「没有按钮」和「没有出路」是两回事。
-          <div className="flex flex-col gap-2">
-            <p className="text-fg-tertiary text-caption">
-              暂时无法连接,详情见服务端日志。你可以直接从 GitHub 安装:
-            </p>
-            <LinkButton
-              href="https://github.com/settings/installations"
-              external
-              variant="secondary"
-              size="sm"
-            >
-              <Icon name="externalLink" size={14} />
-              去 GitHub 安装应用
-            </LinkButton>
-            <p className="text-fg-tertiary text-label">
-              装好后会自动跳回这里。
-            </p>
-          </div>
+          // 这里曾经放过一个「去 GitHub 安装应用」指向
+          // github.com/settings/installations —— 那是**已安装应用的管理页**,
+          // 不是本应用的安装入口。用户点过去只会看到一个和我们无关的列表。
+          // 官方的安装地址只有 github.com/apps/<slug>/installations/new
+          // 一种形式,拼不出 slug 就没有别的路可走 —— 与其给一个指向别处的
+          // 链接,不如如实说没有。
+          <p className="text-fg-tertiary text-caption">
+            暂时无法连接,详情见服务端日志。
+          </p>
         )
       ) : (
         <p className="text-fg-tertiary text-caption">

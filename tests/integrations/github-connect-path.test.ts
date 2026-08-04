@@ -34,7 +34,18 @@ const GITHUB = readFileSync(
 
 /** 去掉注释再查,避免把"记录踩过的坑"的说明误判成代码 */
 function code(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  return (
+    text
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      // 只剥**行首**的 // 注释。
+      //
+      // 原来写的是 /\/\/.*$/gm —— 它会把 https://github.com/... 里的
+      // 那两个斜杠也当成注释起点,从那里截到行尾,于是源码里明明有的
+      // URL 在这里"消失"了,测试红在一个其实正确的实现上。
+      // 剥注释是为了不把「记录踩过的坑」的说明误判成违规,
+      // 而那些说明本来就都在行首。
+      .replace(/^\s*\/\/.*$/gm, "")
+  );
 }
 
 describe("环境变量的首尾空白", () => {
@@ -70,19 +81,41 @@ describe("回调:没有 state 也要能完成连接", () => {
   });
 });
 
-describe("卡片:拿不到安装地址时仍要给出路", () => {
-  it("提供 GitHub 官方安装入口,而不是只说一句「暂时无法连接」", () => {
-    // 「没有按钮」和「没有出路」是两回事
-    expect(CARD).toContain("https://github.com/settings/installations");
-    expect(CARD).toContain("去 GitHub 安装应用");
-  });
-
-  it("同时说明装完会自动跳回来 —— 否则用户不知道下一步", () => {
-    expect(CARD).toContain("跳回这里");
+describe("卡片:不给指向别处的链接", () => {
+  it("不再指向 settings/installations —— 那是已安装应用的管理页,不是本应用的安装入口", () => {
+    // 用户点过去只会看到一个和我们无关的列表。官方的安装地址只有
+    // github.com/apps/<slug>/installations/new 一种形式。
+    // 来源:docs.github.com/apps/sharing-github-apps/sharing-your-github-app
+    // 剥掉注释再查:注释里记着「这里曾经指向那个地址、为什么是错的」,
+    // 那是有价值的说明,不该被当成违规
+    expect(code(CARD)).not.toContain("github.com/settings/installations");
   });
 
   it("仍然不生成拼错 slug 的假链接", () => {
-    // 这条不能因为加了出路就放松:一个必然 404 的按钮比没有按钮更糟
     expect(CARD).not.toMatch(/href=\{installHref \?\? "#"\}/);
+  });
+});
+
+describe("slug 的两条查证路径", () => {
+  const GH = code(GITHUB);
+
+  it("GET /app 走不通时,用公开页免鉴权查证环境变量里的 slug", () => {
+    // 关键:GitHub App 的公开页 github.com/apps/<slug> 不需要认证 ——
+    // 存在 200、不存在 404。实测 zhiyi-ai-repo → 200、zhiyi-ai → 404。
+    // 之前只认 GET /app,凭据一配错就彻底没有按钮;
+    // 而安装这条路本来只需要 slug,不需要我们能认证。
+    expect(GH).toMatch(/github\.com\/apps\//);
+    expect(GH).toMatch(/method: "HEAD"/);
+  });
+
+  it("查证不过的 slug 一律不返回 —— 未经查证的值正是之前跳 404 的原因", () => {
+    expect(GH).toMatch(/source: "none"/);
+    // 不能再有「拿到就用」的 env 档
+    expect(GH).not.toMatch(/source: "env"/);
+  });
+
+  it("查证过的来源要能区分权威程度", () => {
+    expect(GH).toMatch(/source: "github"/);
+    expect(GH).toMatch(/source: "public"/);
   });
 });

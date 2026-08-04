@@ -302,20 +302,40 @@ describe("应用 slug", () => {
     vi.unstubAllGlobals();
   });
 
-  it("查询失败时回退到环境变量 —— 网络抖一下不该让入口消失", async () => {
+  it("查询失败时不再无条件回退 —— 未查证的值不拿去拼链接", async () => {
     stubConfig("兜底名字");
+    // GET /app 失败,且公开页查证也失败(fetch 一律抛错)
     vi.stubGlobal("fetch", async () => {
       throw new TypeError("fetch failed");
     });
 
     const { getAppSlug } = await import("@/lib/integrations/github");
     const r = await getAppSlug();
-    expect(r.slug).toBe("兜底名字");
-    // 关键:回退值必须标成未查证,并带出失败原因。
-    // 上一版静默回退到一个没验过的值,拼出的仍然是 404 链接,
-    // 而用户只看到 GitHub 的 404,完全无从排查。
-    expect(r.source).toBe("env");
+
+    // 此前这里会把环境变量里那个**没验过**的值直接返回,
+    // 于是照样拼出可能 404 的链接 —— 那正是用户撞到的 bug。
+    expect(r.slug).toBeNull();
+    expect(r.source).toBe("none");
     expect(r.error).toBeTruthy();
+    vi.unstubAllGlobals();
+  });
+
+  it("公开页查证通过时,环境变量里的值可以用", async () => {
+    stubConfig("zhiyi-ai-repo");
+    // 第一次是 GET /app(失败),第二次是公开页 HEAD(成功)
+    let n = 0;
+    vi.stubGlobal("fetch", async () => {
+      n += 1;
+      if (n === 1) return new Response("{}", { status: 401 });
+      return new Response(null, { status: 200 });
+    });
+
+    const { getAppSlug } = await import("@/lib/integrations/github");
+    const r = await getAppSlug();
+
+    // 关键:认证走不通不代表安装走不通 —— 安装只需要 slug
+    expect(r.slug).toBe("zhiyi-ai-repo");
+    expect(r.source).toBe("public");
     vi.unstubAllGlobals();
   });
 
@@ -346,5 +366,53 @@ describe("应用 slug", () => {
     stubConfig();
     const { getGitHubAppConfig } = await import("@/lib/integrations/github");
     expect(getGitHubAppConfig()).not.toBeNull();
+  });
+});
+
+/**
+ * iss 到底该填 Client ID 还是 App ID。
+ *
+ * 官方文档说两者都行、并且「推荐用 client ID」。但实测 GitHub 会返回
+ *   'Issuer' claim ('iss') must be an Integer
+ * 两种解释都说得通(文档过时,或它匹配不到 client ID 后回退去解析整数
+ * 才报这个错),而离线分不出是哪一种。
+ *
+ * 分不出来就不猜:两种都支持,谁配了用谁。这样无论真相是哪一个,
+ * 用户都不会卡在一个「文档说可以、实际不行」的死角里。
+ */
+describe("iss 的取值", () => {
+  it("填了 App ID 就用它 —— 它是纯数字,满足 Integer 的要求", async () => {
+    vi.stubEnv("GITHUB_APP_ID", "1234567");
+    vi.stubEnv("GITHUB_APP_CLIENT_ID", "Iv1.something");
+    vi.stubEnv("GITHUB_APP_PRIVATE_KEY", privateKey);
+
+    const { getGitHubAppConfig, signAppJwt } = await import(
+      "@/lib/integrations/github"
+    );
+    const config = getGitHubAppConfig()!;
+    const [, payload] = signAppJwt(config).split(".");
+    expect(decode(payload!)["iss"]).toBe("1234567");
+  });
+
+  it("没填 App ID 时沿用 Client ID —— 行为与此前一致", async () => {
+    vi.stubEnv("GITHUB_APP_ID", "");
+    vi.stubEnv("GITHUB_APP_CLIENT_ID", "Iv1.something");
+    vi.stubEnv("GITHUB_APP_PRIVATE_KEY", privateKey);
+
+    const { getGitHubAppConfig, signAppJwt } = await import(
+      "@/lib/integrations/github"
+    );
+    const config = getGitHubAppConfig()!;
+    const [, payload] = signAppJwt(config).split(".");
+    expect(decode(payload!)["iss"]).toBe("Iv1.something");
+  });
+
+  it("两个都没填时视为未配置,不拼一个空 iss 出去", async () => {
+    vi.stubEnv("GITHUB_APP_ID", "");
+    vi.stubEnv("GITHUB_APP_CLIENT_ID", "");
+    vi.stubEnv("GITHUB_APP_PRIVATE_KEY", privateKey);
+
+    const { getGitHubAppConfig } = await import("@/lib/integrations/github");
+    expect(getGitHubAppConfig()).toBeNull();
   });
 });

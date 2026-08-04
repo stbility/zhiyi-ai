@@ -71,6 +71,11 @@ const serverEnvSchema = z.object({
    * 私钥是完整 PEM;Vercel 的输入框会把换行存成字面量 \n,读取时要还原。
    * App slug 用于拼安装页地址 https://github.com/apps/<slug>/installations/new
    */
+  /**
+   * App ID(纯数字)。可选 —— 填了就用它当 JWT 的 iss,否则用 Client ID。
+   * 官方文档说两者都行,但实测 GitHub 可能只认整数形式的 App ID。
+   */
+  GITHUB_APP_ID: optionalString,
   GITHUB_APP_CLIENT_ID: optionalString,
   GITHUB_APP_PRIVATE_KEY: optionalString,
   GITHUB_APP_SLUG: optionalString,

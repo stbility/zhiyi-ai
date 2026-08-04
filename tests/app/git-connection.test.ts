@@ -65,15 +65,6 @@ describe("卡片上不摊诊断细节", () => {
     expect(CARD).toMatch(/暂时无法连接,详情见服务端日志。/);
   });
 
-  it("但短话不等于死路 —— 必须给出仍然走得通的那条", () => {
-    // 「卡片不摊诊断」和「用户无路可走」是两回事。
-    // 实际死锁:slug 查不到 → 没按钮 → 用户只能从 GitHub 自己装,
-    // 而当时卡片上一个字都没提这条路,他只看到「暂时无法连接」。
-    // GitHub 的应用列表页是公开地址,不需要我们拼 slug 就能到。
-    expect(CARD).toContain("https://github.com/settings/installations");
-    expect(CARD).toContain("装好后会自动跳回这里");
-  });
-
   it("已经用不上的 slug 属性不留在接口里", () => {
     // 删了渲染却留着属性,下一个人会以为它还有用,再把那几段话接回去
     expect(CARD).not.toMatch(/slugSource|slugError/);
@@ -86,17 +77,39 @@ describe("卡片上不摊诊断细节", () => {
 });
 
 describe("安装链接只能用查证过的 slug 拼", () => {
-  it("必须校验 source === \"github\"", () => {
-    // 光判 slug 非空是不够的:查询失败时它是环境变量里那个未经查证的值
-    expect(PAGE).toMatch(/slugResult\.source === "github"/);
+  it("拿去拼链接的 slug 必须查证过存在", () => {
+    // 这条守的原则没变:**不用未经查证的值**。变的是查证方式。
+    //
+    // 原来只认 GET /app(需要 JWT 认证),凭据一配错就彻底没有按钮。
+    // 但 GitHub App 的公开页 github.com/apps/<slug> **不需要认证**就能访问,
+    // 存在 200、不存在 404 —— 实测 zhiyi-ai-repo 200、zhiyi-ai 404。
+    // 用它查证环境变量里的值,同样满足「查证过」,而且解开了那个死锁:
+    // 安装这条路本来只需要 slug,不需要我们能认证。
+    //
+    // 所以现在允许两种来源,但 getAppSlug 保证:查证不过的一律返回 null。
+    const GH = read("src/lib/integrations/github.ts");
+    expect(GH, "公开页查证被删了 —— 那 slug 又会变成未经查证的值").toMatch(
+      /https:\/\/github\.com\/apps\/\$\{encodeURIComponent\(slug\)\}/,
+    );
+    expect(GH).toMatch(/method: "HEAD"/);
   });
 
-  it("环境变量回退值不得单独用来拼链接", () => {
-    // 形如 `slugResult.slug ? installUrl(...)` 的写法就是那个 bug 本身
-    expect(
-      PAGE,
-      "又改回了「只要有 slug 就拼链接」—— 那正是 404 的成因",
-    ).not.toMatch(/const installHref = slugResult\.slug\s*\n?\s*\?/);
+  it("集成页直接用 getAppSlug 的结果,不自己再判一次来源", () => {
+    // 「哪些 slug 可信」这件事只能有一处判断。
+    // 页面若再写一遍 source === "..." 的条件,两处规则迟早分叉 ——
+    // 上一版就是页面判 github、而 getAppSlug 却回退到未查证的 env,
+    // 两边对「可信」的定义不一致,链接照样是 404。
+    expect(PAGE).toMatch(/slugResult\.slug\s*\n?\s*\?\s*installUrl/);
+    expect(PAGE, "又在页面里重复判来源了").not.toMatch(
+      /slugResult\.source === "/,
+    );
+  });
+
+  it("查证不过时返回 null,而不是把原值放行", () => {
+    const GH = read("src/lib/integrations/github.ts");
+    // 只要还存在一条「拿到就用、不查证」的路径,404 就会回来
+    expect(GH).not.toMatch(/source: "env"/);
+    expect(GH).toMatch(/slug: null,\s*\n\s*source: "none"/);
   });
 
   it("拼不出链接时不渲染可点的按钮", () => {

@@ -141,25 +141,23 @@ export default async function IntegrationsPage({
     ? await getAppSlug()
     : { slug: null, source: "none" as const, error: null };
 
-  // **只有向 GitHub 查证过的 slug 才拿来拼链接。**
+  // 只用**查证过存在**的 slug 拼链接。
   //
-  // 上面那段注释一直写着「取不到就不生成链接」,但代码没有兑现:
-  // getAppSlug() 在查询失败时会回退到环境变量里的 GITHUB_APP_SLUG,
-  // 并把它当作结果返回(source: "env")。于是 slugResult.slug 非空,
-  // 链接照样生成 —— 指向一个 slug 可能根本不对的地址。
+  // 「查证」有两条路,可信度不同但都算数:
+  //   GET /app          —— 权威,但需要 JWT 认证,凭据不对就 401
+  //   公开页 HEAD 200   —— 免鉴权,只证明这个 slug 真实存在
   //
-  // 用户实际撞到的就是这个:点「连接 GitHub」跳到 GitHub 的 404。
-  // 而 404 页面上没有任何线索指向「是我们这边的环境变量填错了」,
-  // 他只会以为是这个功能坏了。
+  // 之前只认第一条,于是凭据一配错就彻底没有按钮 —— 而安装这条路
+  // 本来只需要 slug,根本不需要我们能认证。用户其实知道自己的 slug,
+  // 是我拒绝相信他填的值,又不肯花一个请求去查证它。
   //
-  // 环境变量里那个值是人手填的,没有任何东西保证它和真实的 App 对得上;
-  // /app 接口返回的才是 GitHub 自己认的那个 slug。
-  // 查不到就不给按钮,由卡片把 GitHub 的原始报错摆出来 ——
-  // 一个必然 404 的按钮,比没有按钮更糟。
-  const installHref =
-    slugResult.slug && slugResult.source === "github"
-      ? installUrl(slugResult.slug, issueState(org.id))
-      : null;
+  // 官方文档确认安装地址只有一种形式:
+  //   https://github.com/apps/<slug>/installations/new
+  // 没有用 client id 的替代路径,所以 slug 是硬需求。
+  // 来源:docs.github.com/apps/sharing-github-apps/sharing-your-github-app
+  const installHref = slugResult.slug
+    ? installUrl(slugResult.slug, issueState(org.id))
+    : null;
   const params = await searchParams;
   const mcpTokens = await loadMcpTokens(org.id);
 
