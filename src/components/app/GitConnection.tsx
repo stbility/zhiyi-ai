@@ -12,6 +12,16 @@ export interface GitConnectionProps {
     accountLogin: string | null;
     installationId: string;
     connectedAt: string;
+    /**
+     * 非空表示:应用**已在 GitHub 上装好**,但本站换取访问令牌失败,
+     * 仓库工具暂时用不了。
+     *
+     * 这一栏存在的理由:此前换不到令牌就什么都不写,卡片一直显示
+     * 「未连接」—— 而用户看着 GitHub 上明明装好了的应用,只能得出
+     * 「这功能是坏的」。他没说错,但原因不是没装上。
+     * 安装是 GitHub 侧的客观事实,凭据坏是我们这边的问题,两件事。
+     */
+    credentialError?: string | null | undefined;
   } | null;
   /** 去 GitHub 授权的地址。未配置时为 null */
   installHref: string | null;
@@ -97,6 +107,11 @@ export function GitConnection({
             反复来问「这个按钮坏了」。见 StatusLabel 里的说明。 */}
         {!configured ? (
           <StatusLabel>未配置</StatusLabel>
+        ) : installation?.credentialError ? (
+          // 装上了,但我们这边换不到令牌 —— 既不是「已连接」也不是「未连接」。
+          // 之前只有两态,于是这种情况被显示成「未连接」,
+          // 而用户看着 GitHub 上明明装好的应用,只能认为这功能是坏的。
+          <StatusLabel tone="warning">已安装 · 凭据待修复</StatusLabel>
         ) : installation ? (
           <StatusLabel tone="success">已连接</StatusLabel>
         ) : (
@@ -136,10 +151,32 @@ export function GitConnection({
         </div>
       ) : installation ? (
         <div className="flex flex-col gap-3">
+          {/* 装上了,但我们这边换不到令牌。
+              把「安装是成的」和「凭据是坏的」分开说 —— 否则用户会反复
+              重装,而重装多少次都一样,坏的根本不是安装。 */}
+          {installation.credentialError && (
+            <p className="border-warning bg-warning-tint text-warning rounded-control text-caption p-3 whitespace-pre-line">
+              应用已经装在 GitHub 上了,这条记录不会丢,**也不需要重装** ——
+              凭据修好后自动恢复。
+              {"\n"}
+              但本站换取访问令牌失败,所以仓库工具现在还用不了:
+              {"\n"}
+              {installation.credentialError}
+            </p>
+          )}
           <div className="text-fg-secondary text-caption flex flex-wrap items-center gap-2">
-            <Icon name="link" size={14} className="text-success shrink-0" />
+            <Icon
+              name="link"
+              size={14}
+              className={
+                installation.credentialError
+                  ? "text-warning shrink-0"
+                  : "text-success shrink-0"
+              }
+            />
             <span>
-              已连接到 {installation.accountLogin ?? "GitHub 账号"}(安装编号{" "}
+              {installation.credentialError ? "已安装" : "已连接到"}{" "}
+              {installation.accountLogin ?? "GitHub 账号"}(安装编号{" "}
               <span className="font-mono">{installation.installationId}</span>)
             </span>
           </div>

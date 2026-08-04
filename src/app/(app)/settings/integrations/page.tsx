@@ -84,7 +84,7 @@ async function loadGitInstallation(organizationId: string) {
 
   const { data } = await supabase
     .from("git_installations")
-    .select("installation_id, account_login, created_at")
+    .select("installation_id, account_login, created_at, credential_error")
     .eq("organization_id", organizationId)
     .eq("provider", "github")
     .maybeSingle();
@@ -94,6 +94,9 @@ async function loadGitInstallation(organizationId: string) {
     installationId: data.installation_id as string,
     accountLogin: (data.account_login as string | null) ?? null,
     connectedAt: data.created_at as string,
+    // 非空 = 应用装上了,但本站的凭据换不到令牌。
+    // 这和「没装上」是两回事,卡片必须分开显示。
+    credentialError: (data.credential_error as string | null) ?? null,
   };
 }
 

@@ -159,38 +159,27 @@ export async function GET(request: NextRequest) {
   // 确认这个安装真的存在且我们能用它 —— 拿它换一次令牌是最直接的验证。
   // 不做这一步的话,一个不存在的 installation_id 也会被写进库,
   // 界面上显示「已连接」,直到用户真去拉代码才发现是空的。
+  // 换取一次令牌,确认这个安装我们真的能用。
+  //
+  // 但**换不到令牌不等于没装上**。这两件事此前被混在一起:换令牌失败就
+  // 什么都不写,直接带着报错返回,卡片一直显示「未连接」——
+  // 而用户看着 GitHub 上明明装好了的应用,只能得出「这功能是坏的」。
+  // 他没说错,但原因不是没装上,是我们这边的凭据坏了。
+  //
+  // 现在分开记:安装是 GitHub 说的客观事实,凭据问题是我们的问题。
+  // 记下来的好处是实的 —— 凭据修好之后**不需要重装、不需要重新授权**,
+  // 那一行已经在库里了。
   const auth = await getInstallationToken(installationId);
-  if (!auth.ok) {
-    // 说清楚**装是装上了**,坏的是我们这边的凭据。
-    //
-    // 走到这一步意味着:用户在 GitHub 上点完了安装,GitHub 也把
-    // installation_id 送了回来 —— 应用确实已经装好,而且持久保存在
-    // GitHub 侧。失败的是我们拿它去换令牌那一步,那需要私钥和 Client ID。
-    //
-    // 不区分的话,用户会以为安装没成功而反复重装 —— 重装多少次都一样,
-    // 因为坏的根本不是安装。而且凭据修好之后**不需要重装**:
-    // 再走一次配置页就会重新触发这个回调,记录就补上了。
-    logger.warn(
-      { installationId, reason: auth.error },
-      "安装已完成,但换取安装令牌失败,未写入连接记录",
-    );
-    return back(request, {
-      githubError:
-        `应用已经在 GitHub 上安装成功(安装编号 ${installationId}),` +
-        `但本站换取访问令牌失败,所以还没有记录为已连接 —— ` +
-        `**不需要重装**,把下面这个问题解决后再走一次「配置」即可:` +
-        `${auth.error}`,
-    });
-  }
 
   const supabase = await createSupabaseServerClient();
   if (!supabase) return back(request, { githubError: "认证服务未配置。" });
 
-  // 账号名与授权范围只能问 GitHub 要。
-  // 上一版把 URL 里的 setup_action 当成了 repository_selection ——
-  // 那个值是 "install" / "update",表示这次动作是安装还是更新,
-  // 和「授权了哪些仓库」完全无关。字段名与内容对不上的数据比不存更糟。
-  const info = await getInstallation(installationId);
+  // 账号名与授权范围只能问 GitHub 要,而那也需要令牌。
+  // 换不到令牌时这两个字段留空 —— 空着是「还不知道」,
+  // 比填一个猜的值诚实。
+  const info = auth.ok
+    ? await getInstallation(installationId)
+    : { accountLogin: null, repositorySelection: null };
 
   const { error } = await supabase.from("git_installations").upsert(
     {
@@ -200,6 +189,8 @@ export async function GET(request: NextRequest) {
       account_login: info.accountLogin,
       repository_selection: info.repositorySelection,
       connected_by: user.id,
+      // 凭据能用就清空,不能用就把原话记下来 —— 卡片据此如实显示状态
+      credential_error: auth.ok ? null : auth.error,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "organization_id,provider" },
@@ -213,6 +204,19 @@ export async function GET(request: NextRequest) {
     // RLS 会挡下非管理员 —— 这时要说清楚是权限问题,而不是笼统的「失败」
     return back(request, {
       githubError: `未能保存连接(可能是没有管理员权限):${error.message}`,
+    });
+  }
+
+  if (!auth.ok) {
+    logger.warn(
+      { installationId, reason: auth.error },
+      "安装已记录,但换取安装令牌失败 —— 凭据待修复",
+    );
+    return back(request, {
+      githubError:
+        `安装已记录(编号 ${installationId})。` +
+        `但本站换取访问令牌失败,仓库工具暂时不可用 —— ` +
+        `**不需要重装**,凭据修好后自动恢复:${auth.error}`,
     });
   }
 
