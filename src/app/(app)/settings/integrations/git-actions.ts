@@ -9,6 +9,7 @@ import { getMyOrganizations } from "@/lib/db/queries";
 import {
   installUrl,
   issueState,
+  normalizeSlug,
   uninstallApp,
   verifyAppSlug,
 } from "@/lib/integrations/github";
@@ -34,13 +35,18 @@ export interface ConnectState {
 }
 
 const schema = z.object({
-  // GitHub 的 App 名称转成 slug 后只含小写字母、数字、连字符
+  // 粘网址进来也认。用户手上最容易复制到的就是
+  // https://github.com/settings/apps/<名字> —— 那是 App 设置页的地址,
+  // 而页面上没有任何地方单独把「名字」标出来给人抄。
+  // 直接判它不合法,是把设计的问题算到用户头上。
   slug: z
     .string()
-    .trim()
-    .min(1, "请填写应用名称")
-    .max(100, "应用名称过长")
-    .regex(/^[a-zA-Z0-9-]+$/, "应用名称只含字母、数字与连字符"),
+    .max(300, "内容过长")
+    .transform((v) => normalizeSlug(v))
+    .refine(
+      (v): v is string => v !== null,
+      "认不出应用名称。填 GitHub App 的名字(例如 zhiyi-ai-repo),或直接粘它的网址。",
+    ),
 });
 
 export async function connectViaSlug(

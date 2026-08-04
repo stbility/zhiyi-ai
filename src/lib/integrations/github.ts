@@ -67,6 +67,43 @@ function statelessTokenHeader(): Record<string, string> {
   return { "X-GitHub-Stateless-S2S-Token": mode };
 }
 
+/**
+ * 把用户填的东西还原成 slug。
+ *
+ * 这个字段要的是**名字**(zhiyi-ai-repo),但用户填进来的是
+ *   https://github.com/settings/apps/zhiyi-ai-repo
+ * 而且他确信自己填对了 —— 这不怪他:那正是 GitHub App 设置页的地址,
+ * 从浏览器地址栏复制是最自然的动作,页面上也没有任何地方单独把
+ * 「名字」这三个字标出来给人抄。
+ *
+ * 我此前只做了 trim,于是拿着整条网址去拼安装地址,拼出一个不存在的
+ * 东西,公开页 404,报错却说「这个应用在 GitHub 上不存在」——
+ * 一句把人往错误方向带的话。**用户按最自然的方式操作却失败,
+ * 那是设计的问题,不是用户的问题。**
+ *
+ * 认得出的形式:
+ *   zhiyi-ai-repo
+ *   github.com/apps/zhiyi-ai-repo
+ *   https://github.com/apps/zhiyi-ai-repo/installations/new
+ *   https://github.com/settings/apps/zhiyi-ai-repo        ← 设置页,最常被复制
+ *   https://github.com/settings/apps/zhiyi-ai-repo/installations
+ *
+ * 认不出来就返回 null,不硬猜 —— 猜错的代价还是一个 404,
+ * 而 getAppSlug() 拿到 null 时会走公开页查证那条路,反而更稳。
+ */
+export function normalizeSlug(raw: string | undefined | null): string | null {
+  const value = raw?.trim();
+  if (!value) return null;
+
+  // 网址形式:apps/ 或 settings/apps/ 后面紧跟的那一段就是 slug
+  const fromUrl = /(?:^|\/)(?:settings\/)?apps\/([^/?#\s]+)/.exec(value);
+  const candidate = fromUrl?.[1] ?? value;
+
+  // GitHub 的 slug 只含字母、数字、连字符。剩下的一律不认 ——
+  // 认了只会拼出另一个 404,而 404 正是这几轮反复出现的那个问题。
+  return /^[a-zA-Z0-9-]+$/.test(candidate) ? candidate : null;
+}
+
 export interface GitHubAppConfig {
   readonly clientId: string;
   readonly privateKey: string;
@@ -117,7 +154,7 @@ export function getGitHubAppConfig(): GitHubAppConfig | null {
   // 拼出 https://github.com/apps//installations/new 这种必然 404 的地址。
   // 和 gateway 里 content ?? reasoning_content 是同一个陷阱:
   // 判空要按「有没有值」判,不是按「是不是 null」判。
-  const slug = process.env["GITHUB_APP_SLUG"]?.trim() || null;
+  const slug = normalizeSlug(process.env["GITHUB_APP_SLUG"]) || null;
   if (!clientId || !rawKey) return null;
 
   // 环境变量里换行常被写成字面量 \n(Vercel 的输入框就是这样),
@@ -405,11 +442,26 @@ export async function getAppSlug(): Promise<AppSlugResult> {
       const 原话 = await readError(response);
       // Client ID 是公开值(GitHub App 设置页上就印着),回显出来
       // 让用户一眼能比对是不是拿错了那个 App。私钥一个字都不显示。
-      failure =
-        `GitHub 拒绝了这次调用(401)${原话}` +
-        `。本次用的 Client ID 是「${config.clientId}」` +
-        `,可在 GitHub App(不是 OAuth App)的设置页核对。` +
-        `也可用 scripts/check-github-app.mjs 在本机一次测出是哪一种。`;
+      //
+      // 「could not be decoded」这一句要单独认出来 —— 它**不是** Client ID
+      // 的问题,而我上一版偏偏把 Client ID 摆在最前面,把用户支去核对
+      // 一个没错的地方,他照着核对了好几轮。
+      //
+      // 这个判断不是从错误文本猜的,是实测出来的:用一把**另外生成的、
+      // 合法的** RSA 私钥去签,GitHub 对两种 iss(Client ID 和数字 App ID)
+      // 都返回这一句。也就是说 —— 私钥本身格式没问题(所以 checkPrivateKey
+      // 放行了),只是不是这个 App 的那一把。
+      failure = 原话.includes("could not be decoded")
+        ? `GitHub 说这个 JWT 解不开(401)${原话}。` +
+          `\n这不是 Client ID 的问题 —— 用「${config.clientId}」实测过是能通的。` +
+          `\n是 GITHUB_APP_PRIVATE_KEY:它是一把**格式合法但不属于这个 App** 的私钥` +
+          `(格式不合法的话会在上一步就被拦下,根本走不到这里)。` +
+          `\n修法:在 GitHub App 设置页底部 Generate a private key 重新生成一个 .pem,` +
+          `把**整个文件内容**(含首尾的 BEGIN / END 两行)完整粘进 Vercel,然后重新部署。`
+        : `GitHub 拒绝了这次调用(401)${原话}` +
+          `。本次用的 Client ID 是「${config.clientId}」` +
+          `,可在 GitHub App(不是 OAuth App)的设置页核对。` +
+          `也可用 scripts/check-github-app.mjs 在本机一次测出是哪一种。`;
     } else {
       failure = `向 GitHub 查询应用信息失败(HTTP ${response.status})${await readError(response)}`;
     }

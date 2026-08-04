@@ -56,7 +56,14 @@ describe("环境变量的首尾空白", () => {
     const c = code(GITHUB);
     expect(c).toMatch(/GITHUB_APP_CLIENT_ID"\]\?\.trim\(\)/);
     expect(c).toMatch(/GITHUB_APP_PRIVATE_KEY"\]\?\.trim\(\)/);
-    expect(c).toMatch(/GITHUB_APP_SLUG"\]\?\.trim\(\)/);
+    // slug 不再在这里 trim —— 它改走 normalizeSlug(),那个函数内部 trim,
+    // 而且顺带把用户粘进来的整条网址还原成名字。
+    // 守卫改成守**行为**而不是守某一行长什么样:源码正则会把
+    // 「换了个更好的实现」误报成「保护没了」。
+    expect(c).toMatch(/normalizeSlug\(process\.env\["GITHUB_APP_SLUG"\]\)/);
+    // normalizeSlug 自己 trim 这件事,由 tests/integrations/normalize-slug.test.ts
+    // 直接调函数验证 —— 这个文件是纯源码检查,没有中和 server-only,
+    // 在这里 import github.ts 会直接抛错。
   });
 });
 
