@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 
-import { Badge } from "@/components/primitives/Badge";
+import { StatusLabel } from "@/components/primitives/StatusLabel";
 import { Icon } from "@/components/icons/Icon";
 import { Input } from "@/components/primitives/Input";
 import { SubmitButton } from "@/components/primitives/SubmitButton";
@@ -59,9 +59,9 @@ export function McpTokens({
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <h3 className="text-fg text-body font-medium">MCP 接入</h3>
         {active.length > 0 ? (
-          <Badge tone="success">{active.length} 把有效令牌</Badge>
+          <StatusLabel tone="success">{`${active.length} 把有效令牌`}</StatusLabel>
         ) : (
-          <Badge>未开通</Badge>
+          <StatusLabel>未开通</StatusLabel>
         )}
       </div>
 

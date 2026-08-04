@@ -482,6 +482,49 @@ export async function getInstallation(
   }
 }
 
+/**
+ * 在 GitHub 侧真正卸载这次安装。
+ *
+ * 官方接口:DELETE /app/installations/{installation_id},需要 App JWT,
+ * 成功返回 202。文档原话是「Uninstalls a GitHub App on a user, organization,
+ * or enterprise account」,并且「blocks the app from accessing the account's
+ * resources」。
+ * 来源:https://docs.github.com/en/rest/apps/apps
+ *
+ * 为什么非要调它:只删我们库里那一行,GitHub 那边的安装还在,
+ * 我们的私钥随时还能换出安装令牌、照样读得到代码。界面上写着「已断开」
+ * 而访问权限其实没收回 —— 那是**假的断开**,比不提供断开更糟。
+ *
+ * 返回 null 表示 GitHub 侧确实收回了;返回字符串是失败原因,
+ * 由调用方如实告诉用户「本地记录已删,但 GitHub 侧还没收回」。
+ */
+export async function uninstallApp(
+  installationId: string,
+): Promise<string | null> {
+  const config = getGitHubAppConfig();
+  if (!config) return "服务端未配置 GitHub App。";
+
+  try {
+    const response = await fetch(
+      `${API}/app/installations/${encodeURIComponent(installationId)}`,
+      {
+        method: "DELETE",
+        headers: headers(signAppJwt(config)),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    // 404 = 这次安装在 GitHub 上本来就不存在(用户已经自己卸载过)。
+    // 那正是我们想要的最终状态,当成功处理 —— 否则用户会卡在一个
+    // 永远断不开的连接上。
+    if (response.ok || response.status === 404) return null;
+    return `GitHub 拒绝了卸载请求(HTTP ${response.status})${await readError(response)}`;
+  } catch (e) {
+    return e instanceof Error && e.name === "TimeoutError"
+      ? "向 GitHub 发送卸载请求超时(15 秒)。"
+      : "无法连接 GitHub。";
+  }
+}
+
 export interface RepoSummary {
   readonly fullName: string;
   readonly defaultBranch: string;

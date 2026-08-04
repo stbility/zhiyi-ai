@@ -1,12 +1,15 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getMyOrganizations } from "@/lib/db/queries";
 import {
   installUrl,
   issueState,
+  uninstallApp,
   verifyAppSlug,
 } from "@/lib/integrations/github";
 
@@ -68,4 +71,72 @@ export async function connectViaSlug(
   }
 
   redirect(installUrl(parsed.data.slug, issueState(org.id)));
+}
+
+export interface DisconnectState {
+  error?: string;
+  /** 本地断开了,但 GitHub 侧没收回 —— 这不是成功,也不是纯失败 */
+  warning?: string;
+  ok?: boolean;
+}
+
+/**
+ * 断开 Git 连接。
+ *
+ * 官方做法对齐 ChatGPT / Codex 的 GitHub 连接器:已连接状态下同时提供
+ * 「选择仓库」(跳 GitHub 的仓库授权页)和「断开」两个动作 ——
+ *   · 改仓库范围:Settings → Apps → GitHub → Choose repositories
+ *   · 断开:      Settings → Apps → GitHub → Disconnect
+ * 来源:help.openai.com/en/articles/11145903-connecting-github-to-chatgpt
+ *
+ * 顺序很重要:**先让 GitHub 收回权限,再删本地记录。**
+ * 反过来的话,一旦卸载失败,本地记录已经没了 —— 界面显示「未连接」,
+ * 而我们的私钥其实还能换出安装令牌照样读代码,且用户再也没有入口
+ * 去断开它。那是最坏的一种结果:权限还在,但看不见也管不着。
+ *
+ * 卸载失败时不删本地记录,原样返回原因,让用户能再点一次。
+ */
+export async function disconnectGit(
+  _prev: DisconnectState,
+  formData: FormData,
+): Promise<DisconnectState> {
+  const installationId = String(formData.get("installationId") ?? "").trim();
+  if (!installationId) return { error: "缺少安装编号,无法断开。" };
+
+  const orgs = await getMyOrganizations();
+  const org = orgs.find((o) => o.role === "owner" || o.role === "admin");
+  if (!org) return { error: "需要组织管理员才能断开仓库连接。" };
+
+  const 卸载失败 = await uninstallApp(installationId);
+  if (卸载失败) {
+    return {
+      error:
+        `没有断开 —— GitHub 侧的授权还在,所以本地记录也没删(删了你就再也点不到这个按钮了)。` +
+        `${卸载失败} ` +
+        `也可以直接去 GitHub 的 Settings → Applications → Installed GitHub Apps 里卸载。`,
+    };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { error: "数据库不可用,请稍后再试。" };
+
+  const { error } = await supabase
+    .from("git_installations")
+    .delete()
+    .eq("organization_id", org.id)
+    .eq("provider", "github");
+
+  if (error) {
+    // GitHub 侧已经收回了,这一半是真的完成了 —— 说清楚,
+    // 否则用户会以为权限还在,跑去 GitHub 上再卸载一次。
+    return {
+      warning:
+        `GitHub 侧的授权已经收回,智能体已经读不到你的代码了。` +
+        `但本站的连接记录没删掉(${error.message}),页面上可能还显示「已连接」。` +
+        `刷新后仍然显示的话,再点一次断开即可 —— 那时会走到 404 分支,直接删记录。`,
+    };
+  }
+
+  revalidatePath("/settings/integrations");
+  return { ok: true };
 }

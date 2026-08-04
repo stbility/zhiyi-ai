@@ -32,7 +32,14 @@ const PAGE = read("src/app/(app)/settings/integrations/page.tsx");
  * 不是守我写了什么注释**;否则每写一句注释就可能误报一次。
  */
 const 去注释 = (code: string) =>
-  code.replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/^\s*\/\/.*$/gm, "");
+  code
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+    // /** ... */ 也要剥。此前只剥了 JSX 注释和行首 //,于是接口上方那段
+    // JSDoc 里但凡引用了一句被禁的文案,守卫就红在一句注释上 ——
+    // 正是这个文件开头警告过的那类误报,只是换了一种注释语法。
+    // (代价:字符串里若含 /* 会被误伤。这份源码里没有,够用了。)
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
 
 const CARD = 去注释(CARD_RAW);
 
@@ -72,7 +79,18 @@ describe("卡片永远有可操作的东西", () => {
 
   it("手填的值不落库 —— 它是平台级配置,不是某个组织的设置", () => {
     const 动作 = read("src/app/(app)/settings/integrations/git-actions.ts");
-    expect(动作).not.toMatch(/\.from\(|insert\(|upsert\(/);
+    // 只看 connectViaSlug 这一段。此前是整份文件都不许出现 .from(,
+    // 而同一个文件后来加了 disconnectGit —— 它删 git_installations 是
+    // 天经地义的。守卫抓到了,但抓的是对的代码:范围从一开始就该收窄到
+    // 「手填的这条路」,不是「这个文件」。
+    const 段 = 动作.slice(
+      动作.indexOf("export async function connectViaSlug"),
+      动作.indexOf("export interface DisconnectState"),
+    );
+    expect(段.length, "connectViaSlug 找不到了 —— 守卫已经空转").toBeGreaterThan(
+      200,
+    );
+    expect(段).not.toMatch(/\.from\(|insert\(|upsert\(/);
   });
 });
 
@@ -101,15 +119,39 @@ describe("卡片上不摊诊断细节", () => {
     });
   }
 
-  it("失败原因只在卡片上留一句短话,细节进服务端日志", () => {
-    // 文案本身可以变,守的是「不把三段诊断铺在卡片上」这条原则。
-    // 日志是给运维的通道,卡片是给用户的通道。
-    expect(CARD).toMatch(/详情见服务端日志/);
+  it("失败原因最多一段,不再铺三段", () => {
+    // 原则没变:不把三段互相重复的诊断铺在卡片上(上面的 不许出现 守着)。
+    // 变的是「那一段该放哪」。
+    //
+    // 此前是「细节进服务端日志,卡片上留一句『详情见服务端日志』」。
+    // 部署在 Vercel 上时这句话等于没说 —— 日志在另一个平台的后台里,
+    // 而看这张卡片的人往往正是配环境变量的那个人。用户因此卡了好几轮:
+    // 原因一直存在,只是他无权知道。
+    //
+    // 现在原因直接显示,但仍然只有一段,而且只在拼不出安装地址
+    // (卡片otherwise是死路)时出现。
+    expect(CARD).not.toMatch(/详情见服务端日志/);
+    // 只数**渲染点**(JSX 里的 {slugError...}),不数接口声明和解构 ——
+    // 那两处是必需的,把它们算进来只会得到一个必须随写法调整的魔数。
+    // 一段诊断 = 一个条件 + 一次插值 = 2 处。
+    expect(
+      (CARD.match(/\{slugError/g) ?? []).length,
+      "slugError 渲染在多处 —— 又要铺开了",
+    ).toBeLessThanOrEqual(2);
   });
 
-  it("已经用不上的 slug 属性不留在接口里", () => {
-    // 删了渲染却留着属性,下一个人会以为它还有用,再把那几段话接回去
-    expect(CARD).not.toMatch(/slugSource|slugError/);
+  it("诊断只给改得动配置的人看", () => {
+    // 普通成员既看不懂也改不动,对他们只是一段吓人的英文
+    expect(PAGE).toMatch(/slugError=\{canManage \? slugResult\.error : null\}/);
+  });
+
+  it("有安装地址时不显示诊断 —— 那时卡片本来就能用", () => {
+    // 诊断只在 installHref 为空的那一支里
+    const 有链接支 = CARD.slice(
+      CARD.indexOf("installHref ? ("),
+      CARD.indexOf("GitManualConnect"),
+    );
+    expect(有链接支).not.toMatch(/\{slugError/);
   });
 
   it("诊断没有丢,只是换了通道 —— 服务端仍然记日志", () => {
@@ -165,6 +207,71 @@ describe("安装链接只能用查证过的 slug 拼", () => {
   it("拼不出链接时的说明不写「请稍后重试」", () => {
     // 401 这类是配置问题,重试一万次也一样 —— 那句话只会让人白等
     expect(CARD).not.toMatch(/请稍后重试/);
+  });
+});
+
+describe("有连接就要有断开", () => {
+  /**
+   * 对齐 ChatGPT / Codex 的 GitHub 连接器:已连接状态下并列两个动作 ——
+   *   Choose repositories(改仓库范围)
+   *   Disconnect(断开)
+   * 来源:help.openai.com/en/articles/11145903-connecting-github-to-chatgpt
+   *
+   * 此前只做了前者。连上之后卡片上没有退路,用户只能自己摸到 GitHub
+   * 后台去卸载 —— 而他根本不知道要去哪里找。
+   */
+  const 动作 = read("src/app/(app)/settings/integrations/git-actions.ts");
+  const GH = read("src/lib/integrations/github.ts");
+
+  it("已连接时卡片上有断开入口", () => {
+    const 已连接支 = CARD.slice(
+      CARD.indexOf("已连接到"),
+      CARD.indexOf("canManage ? ("),
+    );
+    expect(已连接支).toContain("GitDisconnect");
+  });
+
+  it("断开是真的收回权限,不只是删本地记录", () => {
+    // 只删库里那一行的话,GitHub 侧的安装还在,我们的私钥随时还能
+    // 换出安装令牌照样读代码。界面写着「已断开」而权限没收回,
+    // 那是假的断开 —— 比不提供断开更糟。
+    expect(GH).toMatch(/method: "DELETE"/);
+    expect(GH).toMatch(/app\/installations\/\$\{encodeURIComponent\(installationId\)\}/);
+    expect(动作).toContain("uninstallApp");
+  });
+
+  it("先收回权限,再删本地记录", () => {
+    // 反过来的话,卸载一失败本地记录就已经没了 —— 界面显示「未连接」,
+    // 权限其实还在,而用户再也没有入口去断开它。
+    expect(动作.indexOf("uninstallApp")).toBeLessThan(
+      动作.indexOf('.from("git_installations")'),
+    );
+  });
+
+  it("卸载失败时不删本地记录", () => {
+    const 失败支 = 动作.slice(
+      动作.indexOf("if (卸载失败)"),
+      动作.indexOf('.from("git_installations")'),
+    );
+    expect(失败支).not.toMatch(/delete\(\)/);
+  });
+
+  it("GitHub 上本来就不存在的安装,当断开成功处理", () => {
+    // 用户自己在 GitHub 后台卸载过之后,我们这边的记录还在。
+    // 把 404 当失败的话,他会卡在一个永远断不开的连接上。
+    expect(GH).toMatch(/response\.status === 404/);
+  });
+
+  it("断开要先确认,不是一下点掉", () => {
+    // 收回之后要恢复得重新走一遍安装流程,代价太大
+    // 同样要先剥注释 —— 上面那句解释里就写着 confirm(),
+    // 不剥的话守卫又红在一句注释上。这个文件里已经栽过两次了。
+    const 断开 = 去注释(read("src/components/app/GitDisconnect.tsx"));
+    expect(断开).toMatch(/confirming/);
+    expect(断开).toMatch(/确认断开/);
+    expect(断开, "用了原生 confirm() —— 样式不受控,也写不清会发生什么").not.toMatch(
+      /window\.confirm\(|(?<![.\w])confirm\(/,
+    );
   });
 });
 

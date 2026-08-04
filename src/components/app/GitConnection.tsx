@@ -1,6 +1,7 @@
-import { Badge } from "@/components/primitives/Badge";
 import { Icon } from "@/components/icons/Icon";
+import { StatusLabel } from "@/components/primitives/StatusLabel";
 import { LinkButton } from "@/components/primitives/LinkButton";
+import { GitDisconnect } from "@/components/app/GitDisconnect";
 import { GitManualConnect } from "@/components/app/GitManualConnect";
 
 export interface GitConnectionProps {
@@ -15,7 +16,18 @@ export interface GitConnectionProps {
   /** 去 GitHub 授权的地址。未配置时为 null */
   installHref: string | null;
   canManage: boolean;
-  /** 查证失败的原因。这是用户唯一能据以排查的线索,必须显示出来 */
+  /**
+   * 取安装地址失败的原因,来自 getAppSlug()。
+   *
+   * 这个 prop 此前**不存在** —— 上面那行注释悬空挂在 notice 头上,
+   * 我写了说明却没写字段。于是原因只进了服务端日志,而部署在 Vercel 上,
+   * 用户看不到日志,卡片上只有一句「详情见服务端日志」——
+   * 等于告诉他「原因存在,但你无权知道」。
+   *
+   * 内容里只有 GitHub 的原话和 Client ID(公开值,设置页上就印着),
+   * 私钥一个字都不出现 —— 具体见 getAppSlug 里的构造。
+   */
+  slugError?: string | null | undefined;
   /** 回调带回来的提示 */
   notice?: { ok?: boolean; error?: string } | undefined;
 }
@@ -36,18 +48,22 @@ export function GitConnection({
   installation,
   installHref,
   canManage,
+  slugError,
   notice,
 }: GitConnectionProps) {
   return (
     <section className="bg-surface-2 border-border-default rounded-card font-zh border p-5">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <h3 className="text-fg text-body font-medium">Git 仓库</h3>
+        {/* 状态用圆点 + 文字,不用 Badge。
+            Badge 的圆角+边框+底色在这个位置会被当成按钮 —— 用户反复点它、
+            反复来问「这个按钮坏了」。见 StatusLabel 里的说明。 */}
         {!configured ? (
-          <Badge>未配置</Badge>
+          <StatusLabel>未配置</StatusLabel>
         ) : installation ? (
-          <Badge tone="success">已连接</Badge>
+          <StatusLabel tone="success">已连接</StatusLabel>
         ) : (
-          <Badge>未连接</Badge>
+          <StatusLabel>未连接</StatusLabel>
         )}
       </div>
 
@@ -90,11 +106,29 @@ export function GitConnection({
               <span className="font-mono">{installation.installationId}</span>)
             </span>
           </div>
-          {canManage && installHref && (
-            <LinkButton href={installHref} variant="secondary" size="sm">
-              <Icon name="settings" size={14} />
-              调整授权的仓库
-            </LinkButton>
+          {/* 已连接状态下两个动作都要有:改仓库范围、断开。
+              对齐 ChatGPT / Codex 的 GitHub 连接器 ——
+              Choose repositories 与 Disconnect 是并列的两项。
+              来源:help.openai.com/en/articles/11145903-connecting-github-to-chatgpt
+              此前只有前者,连上之后就没有退路。 */}
+          {canManage && (
+            <div className="flex flex-col gap-2">
+              {installHref && (
+                <LinkButton
+                  href={installHref}
+                  variant="secondary"
+                  size="sm"
+                  className="self-start"
+                >
+                  <Icon name="settings" size={14} />
+                  调整授权的仓库
+                </LinkButton>
+              )}
+              <GitDisconnect
+                installationId={installation.installationId}
+                accountLogin={installation.accountLogin}
+              />
+            </div>
           )}
         </div>
       ) : canManage ? (
@@ -114,9 +148,19 @@ export function GitConnection({
           //
           // 官方的安装地址只需要应用名,而用户自己知道那个名字。
           <div className="flex flex-col gap-3">
-            <p className="text-fg-tertiary text-caption">
-              未能自动获取安装地址,详情见服务端日志。
-            </p>
+            {slugError ? (
+              // 把真实原因摆在用户面前。
+              // 「详情见服务端日志」对 Vercel 上的部署等于没说 —— 日志在
+              // 另一个平台的后台里,而看这张卡片的人往往正是配环境变量的人,
+              // 原因给到他手上,他一眼就知道该改哪个变量。
+              <p className="border-border-default rounded-control text-fg-secondary text-caption border border-dashed p-3 whitespace-pre-line">
+                {slugError}
+              </p>
+            ) : (
+              <p className="text-fg-tertiary text-caption">
+                未能自动获取安装地址。
+              </p>
+            )}
             <GitManualConnect />
           </div>
         )

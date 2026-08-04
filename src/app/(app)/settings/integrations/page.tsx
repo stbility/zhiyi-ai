@@ -175,6 +175,9 @@ export default async function IntegrationsPage({
         installation={gitInstallation}
         installHref={installHref}
         canManage={canManage}
+        // 只给能改配置的人看 —— 普通成员既看不懂也改不动,
+        // 对他们只是一段吓人的英文。
+        slugError={canManage ? slugResult.error : null}
         notice={{
           ...(params.githubOk ? { ok: true } : {}),
           ...(params.githubError ? { error: params.githubError } : {}),

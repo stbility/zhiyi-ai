@@ -3,7 +3,7 @@
 import { useActionState, useState } from "react";
 
 import { Icon } from "@/components/icons/Icon";
-import { Badge } from "@/components/primitives/Badge";
+import { StatusLabel } from "@/components/primitives/StatusLabel";
 import { Button } from "@/components/primitives/Button";
 import {
   SubmitButton,
@@ -61,14 +61,16 @@ export interface ProviderRow {
   lastTestError: string | null;
 }
 
+// 状态用圆点 + 文字。Badge 的圆角+边框+底色会被当成按钮 ——
+// 集成页那张 Git 卡片上已经因此被反复点击。见 StatusLabel 里的说明。
 function TestStatus({ row }: { row: ProviderRow }) {
   if (row.lastTestedAt === null) {
-    return <Badge>未测试</Badge>;
+    return <StatusLabel>未测试</StatusLabel>;
   }
   if (row.lastTestOk) {
-    return <Badge tone="success">连接正常</Badge>;
+    return <StatusLabel tone="success">连接正常</StatusLabel>;
   }
-  return <Badge tone="error">连接失败</Badge>;
+  return <StatusLabel tone="error">连接失败</StatusLabel>;
 }
 
 /**

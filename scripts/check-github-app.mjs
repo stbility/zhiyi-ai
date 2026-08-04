@@ -42,22 +42,54 @@ if (!rawIssuer) {
 // 这正是线上那个 401 最可能的成因,所以脚本这里也要如实还原同样的处理。
 const issuer = rawIssuer.trim();
 
-/** 找私钥。没给路径就去 ~/Downloads 里按模式找 */
+/**
+ * 找私钥。
+ *
+ * 不止看 ~/Downloads —— 用户完全可能把它挪到桌面或别处,而下载目录
+ * 只是浏览器的默认落点,不是它该长期待的地方。只在一个目录里找,
+ * 用户就得自己去翻路径,而他找这个文件本来就是为了排查另一个问题。
+ */
 function 找私钥() {
-  if (rawKeyPath) return rawKeyPath;
+  if (rawKeyPath) {
+    // 支持 ~ 开头的路径 —— 直接从终端复制粘贴时很常见
+    return rawKeyPath.startsWith("~")
+      ? join(homedir(), rawKeyPath.slice(1))
+      : rawKeyPath;
+  }
 
-  const dir = join(homedir(), "Downloads");
-  const hits = readdirSync(dir).filter((f) => f.endsWith(".private-key.pem"));
+  const 候选目录 = [
+    join(homedir(), "Downloads"),
+    join(homedir(), "Desktop"),
+    join(homedir(), "Documents"),
+    process.cwd(),
+  ];
+
+  const hits = [];
+  for (const dir of 候选目录) {
+    let names;
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue; // 目录不存在或没权限,跳过
+    }
+    for (const f of names) {
+      if (f.endsWith(".private-key.pem")) hits.push(join(dir, f));
+    }
+  }
 
   if (hits.length === 0) {
-    console.error(`在 ${dir} 里没找到 *.private-key.pem。请把路径作为第二个参数传进来。`);
+    console.error(
+      `在这些目录里都没找到 *.private-key.pem:\n  ${候选目录.join("\n  ")}\n` +
+        `\n请把路径作为第二个参数传进来,例如:\n` +
+        `  node scripts/check-github-app.mjs <ClientID> ~/某处/xxx.private-key.pem`,
+    );
     process.exit(1);
   }
   if (hits.length > 1) {
-    console.error(`${dir} 里有多个私钥,请指定用哪一个:\n  ${hits.join("\n  ")}`);
+    console.error(`找到多个私钥,请指定用哪一个:\n  ${hits.join("\n  ")}`);
     process.exit(1);
   }
-  return join(dir, hits[0]);
+  return hits[0];
 }
 
 const keyPath = 找私钥();
