@@ -60,17 +60,6 @@ export function GitConnection({
         权限由你在 GitHub 上按仓库勾选,随时可在 GitHub 侧撤销。
       </p>
 
-      {notice?.error && (
-        <p className="border-error-tint bg-error-tint text-error rounded-control text-caption mb-3 p-3">
-          {notice.error}
-        </p>
-      )}
-      {notice?.ok && (
-        <p className="border-success bg-success-tint text-success rounded-control text-caption mb-3 p-3">
-          已连接成功。
-        </p>
-      )}
-
       {/* slug 没查证过就必须说出来 —— 而且此时**不会有连接按钮**。
           安装地址是 https://github.com/apps/<slug>/...:slug 错了,
           用户点下去看到的是 GitHub 的 404,不是我们的报错,完全无从排查。
@@ -83,6 +72,21 @@ export function GitConnection({
         <p className="border-warning bg-warning-tint text-warning rounded-control text-caption mb-3 p-3">
           未能向 GitHub 查证应用地址{slugSource === "env" ? "(下面用的是环境变量里填的值,可能不对)" : ""}:
           <span className="mt-1 block">{slugError}</span>
+        </p>
+      )}
+
+      {/* 这一轮连接的结果,紧挨着**它对应的那个动作**放。
+          此前它浮在卡片最上面、紧跟标题 —— 读起来像整页出了错,
+          而它其实只是「刚才那次连接的回执」。
+          位置本身就是信息:贴着按钮,才看得出它在说哪件事。 */}
+      {notice?.error && (
+        <p className="border-error-tint bg-error-tint text-error rounded-control text-caption mb-3 p-3">
+          {notice.error}
+        </p>
+      )}
+      {notice?.ok && (
+        <p className="border-success bg-success-tint text-success rounded-control text-caption mb-3 p-3">
+          已连接成功。
         </p>
       )}
 

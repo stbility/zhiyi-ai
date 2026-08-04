@@ -90,3 +90,42 @@ describe("安装链接只能用查证过的 slug 拼", () => {
     expect(CARD).not.toMatch(/请稍后重试/);
   });
 });
+
+describe("回调结果贴着它对应的动作,不浮在顶部", () => {
+  it("notice 排在描述段之后、动作区之前", () => {
+    // 此前它紧跟标题浮在卡片最上面,读起来像整页出了错 ——
+    // 而它其实只是「刚才那次连接的回执」。位置本身就是信息。
+    const 描述 = CARD.indexOf("连接后,智能体可以直接读写你授权的仓库");
+    const 回执 = CARD.indexOf("notice?.error");
+    // 用动作区独有的文案定位。`{!configured ? (` 在上面的状态标签里
+    // 也出现过一次,拿它当锚点会定位到标题行 —— 我第一次就踩了这个,
+    // 断言因此报了一个与事实相反的「回执跑到动作区后面了」。
+    const 动作 = CARD.indexOf("服务端尚未配置 GitHub App");
+    expect(描述).toBeGreaterThan(-1);
+    expect(回执).toBeGreaterThan(-1);
+    expect(动作).toBeGreaterThan(-1);
+    expect(回执, "回执又浮到描述前面去了").toBeGreaterThan(描述);
+    expect(回执, "回执跑到动作区后面了").toBeLessThan(动作);
+  });
+});
+
+describe("回调缺 installation_id 时要说得清", () => {
+  const CALLBACK = read("src/app/api/integrations/github/callback/route.ts");
+
+  it("说出 GitHub 实际带回了哪些参数", () => {
+    // 只说「没有返回安装标识」是个死胡同:用户配好了回调地址、
+    // GitHub 也确实跳回来了,却被告知缺了个他没听说过的东西。
+    expect(CALLBACK).toMatch(/searchParams\.keys\(\)/);
+  });
+
+  it("区分「走了授权流程」和「什么都没带」—— 这是两件事", () => {
+    expect(CALLBACK).toMatch(/includes\("code"\)/);
+  });
+
+  it("指向 GitHub App 设置页里真正管这件事的那个开关", () => {
+    // installation_id 只在安装流程出现,对应 Setup URL;
+    // Callback URL 对应的是授权流程。两条路都走同一个地址需要勾那个选项。
+    expect(CALLBACK).toMatch(/Setup URL/);
+    expect(CALLBACK).toMatch(/Request user authorization/);
+  });
+});

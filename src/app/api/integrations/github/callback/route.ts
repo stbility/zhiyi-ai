@@ -83,7 +83,42 @@ export async function GET(request: NextRequest) {
   const state = request.nextUrl.searchParams.get("state");
 
   if (!installationId) {
-    return back(request, { githubError: "GitHub 没有返回安装标识。" });
+    // 「没有返回安装标识」本身是事实,但对用户是个死胡同 —— 他配好了
+    // 回调地址,GitHub 也确实跳回来了,却被告知缺了个他没听说过的东西。
+    //
+    // GitHub App 有**两个**不同的回调字段,而 installation_id 只在其中
+    // 一条路径上出现(docs.github.com/apps 的原文):
+    //
+    //   Setup URL     用户**安装**完 App 后跳这里,带 installation_id
+    //   Callback URL  用户**授权**(OAuth web flow)后跳这里,带 code
+    //
+    //   「If you select Request user authorization (OAuth) during
+    //     installation, you will not be able to enter a setup URL.
+    //     Users will instead be redirected to the Callback URL」
+    //
+    // 所以只把地址填进 Callback URL、又没勾那个选项时,安装完根本不会
+    // 带 installation_id 回来。这不是用户填错了,是两个字段的分工。
+    //
+    // 把 GitHub 实际送来了哪些参数一并说出来 —— 有 code 没 installation_id
+    // 是「走了授权流程」,两个都没有是「地址被直接访问」,
+    // 对用户是两件完全不同的事。
+    const 收到的参数 = [...request.nextUrl.searchParams.keys()];
+    const 走了授权流程 = 收到的参数.includes("code");
+    return back(request, {
+      githubError:
+        `GitHub 这次回调没有带 installation_id` +
+        (收到的参数.length > 0 ? `(实际带回的是:${收到的参数.join("、")})` : "(没有带任何参数)") +
+        `。` +
+        (走了授权流程
+          ? `带回的是 code,说明走的是「用户授权」流程而不是「安装」流程。`
+          : ``) +
+        `installation_id 只在安装流程里出现 —— 它对应 GitHub App 设置页里的 ` +
+        `Setup URL;而 Callback URL 对应的是授权流程。` +
+        `两条路都走这个地址的话,需要在 GitHub App 设置页勾选 ` +
+        `「Request user authorization (OAuth) during installation」` +
+        `(勾上之后 Setup URL 会变成不可填,安装也会跳 Callback URL),` +
+        `或者把这个地址同时填进 Setup URL。`,
+    });
   }
   if (!state) {
     return back(request, {
