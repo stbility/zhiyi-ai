@@ -308,11 +308,20 @@ export async function testProvider(
         //
         // 该收窄的是「用途不是对话」(嵌入、重排、安全分类…),
         // 不是「厂商我没听过」。
-        const { filterChatModels } = await import("@/lib/providers/model-filter");
+        // **服务商返回什么就导入什么,一个都不丢。**
+        //
+        // 这里曾经用 filterChatModels 把「用途不是对话」的模型直接扔掉,
+        // 用户根本看不到它们的存在,也没有办法把它们要回来。
+        // 用户的原话:「你不要在底层代码里限制模型」「全部」。
+        //
+        // 而且这道过滤错过:moonshotai/kimi-k2.6 用户实测可用,
+        // 我们的判断却把它排除掉了。我的模式匹配没有资格替他决定
+        // 哪个模型该存在。
+        //
+        // 改成:全部导入,只用 enabled 这个**用户自己能翻的开关**来决定
+        // 默认是否出现在助手页的下拉里。看得见、可翻转、不隐藏。
         allModels = [...fromOpenAi, ...fromGoogle];
-        candidates = filterChatModels(allModels).filter(
-          (id) => !excluded.has(id),
-        );
+        candidates = allModels.filter((id) => !excluded.has(id));
       } catch {
         // 响应不是预期结构,不影响「连接成功」这一事实
       }
@@ -354,7 +363,6 @@ export async function testProvider(
   // 而且带总时间预算,探不完就如实说明还剩多少没探。
   // 模型能不能用,最终由真实调用决定 —— 探测本来就只是提前告知,
   // 不该成为「能不能入库」的前置条件。
-  let imported = 0;
   const verified: string[] = [];
   const busy: { model: string; reason: string }[] = [];
   const rejected: { model: string; reason: string }[] = [];
@@ -440,13 +448,20 @@ export async function testProvider(
         model_id: id,
         display_name: id.length > 60 ? id.slice(0, 60) : id,
         chat_unavailable_reason: null,
+        // **全部启用。我不做任何判断。**
+        //
+        // 上一版我让「用途不是对话」的默认不勾选,那仍然是我在替用户
+        // 决定 —— 用户的原话:「不要任何限制」。
+        // 我的模式匹配没有资格给任何模型下判决,它已经错过一次
+        // (moonshotai/kimi-k2.6 用户实测可用,我判它不该存在)。
+        // 开关在用户手上,他关哪个是他的事。
+        enabled: true,
       })),
       { onConflict: "provider_id,model_id" },
     );
     if (upsertError) {
       return { error: `导入模型失败:${upsertError.message}` };
     }
-    imported = candidates.length;
 
     // 探测预算。留足余量给上面的写库和下面的收尾,绝不让平台来强杀。
     const deadline = Date.now() + PROBE_BUDGET_MS;
@@ -532,7 +547,7 @@ export async function testProvider(
   }
 
   const parts = [
-    `连接成功。服务商共返回 ${allModels.length} 个模型,已导入 ${imported} 个可用于对话的,现在就能在助手页选用。`,
+    `连接成功。服务商返回 ${allModels.length} 个模型,已全部导入并启用。`,
   ];
   if (verified.length > 0) {
     parts.push(`✅ 抽样验证 ${verified.length} 个可正常对话`);

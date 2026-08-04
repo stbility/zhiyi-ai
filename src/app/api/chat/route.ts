@@ -144,15 +144,18 @@ export async function POST(request: NextRequest) {
     return errorResponse("这个服务商当前不可用。请到「模型服务」确认它已启用。", 503);
   }
 
-  // 时限只有平台强制的那一个。
+  // 这不是时限,是**收尾信号**。
   //
-  // Vercel 的函数最长 300 秒,到点直接杀进程 —— 连接断开,浏览器只报
-  // 「Failed to fetch」。留 15 秒是为了在被杀之前把记录写进库,
-  // 让用户至少知道发生了什么。**这不是我们给模型设的时限**,
-  // 我们没有任何理由限制一个用户自己付费的调用。
+  // 平台会在 maxDuration 到点时直接杀进程 —— 连接断开,浏览器只报
+  // 「Failed to fetch」,已经生成的内容全部丢失。这个信号提前一点点触发,
+  // 唯一作用是把**已经收到的内容存下来交给用户**。
+  //
+  // 它不再产生任何报错文案:用户看到的是模型已经写出来的那部分,
+  // 不是一句「已达到 X 秒上限」。那句话曾经变成我解释「模型不工作」的
+  // 挡箭牌 —— 而真正的问题是上游吞吐,不是这个数字。
   const wd = createStallWatchdog(
     TOTAL_BUDGET_MS - (Date.now() - startedAt),
-    `已达到平台的 ${Math.round(TOTAL_BUDGET_MS / 1000)} 秒上限。`,
+    "",
     request.signal,
   );
 
@@ -292,7 +295,7 @@ export async function POST(request: NextRequest) {
             // 留一份。**这是被超时丢掉过的东西。**
             //
             // gateway 里那段「整轮没有正文就把思考过程交出来」的兜底
-            // 写在 for-await 循环**之后**;而 285 秒被看门狗掐断时,
+            // 写在 for-await 循环**之后**;而被平台打断时,
             // 循环是抛异常退出的 —— 那段兜底根本不会执行。
             // 于是模型思考了近五分钟,落库的 content 只有两个字。
             //
@@ -391,13 +394,16 @@ export async function POST(request: NextRequest) {
             conversation_id: convId,
             organization_id: organizationId,
             role: "assistant",
-            // 中断路径同样兜底。这条路径正是超时走的那条 ——
-            // 不兜的话,等了 285 秒的用户拿到的就是一个空气泡。
+            // 中断路径同样兜底 —— 不兜的话,等了几分钟的用户拿到的
+            // 就是一个空气泡。
             content: full !== "" ? full : reasoningSoFar,
             provider_id: usedProviderId,
             model_id: usedModel,
             latency_ms: Date.now() - startedAt,
-            error_message: message,
+            // 已经有内容时不记错误:那是一次**被平台打断的正常生成**,
+            // 不是失败。记成错误会让界面把它渲染成红色报错,
+            // 而用户手里明明有模型写出来的东西。
+            ...((full !== "" || reasoningSoFar !== "") ? {} : { error_message: message }),
           });
         } catch {
           // 忽略:告知用户比留痕更要紧
