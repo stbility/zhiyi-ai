@@ -109,21 +109,22 @@ export interface AgentLimits {
 }
 
 export const DEFAULT_LIMITS: AgentLimits = {
-  // 步数上限回到 12。
+  // 步数不设上限。
   //
-  // 我曾把它压到 3,理由是「单步中位数 84 秒,240 秒装不下更多」。
-  // 那个算术没错,但结论错了:**真正的界限是 budgetMs,不是步数**。
-  // 一步快就多跑几步,一步慢自然就少跑几步 —— 用步数再卡一道,
-  // 只会在模型很快的时候平白截断一次本来能完成的任务。
-  //
-  // 留 12 是防「模型在两个工具之间反复横跳」的兜底,不是时间预算的替身。
-  maxSteps: 12,
+  // 12 也好、3 也好,都是我拍脑袋的数字,而它决定了用户的任务能不能做完。
+  // 唯一真实的界限是下面那个平台时限 —— 时间用完就是用完了,
+  // 在此之前没有理由拦住模型。
+  maxSteps: Number.MAX_SAFE_INTEGER,
   // 285 秒 = 平台给的全部时间(Vercel 函数上限 300 秒,留 15 秒收尾)。
   // 这不是我们挑的数,是墙在那里。智能体要跑得更久,只能把执行搬出
   // 无服务器函数 —— 那正是接 OpenClaw / Hermes 的意义。
   budgetMs: 285_000,
-  maxConsecutiveFailures: 3,
-  maxRetries: 10,
+  // 连续失败也不拦。工具连着报错时,模型往往正在根据报错改正 ——
+  // 数到 3 就掐掉,等于不让它改完。时间用完自然会停。
+  maxConsecutiveFailures: Number.MAX_SAFE_INTEGER,
+  // 重试次数不设上限。真正的界限是剩余预算:
+  // 退避时间超过剩余预算时那里会自己停(见循环里的 backoff 判断)。
+  maxRetries: Number.MAX_SAFE_INTEGER,
 };
 
 /**
