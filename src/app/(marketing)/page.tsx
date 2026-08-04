@@ -7,6 +7,7 @@ import { Icon, type IconName } from "@/components/icons/Icon";
 import { MemoryCard } from "@/components/memory/MemoryCard";
 import { Badge } from "@/components/primitives/Badge";
 import { buttonClasses } from "@/components/primitives/Button";
+import { LinkButton } from "@/components/primitives/LinkButton";
 import { PLANS } from "@/lib/plans";
 
 export const metadata: Metadata = {
@@ -85,9 +86,12 @@ export default function HomePage() {
           </p>
 
           <div className="flex flex-wrap justify-center gap-3">
-            <Link href="/register" className={buttonClasses({ size: "lg" })}>
+            <LinkButton href="/register" size="lg">
               免费开始使用
-            </Link>
+            </LinkButton>
+            {/* 同页锚点,不是路由跳转 —— 保持原生 <a>。
+                LinkButton 里的 next/link 对 #锚点没有意义,
+                external 又会新开标签页,两个都不对。 */}
             <a
               href="#product"
               className={buttonClasses({ variant: "secondary", size: "lg" })}
@@ -264,9 +268,9 @@ export default function HomePage() {
         <h2 className="font-zh text-h2 text-fg font-semibold">
           开始构建您的 AI 工作流
         </h2>
-        <Link href="/register" className={buttonClasses({ size: "lg" })}>
+        <LinkButton href="/register" size="lg">
           免费开始使用
-        </Link>
+        </LinkButton>
       </Section>
     </main>
   );

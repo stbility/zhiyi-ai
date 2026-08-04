@@ -14,7 +14,8 @@ import {
 
 import { Icon } from "@/components/icons/Icon";
 import { MessageFeedback } from "@/components/app/MessageFeedback";
-import { Button, buttonClasses } from "@/components/primitives/Button";
+import { Button } from "@/components/primitives/Button";
+import { LinkButton } from "@/components/primitives/LinkButton";
 import { IconButton } from "@/components/primitives/IconButton";
 import { Select } from "@/components/primitives/Select";
 import { Tag } from "@/components/primitives/Tag";
@@ -593,18 +594,16 @@ export function ChatPanel({
   const sidebar = (
     <div className="flex h-full flex-col">
       <div className="px-3 pt-3 pb-2">
-        <Link
+        <LinkButton
           href={`${basePath}?c=new`}
           onClick={() => setSidebarOpen(false)}
-          className={buttonClasses({
-            variant: "secondary",
-            size: "sm",
-            className: "w-full",
-          })}
+          variant="secondary"
+          size="sm"
+          className="w-full"
         >
           <Icon name="plus" size={14} />
           新对话
-        </Link>
+        </LinkButton>
       </div>
 
       {conversations.length === 0 ? (
@@ -691,13 +690,10 @@ export function ChatPanel({
             <li className="list-decimal">回到这里就能开始对话。</li>
           </ol>
 
-          <Link
-            href="/settings/models"
-            className={buttonClasses({ size: "sm" })}
-          >
+          <LinkButton href="/settings/models" size="sm">
             <Icon name="settings" size={14} />
             去配置模型服务
-          </Link>
+          </LinkButton>
         </div>
       </div>
     );

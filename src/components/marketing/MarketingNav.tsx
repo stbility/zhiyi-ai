@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { buttonClasses } from "@/components/primitives/Button";
+import { LinkButton } from "@/components/primitives/LinkButton";
 
 const LINKS = [
   { href: "#product", label: "产品" },
@@ -40,25 +40,21 @@ export function MarketingNav() {
 
         <div className="flex gap-2.5">
           {/* 窄屏用 md(40px)保证触摸目标够大,桌面回到设计系统的 sm */}
-          <Link
+          <LinkButton
             href="/login"
-            className={buttonClasses({
-              variant: "ghost",
-              size: "sm",
-              className: "min-h-11 md:min-h-8",
-            })}
+            variant="ghost"
+            size="sm"
+            className="min-h-11 md:min-h-8"
           >
             登录
-          </Link>
-          <Link
+          </LinkButton>
+          <LinkButton
             href="/register"
-            className={buttonClasses({
-              size: "sm",
-              className: "min-h-11 md:min-h-8",
-            })}
+            size="sm"
+            className="min-h-11 md:min-h-8"
           >
             免费开始
-          </Link>
+          </LinkButton>
         </div>
       </nav>
     </header>

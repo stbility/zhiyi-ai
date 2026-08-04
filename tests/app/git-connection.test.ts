@@ -65,6 +65,15 @@ describe("卡片上不摊诊断细节", () => {
     expect(CARD).toMatch(/暂时无法连接,详情见服务端日志。/);
   });
 
+  it("但短话不等于死路 —— 必须给出仍然走得通的那条", () => {
+    // 「卡片不摊诊断」和「用户无路可走」是两回事。
+    // 实际死锁:slug 查不到 → 没按钮 → 用户只能从 GitHub 自己装,
+    // 而当时卡片上一个字都没提这条路,他只看到「暂时无法连接」。
+    // GitHub 的应用列表页是公开地址,不需要我们拼 slug 就能到。
+    expect(CARD).toContain("https://github.com/settings/installations");
+    expect(CARD).toContain("装好后会自动跳回这里");
+  });
+
   it("已经用不上的 slug 属性不留在接口里", () => {
     // 删了渲染却留着属性,下一个人会以为它还有用,再把那几段话接回去
     expect(CARD).not.toMatch(/slugSource|slugError/);

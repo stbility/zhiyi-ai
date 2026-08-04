@@ -48,6 +48,10 @@ export default function RootLayout({
           id="zy-webfonts"
           rel="stylesheet"
           media="print"
+          // media 会被下面那段内联脚本在 load 之后改成 all —— 这是有意的,
+          // 不是渲染不一致。不标的话 React 会在控制台报一条水合告警,
+          // 而那条告警会把真正的问题淹掉。
+          suppressHydrationWarning
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
         />
 

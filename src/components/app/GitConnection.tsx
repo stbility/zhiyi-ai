@@ -1,6 +1,6 @@
 import { Badge } from "@/components/primitives/Badge";
 import { Icon } from "@/components/icons/Icon";
-import { buttonClasses } from "@/components/primitives/Button";
+import { LinkButton } from "@/components/primitives/LinkButton";
 
 export interface GitConnectionProps {
   /** App 是否已在服务端配置。未配置时如实说明,不显示任何可点的连接入口 */
@@ -90,31 +90,45 @@ export function GitConnection({
             </span>
           </div>
           {canManage && installHref && (
-            <a
-              href={installHref}
-              className={buttonClasses({ variant: "secondary", size: "sm" })}
-            >
+            <LinkButton href={installHref} variant="secondary" size="sm">
               <Icon name="settings" size={14} />
               调整授权的仓库
-            </a>
+            </LinkButton>
           )}
         </div>
       ) : canManage ? (
         installHref ? (
-          <a href={installHref} className={buttonClasses({ size: "sm" })}>
+          <LinkButton href={installHref} size="sm">
             <Icon name="link" size={14} />
             连接 GitHub
-          </a>
+          </LinkButton>
         ) : (
-          // 拼不出安装地址时不给可点的按钮 —— 一个必然 404 的按钮
-          // 比没有按钮更糟。
+          // 拼不出安装地址时,不给假按钮,但也**不能让路断掉**。
           //
-          // 这里只留一句短话。原因(GitHub 的 401 原话、我们用的 Client ID、
-          // 私钥能不能签名)全部写进服务端日志,不摊在卡片上 ——
-          // 那是部署侧要看的东西,把三段诊断铺在界面上只会把卡片淹掉。
-          <p className="text-fg-tertiary text-caption">
-            暂时无法连接,详情见服务端日志。
-          </p>
+          // 此前这里只有一句「暂时无法连接」,构成了一个死锁:
+          // slug 查不到 → 没按钮 → 用户无路可走。而 GitHub 的应用列表页
+          // 是公开地址,不需要我们拼 slug 也能到 —— 用户在那里点 Install,
+          // 装完照样会跳回我们的回调。
+          //
+          // 所以:说清楚发生了什么,同时给出仍然走得通的那条路。
+          // 「没有按钮」和「没有出路」是两回事。
+          <div className="flex flex-col gap-2">
+            <p className="text-fg-tertiary text-caption">
+              暂时无法连接,详情见服务端日志。你可以直接从 GitHub 安装:
+            </p>
+            <LinkButton
+              href="https://github.com/settings/installations"
+              external
+              variant="secondary"
+              size="sm"
+            >
+              <Icon name="externalLink" size={14} />
+              去 GitHub 安装应用
+            </LinkButton>
+            <p className="text-fg-tertiary text-label">
+              装好后会自动跳回这里。
+            </p>
+          </div>
         )
       ) : (
         <p className="text-fg-tertiary text-caption">

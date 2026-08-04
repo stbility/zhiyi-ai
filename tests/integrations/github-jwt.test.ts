@@ -147,8 +147,13 @@ describe("安装 state", () => {
     const state = issueState(ORG);
     const [payload, sig] = state.split(".");
 
+    // 用**和实现同一把**密钥算:getGitHubAppConfig 现在会 trim 环境变量,
+    // 而生成的 PEM 带尾换行 —— 不 trim 的话这里算出的 HMAC 和实现对不上,
+    // 测试会红在一个其实正确的行为上。
     const { createHmac } = await import("node:crypto");
-    const good = createHmac("sha256", privateKey).update(payload!).digest("base64url");
+    const good = createHmac("sha256", privateKey.trim())
+      .update(payload!)
+      .digest("base64url");
     expect(sig).toBe(good);
 
     // 换一个组织但沿用原签名 —— 必须对不上

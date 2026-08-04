@@ -89,8 +89,17 @@ export interface GitHubAppConfig {
  * 绝不伪装成已接通。
  */
 export function getGitHubAppConfig(): GitHubAppConfig | null {
-  const clientId = process.env["GITHUB_APP_CLIENT_ID"];
-  const rawKey = process.env["GITHUB_APP_PRIVATE_KEY"];
+  // 一律 trim。
+  //
+  // 从 GitHub 界面复制 Client ID 时,末尾极容易带上换行或空格 ——
+  // Vercel 的输入框会把它原样存下来。带着空白的 iss 会被 GitHub
+  // 直接拒掉(401),而用户核对时看到的是同样的字符串,
+  // 怎么看都"填对了"。这类问题排查起来极其耗时,而修法只是一个 trim。
+  //
+  // 私钥同理:首尾空白会让 PEM 解析失败,报出来的却是
+  // 「不是合法的私钥」—— 又是一句指错方向的话。
+  const clientId = process.env["GITHUB_APP_CLIENT_ID"]?.trim();
+  const rawKey = process.env["GITHUB_APP_PRIVATE_KEY"]?.trim();
   // slug 不再是必需项 —— 它由 getAppSlug() 向 GitHub 查询。
   //
   // 这里不能用 ??:环境变量存在但为空串时(在 Vercel 上很常见 ——
@@ -98,7 +107,7 @@ export function getGitHubAppConfig(): GitHubAppConfig | null {
   // 拼出 https://github.com/apps//installations/new 这种必然 404 的地址。
   // 和 gateway 里 content ?? reasoning_content 是同一个陷阱:
   // 判空要按「有没有值」判,不是按「是不是 null」判。
-  const slug = process.env["GITHUB_APP_SLUG"] || null;
+  const slug = process.env["GITHUB_APP_SLUG"]?.trim() || null;
   if (!clientId || !rawKey) return null;
 
   // 环境变量里换行常被写成字面量 \n(Vercel 的输入框就是这样),

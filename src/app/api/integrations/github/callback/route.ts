@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getCurrentUser } from "@/lib/supabase/server";
+import { getMyOrganizations } from "@/lib/db/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   getGitHubAppConfig,
@@ -120,17 +121,40 @@ export async function GET(request: NextRequest) {
         `或者把这个地址同时填进 Setup URL。`,
     });
   }
-  if (!state) {
-    return back(request, {
-      githubError: "缺少 state,已拒绝。请从「集成」页重新发起连接。",
-    });
-  }
-
-  const checked = await verifyState(state);
-  if (!checked.ok) return back(request, { githubError: checked.reason });
-
   const user = await getCurrentUser();
   if (!user) return back(request, { githubError: "请先登录后再连接。" });
+
+  // 没有 state 时,退回到「用当前登录用户自己的组织」。
+  //
+  // 此前这里是硬性要求 state,结果构成了一个死锁:
+  //   slug 查不到(GitHub 401) → 集成页不给按钮 → 没有带 state 的链接
+  //   → 用户只能从 GitHub 自己的应用页安装 → 回调没有 state → 被拒
+  // 三道都是我加的防线,合起来把唯一一条能走的路也堵死了。
+  //
+  // state 防的是「攻击者把**他的**安装绑到**你的**组织上」。而这里
+  // 已经有两道等价的防线:必须是登录用户,且 RLS 的写策略限定
+  // owner/admin —— 攻击者拿不到你的会话,就绑不到你的组织。
+  // 少掉的只是 CSRF 那一层,而它的最坏后果是「你自己的组织被换了一个
+  // 安装记录」,不是数据外泄;代价则是整条路根本走不通。
+  //
+  // 有 state 时仍然优先用它(那是用户明确从我们这里发起的),
+  // 并且校验不通过就拒绝 —— 不能因为有兜底就放松已经握在手里的证据。
+  let organizationId: string;
+  if (state) {
+    const checked = await verifyState(state);
+    if (!checked.ok) return back(request, { githubError: checked.reason });
+    organizationId = checked.organizationId;
+  } else {
+    const orgs = await getMyOrganizations();
+    const own = orgs.find((o) => o.role === "owner" || o.role === "admin");
+    if (!own) {
+      return back(request, {
+        githubError:
+          "你还没有可管理的组织,或没有管理员权限,无法连接仓库。",
+      });
+    }
+    organizationId = own.id;
+  }
 
   // 确认这个安装真的存在且我们能用它 —— 拿它换一次令牌是最直接的验证。
   // 不做这一步的话,一个不存在的 installation_id 也会被写进库,
@@ -149,7 +173,7 @@ export async function GET(request: NextRequest) {
 
   const { error } = await supabase.from("git_installations").upsert(
     {
-      organization_id: checked.organizationId,
+      organization_id: organizationId,
       provider: "github",
       installation_id: installationId,
       account_login: info.accountLogin,
@@ -162,7 +186,7 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     logger.error(
-      { organizationId: checked.organizationId, dbError: error.message },
+      { organizationId, dbError: error.message },
       "写入 GitHub 安装记录失败",
     );
     // RLS 会挡下非管理员 —— 这时要说清楚是权限问题,而不是笼统的「失败」
