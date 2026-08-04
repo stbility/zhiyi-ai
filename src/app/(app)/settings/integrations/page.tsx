@@ -177,8 +177,6 @@ export default async function IntegrationsPage({
         installation={gitInstallation}
         installHref={installHref}
         canManage={canManage}
-        slugSource={slugResult.source}
-        slugError={slugResult.error}
         notice={{
           ...(params.githubOk ? { ok: true } : {}),
           ...(params.githubError ? { error: params.githubError } : {}),

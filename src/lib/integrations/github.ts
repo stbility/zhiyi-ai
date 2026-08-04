@@ -146,6 +146,26 @@ export function signAppJwt(config: GitHubAppConfig, now = Date.now()): string {
   return `${data}.${base64url(signature)}`;
 }
 
+/**
+ * 本地自检:这把私钥能不能用来签名。
+ *
+ * 「私钥格式不对,我们连 JWT 都签不出来」和「JWT 签好了,GitHub 不认」
+ * 是两件完全不同的事,对应两个完全不同的修法 —— 前者改 PEM,
+ * 后者核对 Client ID 与 App 的对应关系。
+ *
+ * 而这件事**不需要联网就能判**:签一次试试就知道。
+ * 此前把两者混在一句「GitHub 拒绝了应用凭据」里,用户被支去核对
+ * Client ID,而真正坏的可能是私钥 —— 怎么核对都对不出结果。
+ */
+function checkPrivateKey(config: GitHubAppConfig): string | null {
+  try {
+    signAppJwt(config);
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+
 interface CachedToken {
   readonly token: string;
   /** 毫秒时间戳 */
@@ -305,6 +325,23 @@ export async function getAppSlug(): Promise<AppSlugResult> {
     return { slug: null, source: "none", error: "尚未配置 GitHub App。" };
   }
 
+  // 先本地自检:私钥要是根本签不出 JWT,就不必去问 GitHub 了 ——
+  // 那是我们这边的配置问题,而且 GitHub 只会回一句笼统的 401,
+  // 反而把人往错的方向带。
+  const 私钥问题 = checkPrivateKey(config);
+  if (私钥问题) {
+    logger.warn({ failure: 私钥问题 }, "GitHub App 私钥无法用于签名");
+    return {
+      slug: null,
+      source: "none",
+      error:
+        `GITHUB_APP_PRIVATE_KEY 无法用于签名,连 JWT 都没签出来 ——` +
+        `这一步还没联网,所以与 Client ID 无关。` +
+        `Node 的原话:${私钥问题}。` +
+        `常见成因:PEM 少了首尾的 BEGIN/END 行,或换行被写成了字面量 \\n。`,
+    };
+  }
+
   let failure: string;
   try {
     const response = await fetch(`${API}/app`, {
@@ -320,11 +357,21 @@ export async function getAppSlug(): Promise<AppSlugResult> {
       }
       failure = "GitHub 返回的应用信息里没有 slug。";
     } else if (response.status === 401) {
-      // 这是最常见的一种配错,直接把话说到位
+      // **以 GitHub 的原话为准。**
+      //
+      // 这一支此前完全不读响应体,直接用一句我写死的猜测盖掉 ——
+      // 而 GitHub 的 401 body 恰恰会区分几种完全不同的原因,
+      // 每种对应不同的修法(私钥解析不了 / iss 不对应任何 App /
+      // 时钟偏差导致 iat 在未来 / 凭据不匹配)。
+      // 把它扔掉,等于让用户反复去核对同一个可能根本没错的地方 ——
+      // 用户的原话是「不要多次报错」,他被这一句困了好几轮。
+      const 原话 = await readError(response);
+      // Client ID 是公开值(GitHub App 设置页上就印着),回显出来
+      // 让用户一眼能比对是不是拿错了那个 App。私钥一个字都不显示。
       failure =
-        "GitHub 拒绝了应用凭据(401)。最常见的原因是 GITHUB_APP_CLIENT_ID " +
-        "填成了 OAuth App 的 client id,或私钥与这个 App 不匹配 —— " +
-        "请到 GitHub App(不是 OAuth App)的设置页核对 Client ID 与私钥。";
+        `GitHub 拒绝了这次调用(401)${原话}` +
+        `。本次用的 Client ID 是「${config.clientId}」` +
+        `,可在 GitHub App(不是 OAuth App)的设置页核对。`;
     } else {
       failure = `向 GitHub 查询应用信息失败(HTTP ${response.status})${await readError(response)}`;
     }

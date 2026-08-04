@@ -36,29 +36,43 @@ const 去注释 = (code: string) =>
 
 const CARD = 去注释(CARD_RAW);
 
-describe("卡片里同一块内容只能出现一次", () => {
-  it("slug 未查证的警告只渲染一次", () => {
-    // 数的是渲染条件本身,不是那句文案 —— 文案在「没有按钮」的说明里
-    // 也会出现一次,那是另一件事
-    const 次数 =
-      CARD.split('configured && slugSource !== "github" && slugError').length - 1;
-    expect(次数, `这段警告渲染了 ${次数} 次`).toBe(1);
+describe("卡片上不摊诊断细节", () => {
+  /**
+   * 用户的原话:「删除 保持干净」。
+   *
+   * 卡片上曾经同时挂着三段东西:slug 未查证的警告、GitHub 的 401 原文、
+   * 以及一段解释「为什么这里没有连接入口」的话。三段说的是同一件事,
+   * 铺开之后把整张卡片淹掉了,而它们本来是**部署侧**要看的东西。
+   *
+   * 现在:卡片只留一句短话,诊断全部进服务端日志(logger.warn 已经记着)。
+   * 这和「系统消息与内容分走不同通道」是同一条原则 ——
+   * 日志是给运维的通道,卡片是给用户的通道。
+   */
+  const 不许出现 = [
+    /未能向 GitHub 查证应用地址/,
+    /GITHUB_APP_CLIENT_ID 填成了 OAuth App/,
+    /只会落在 GitHub 的 404 页面上/,
+    /下面用的是环境变量里填的值/,
+  ];
+
+  for (const 句 of 不许出现) {
+    it(`卡片上不出现「${句.source}」`, () => {
+      expect(CARD).not.toMatch(句);
+    });
+  }
+
+  it("没有连接入口时只留一句短话", () => {
+    expect(CARD).toMatch(/暂时无法连接,详情见服务端日志。/);
   });
 
-  it("标题行里只有标题和状态标签", () => {
-    // 重复的那一份曾经被插进标题的 flex 容器里 —— 一个警告段落被当成
-    // flex 子项排在标题旁边,标题行的布局跟着一起坏。
-    const 标题行 = CARD.slice(
-      CARD.indexOf('<div className="mb-1 flex flex-wrap items-center gap-2">'),
-      CARD.indexOf("<p className=\"text-fg-secondary text-caption mb-4\">"),
-    );
-    expect(标题行.length).toBeGreaterThan(0);
-    expect(标题行, "标题行里又混进了警告段落").not.toMatch(/未能向 GitHub/);
+  it("已经用不上的 slug 属性不留在接口里", () => {
+    // 删了渲染却留着属性,下一个人会以为它还有用,再把那几段话接回去
+    expect(CARD).not.toMatch(/slugSource|slugError/);
   });
 
-  it("连接按钮只有一个", () => {
-    const 次数 = CARD.split(">\n            连接 GitHub").length - 1;
-    expect(次数).toBeLessThanOrEqual(1);
+  it("诊断没有丢,只是换了通道 —— 服务端仍然记日志", () => {
+    const GH = read("src/lib/integrations/github.ts");
+    expect(GH).toMatch(/logger\.warn/);
   });
 });
 
@@ -85,25 +99,20 @@ describe("安装链接只能用查证过的 slug 拼", () => {
   });
 
   it("拼不出链接时的说明不写「请稍后重试」", () => {
-    // 401 这类是配置问题,重试一万次也一样 —— 那句话只会让人白等。
-    // 注释里可以提它(那是在记为什么删掉),渲染出去的文案里不行。
+    // 401 这类是配置问题,重试一万次也一样 —— 那句话只会让人白等
     expect(CARD).not.toMatch(/请稍后重试/);
   });
 });
 
 describe("回调结果贴着它对应的动作,不浮在顶部", () => {
-  it("notice 排在描述段之后、动作区之前", () => {
+  it("回执排在描述段之后、动作区之前", () => {
     // 此前它紧跟标题浮在卡片最上面,读起来像整页出了错 ——
     // 而它其实只是「刚才那次连接的回执」。位置本身就是信息。
     const 描述 = CARD.indexOf("连接后,智能体可以直接读写你授权的仓库");
     const 回执 = CARD.indexOf("notice?.error");
     // 用动作区独有的文案定位。`{!configured ? (` 在上面的状态标签里
-    // 也出现过一次,拿它当锚点会定位到标题行 —— 我第一次就踩了这个,
-    // 断言因此报了一个与事实相反的「回执跑到动作区后面了」。
+    // 也出现过一次,拿它当锚点会定位到标题行。
     const 动作 = CARD.indexOf("服务端尚未配置 GitHub App");
-    expect(描述).toBeGreaterThan(-1);
-    expect(回执).toBeGreaterThan(-1);
-    expect(动作).toBeGreaterThan(-1);
     expect(回执, "回执又浮到描述前面去了").toBeGreaterThan(描述);
     expect(回执, "回执跑到动作区后面了").toBeLessThan(动作);
   });
@@ -127,5 +136,33 @@ describe("回调缺 installation_id 时要说得清", () => {
     // Callback URL 对应的是授权流程。两条路都走同一个地址需要勾那个选项。
     expect(CALLBACK).toMatch(/Setup URL/);
     expect(CALLBACK).toMatch(/Request user authorization/);
+  });
+});
+
+describe("401 要以 GitHub 的原话为准", () => {
+  const GH = read("src/lib/integrations/github.ts");
+
+  it("401 分支读响应体,不再用写死的猜测盖掉", () => {
+    // 这一支此前完全不读 body。而 GitHub 的 401 会区分几种完全不同的
+    // 原因(私钥解析不了 / iss 不对应任何 App / 时钟偏差 / 凭据不匹配),
+    // 每种对应不同的修法。扔掉它,等于让用户反复核对同一个可能没错的地方。
+    const 分支 = GH.slice(
+      GH.indexOf("response.status === 401"),
+      GH.indexOf("向 GitHub 查询应用信息失败"),
+    );
+    expect(分支).toMatch(/readError\(response\)/);
+  });
+
+  it("回显 Client ID(公开值),但一个字都不显示私钥", () => {
+    expect(GH).toMatch(/config\.clientId\}/);
+    expect(GH, "私钥被回显了").not.toMatch(/\$\{config\.privateKey\}/);
+  });
+
+  it("私钥能不能签名,不联网就先判掉", () => {
+    // 「私钥格式不对,连 JWT 都签不出来」和「JWT 签好了 GitHub 不认」
+    // 是两件事,两个修法。混成一句「GitHub 拒绝了应用凭据」,
+    // 用户会被支去核对 Client ID —— 而真正坏的可能是私钥。
+    expect(GH).toMatch(/function checkPrivateKey/);
+    expect(GH).toMatch(/这一步还没联网/);
   });
 });
