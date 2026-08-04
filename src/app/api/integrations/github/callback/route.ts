@@ -160,7 +160,28 @@ export async function GET(request: NextRequest) {
   // 不做这一步的话,一个不存在的 installation_id 也会被写进库,
   // 界面上显示「已连接」,直到用户真去拉代码才发现是空的。
   const auth = await getInstallationToken(installationId);
-  if (!auth.ok) return back(request, { githubError: auth.error });
+  if (!auth.ok) {
+    // 说清楚**装是装上了**,坏的是我们这边的凭据。
+    //
+    // 走到这一步意味着:用户在 GitHub 上点完了安装,GitHub 也把
+    // installation_id 送了回来 —— 应用确实已经装好,而且持久保存在
+    // GitHub 侧。失败的是我们拿它去换令牌那一步,那需要私钥和 Client ID。
+    //
+    // 不区分的话,用户会以为安装没成功而反复重装 —— 重装多少次都一样,
+    // 因为坏的根本不是安装。而且凭据修好之后**不需要重装**:
+    // 再走一次配置页就会重新触发这个回调,记录就补上了。
+    logger.warn(
+      { installationId, reason: auth.error },
+      "安装已完成,但换取安装令牌失败,未写入连接记录",
+    );
+    return back(request, {
+      githubError:
+        `应用已经在 GitHub 上安装成功(安装编号 ${installationId}),` +
+        `但本站换取访问令牌失败,所以还没有记录为已连接 —— ` +
+        `**不需要重装**,把下面这个问题解决后再走一次「配置」即可:` +
+        `${auth.error}`,
+    });
+  }
 
   const supabase = await createSupabaseServerClient();
   if (!supabase) return back(request, { githubError: "认证服务未配置。" });
