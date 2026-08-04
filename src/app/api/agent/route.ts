@@ -65,6 +65,10 @@ export async function POST(request: NextRequest) {
 
   const { runAgentTurn } = await import("@/lib/ai/agent-turn");
   return runAgentTurn({
+    // 时间预算由**这条路由的 maxDuration** 推导,不在别处另写一个秒数。
+    // 减掉的那点是留给「把记录写进库」的:平台到点直接杀进程,
+    // 不留这点时间用户连发生了什么都看不到。
+    budgetMs: maxDuration * 1000 - 15_000,
     supabase,
     userId,
     organizationId,

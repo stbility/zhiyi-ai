@@ -37,6 +37,7 @@ export async function runAgentTurn({
   userMessage,
   history,
   signal,
+  budgetMs,
 }: {
   supabase: SupabaseClient;
   userId: string;
@@ -47,6 +48,11 @@ export async function runAgentTurn({
   userMessage: string;
   history: readonly { role: "user" | "assistant"; content: string }[];
   signal: AbortSignal;
+  /**
+   * 平台给这次运行的全部时间,由路由从它自己的 maxDuration 推导后传进来。
+   * 这里不写秒数 —— 换 Vercel 计划只需要改路由上那**一个**数。
+   */
+  budgetMs: number;
 }): Promise<Response> {
   // 工作区真正用到时才建,而且只建一次。
   // 无条件建的话,模型一个文件都没写的运行也会留下一个空工作区。
@@ -164,7 +170,7 @@ export async function runAgentTurn({
           toolContext,
           gitContext,
           signal,
-          limits: DEFAULT_LIMITS,
+          limits: { ...DEFAULT_LIMITS, budgetMs },
           reporter: {
             // 模型每吐一段就推一段 —— 这是智能体从「看起来卡死」
             // 变成「看得见在跑」的关键。

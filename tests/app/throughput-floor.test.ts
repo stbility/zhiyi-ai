@@ -63,8 +63,13 @@ describe("不得再往对话主链路上加人为时限", () => {
 });
 
 describe("平台强制的那一个要留着", () => {
-  it("总预算还在 —— 它把「被平台静默强杀」变成「说得清的中止」", () => {
-    expect(ROUTE).toMatch(/TOTAL_BUDGET_MS\s*=\s*285_000/);
+  it("总预算由 maxDuration 推导 —— 源码里不写死任何秒数", () => {
+    // 285 是我写的数,已经删了。平台给多长时间由路由上的 maxDuration
+    // 决定,那是 Vercel 的配置旋钮(Hobby 300 秒,Pro/Enterprise 开
+    // Fluid compute 到 800 秒,支持的 Node 运行时可开到 1800 秒 beta)。
+    // 换计划只改那一个数,全链路自动跟着走。
+    expect(ROUTE).toMatch(/TOTAL_BUDGET_MS\s*=\s*maxDuration \* 1000/);
+    expect(ROUTE, "又写死了一个秒数").not.toMatch(/=\s*285_000/);
   });
 
   it("删除的理由留在代码里,不是只写在提交信息里", () => {

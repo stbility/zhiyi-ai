@@ -60,7 +60,7 @@ export async function loadOrgCandidates(
     )
     .eq("organization_id", organizationId)
     .eq("enabled", true)
-    .is("chat_unavailable_reason", null)
+    // 不按「我们判断它不可用」的标记过滤 —— 只认用户自己的开关
     .order("model_id");
 
   return (data ?? []).flatMap((row) => {

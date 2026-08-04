@@ -34,8 +34,12 @@ import {
 export const runtime = "nodejs";
 // 流式响应不能被缓存
 export const dynamic = "force-dynamic";
-// 显式声明,避免依赖平台默认值。Vercel 官方文档:Hobby 计划默认 300 秒、
-// 上限同样是 300 秒,调不高。
+// 平台给这条路由多长时间,**由这一个数决定**,全链路都从它推导。
+//
+// 300 是 Hobby 计划的上限。它**不是**绝对上限 —— Vercel 官方文档:
+// Pro/Enterprise 开启 Fluid compute 可到 800 秒,支持的 Node 运行时
+// 还能开到 1800 秒(beta)。换计划时只改这一个数。
+// 我此前在注释里反复写「调不高」,那是错的,而且会让人以为没有出路。
 // https://vercel.com/docs/functions/configuring-functions/duration
 export const maxDuration = 300;
 
@@ -57,7 +61,7 @@ export const maxDuration = 300;
  * 我们才收得到 —— NVIDIA 的部署未必开着。于是一次正常的推理调用
  * 在第 45 秒被判成「模型正在排队」直接掐断,用户看到的是「模型不能用了」。
  *
- * 唯一还留着的时限是平台强制的那个:Vercel 的函数最长 300 秒,调不高。
+ * 唯一还留着的时限是平台强制的那个:函数跑到 maxDuration 就被杀。
  * 看门狗的真正价值从来不是「早点掐断」,而是**在撞上平台上限之前主动收尾,
  * 把原因说清楚** —— 被平台强杀时连接直接断开,浏览器只报「Failed to fetch」,
  * 用户完全不知道发生了什么。所以机制保留,阈值只剩平台那一个。
@@ -65,7 +69,19 @@ export const maxDuration = 300;
  * 产品定位上也是这个道理:用户用自己的密钥、自己付费,
  * 我们没有立场替他决定「等多久算太久」。
  */
-const TOTAL_BUDGET_MS = 285_000;
+/**
+ * 收尾预算 —— **由 maxDuration 推导,不写死任何秒数**。
+ *
+ * 平台给多长时间由上面那个 maxDuration 决定,而它是 Vercel 的配置旋钮:
+ * Hobby 是 300 秒;Pro/Enterprise 开 Fluid compute 可到 800 秒;
+ * 支持的 Node 运行时还能开到 1800 秒(beta)。
+ * 换计划就改那**一个**数,这里自动跟着走 —— 我不再另写一个秒数。
+ *
+ * 减掉的那点是**写记录用的**,不是给模型的时限:平台到点直接杀进程,
+ * 连接断开、浏览器只报 Failed to fetch,用户连发生了什么都看不到。
+ * 留出这点时间是为了把原因写进库。
+ */
+const TOTAL_BUDGET_MS = maxDuration * 1000 - 15_000;
 /*
  * MAX_MODEL_ATTEMPTS 已删,连同整条自动降级链。
  *
@@ -140,35 +156,87 @@ export async function POST(request: NextRequest) {
     request.signal,
   );
 
+  // 上游临时故障要**重试同一个模型**,不是换模型,也不是直接失败。
+  //
+  // 529 overloaded 的字面意思就是「忙,等会儿再来」—— 它恰恰是最该重试的
+  // 一种。我几分钟前删自动降级链时把重试也一并删掉了,于是一个 529 就
+  // 让整次对话直接失败,一次都不试。那是我弄坏的,不是用户要的:
+  // 他说的是「不换模型」,不是「不重试」。
+  //
+  // 做法照 Claude Code 官方文档(code.claude.com/docs/en/errors):
+  //   「Claude Code retries these failures: Server errors, overloaded
+  //    responses, and request timeouts … Temporary 429 throttles.」
+  // 指数退避,重试用尽之前不把错误给用户看。
+  //
+  // 次数不设上限 —— 界限只有剩余预算:退避时间超过剩余预算时就停。
+  const { isTransientFailure } = await import("@/lib/providers/model-filter");
+
   let result: Awaited<ReturnType<typeof streamChat>>;
-  try {
-    result = await streamChat({
-      credentials,
-      model,
-      messages,
-      signal: wd.signal,
-    });
-  } catch (e) {
-    wd.clear();
-    if (request.signal.aborted) return errorResponse("请求已取消。", 499);
+  let attempt = 0;
+  for (;;) {
+    try {
+      result = await streamChat({
+        credentials,
+        model,
+        messages,
+        signal: wd.signal,
+      });
+      break;
+    } catch (e) {
+      if (request.signal.aborted) {
+        wd.clear();
+        return errorResponse("请求已取消。", 499);
+      }
 
-    // 上游说什么就是什么,不加推断、不替它解释。
-    const message =
-      wd.reason ??
-      (e instanceof ProviderCallError ? e.message : "调用模型服务失败。");
-    logger.warn({ model, providerId, organizationId, reason: message }, "模型调用失败");
+      const err =
+        e instanceof ProviderCallError
+          ? e
+          : new ProviderCallError(
+              `与模型服务的连接中断:${e instanceof Error ? e.message : String(e)}`,
+            );
+      // 传输层断了(fetch failed、连接被重置)按临时故障处理 ——
+      // 它没有状态码可判,但按定义就是临时的
+      const 断连 = !(e instanceof ProviderCallError);
 
-    await insertAssistantMessage(supabase, {
-      conversation_id: conversationId,
-      organization_id: organizationId,
-      role: "assistant",
-      content: "",
-      provider_id: providerId,
-      model_id: model,
-      latency_ms: Date.now() - startedAt,
-      error_message: message,
-    });
-    return errorResponse(message, 502);
+      // 平台时限到了就是到了,重试也没有时间跑
+      const 剩余 = TOTAL_BUDGET_MS - (Date.now() - startedAt);
+      const 可重试 =
+        !wd.reason &&
+        剩余 > 0 &&
+        (断连 || isTransientFailure(err.status, err.message));
+
+      if (可重试) {
+        // 指数退避 1s / 2s / 4s / 8s 封顶。等待时间超过剩余预算就别等了 ——
+        // 睡过去只会被平台强杀,连报错都送不出去。
+        const backoff = Math.min(1000 * 2 ** attempt, 8000);
+        if (backoff < 剩余) {
+          attempt += 1;
+          logger.warn(
+            { model, providerId, attempt, status: err.status, backoffMs: backoff },
+            "上游临时失败,退避后重试同一个模型",
+          );
+          await new Promise((r) => setTimeout(r, backoff));
+          continue;
+        }
+      }
+
+      wd.clear();
+      // 上游说什么就是什么,不加推断、不替它解释。
+      const message = wd.reason ?? err.message;
+      logger.warn({ model, providerId, organizationId, reason: message }, "模型调用失败");
+
+      await insertAssistantMessage(supabase, {
+        conversation_id: conversationId,
+        organization_id: organizationId,
+        role: "assistant",
+        content: "",
+        provider_id: providerId,
+        model_id: model,
+        latency_ms: Date.now() - startedAt,
+        error_message: message,
+      });
+      return errorResponse(message, 502);
+    }
   }
 
   const usedProviderId = providerId;

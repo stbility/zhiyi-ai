@@ -95,6 +95,13 @@ export interface AgentLimits {
    */
   readonly maxSteps: number;
   /** 总时间预算(毫秒),必须留在平台函数时限之内 */
+  /**
+   * 平台给这次运行的全部时间。**没有默认值,必须由调用方给出。**
+   *
+   * 故意不设默认:任何我写在这里的秒数都是我拍脑袋的数字,而它决定
+   * 用户的任务能不能做完。真实的值只有一个来源 —— 路由上的 maxDuration
+   * (Vercel 的配置旋钮),由路由推导后传进来。
+   */
   readonly budgetMs: number;
   /** 连续失败多少次就停 —— 一直失败说明它没在改正,再试也是浪费 */
   readonly maxConsecutiveFailures: number;
@@ -108,17 +115,14 @@ export interface AgentLimits {
   readonly maxRetries: number;
 }
 
-export const DEFAULT_LIMITS: AgentLimits = {
+export const DEFAULT_LIMITS: Omit<AgentLimits, "budgetMs"> = {
   // 步数不设上限。
   //
   // 12 也好、3 也好,都是我拍脑袋的数字,而它决定了用户的任务能不能做完。
   // 唯一真实的界限是下面那个平台时限 —— 时间用完就是用完了,
   // 在此之前没有理由拦住模型。
   maxSteps: Number.MAX_SAFE_INTEGER,
-  // 285 秒 = 平台给的全部时间(Vercel 函数上限 300 秒,留 15 秒收尾)。
-  // 这不是我们挑的数,是墙在那里。智能体要跑得更久,只能把执行搬出
-  // 无服务器函数 —— 那正是接 OpenClaw / Hermes 的意义。
-  budgetMs: 285_000,
+
   // 连续失败也不拦。工具连着报错时,模型往往正在根据报错改正 ——
   // 数到 3 就掐掉,等于不让它改完。时间用完自然会停。
   maxConsecutiveFailures: Number.MAX_SAFE_INTEGER,
@@ -186,7 +190,7 @@ export async function runAgent({
   toolContext,
   gitContext,
   signal,
-  limits = DEFAULT_LIMITS,
+  limits,
   reporter,
 }: {
   /**
@@ -212,7 +216,7 @@ export async function runAgent({
    */
   gitContext?: GitToolContext | undefined;
   signal: AbortSignal;
-  limits?: AgentLimits;
+  limits: AgentLimits;
   reporter?: AgentReporter;
 }): Promise<AgentOutcome> {
   const startedAt = Date.now();

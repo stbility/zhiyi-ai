@@ -1,3 +1,17 @@
+/**
+ * 测试自己声明预算。
+ *
+ * budgetMs 故意没有默认值 —— 任何写在源码里的秒数都是拍脑袋的数字,
+ * 而它决定用户的任务能不能做完。生产里它由路由从 maxDuration 推导。
+ * 测试里给足,让用例自己的断言说了算,而不是被一个时限截断。
+ */
+const agentLimitsForTest = {
+  maxSteps: Number.MAX_SAFE_INTEGER,
+  budgetMs: 30_000,
+  maxConsecutiveFailures: Number.MAX_SAFE_INTEGER,
+  maxRetries: 0,
+};
+
 import { describe, expect, it, vi } from "vitest";
 
 import { sseResponse } from "../helpers/sse";
@@ -100,6 +114,7 @@ describe("智能体循环", () => {
     );
 
     const r = await agent.runAgent({
+        limits: { ...agentLimitsForTest },
       model: candidate(cipher, "m"),
       userMessage: "建一个入口文件",
       history: [],
@@ -190,6 +205,7 @@ describe("智能体循环", () => {
     vi.stubGlobal("fetch", scriptedModel([{ text: "" }]));
 
     const r = await agent.runAgent({
+        limits: { ...agentLimitsForTest },
       model: candidate(cipher, "m"),
       userMessage: "干活",
       history: [],
@@ -352,6 +368,7 @@ describe("智能体循环", () => {
 
     await expect(
       agent.runAgent({
+        limits: { ...agentLimitsForTest },
         model: candidate(cipher, "m"),
         userMessage: "干活",
         history: [],
@@ -392,6 +409,7 @@ describe("智能体循环", () => {
     );
 
     const r = await agent.runAgent({
+        limits: { ...agentLimitsForTest },
       model: candidate(cipher, "m"),
       userMessage: "建一个入口文件",
       history: [],
@@ -451,6 +469,7 @@ describe("智能体循环", () => {
     );
 
     const r = await agent.runAgent({
+        limits: { ...agentLimitsForTest },
       model: candidate(cipher, "m"),
       userMessage: "干活",
       history: [],

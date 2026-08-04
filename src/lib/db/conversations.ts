@@ -12,9 +12,10 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
  * AI 助手页与智能体页共用的读取逻辑。
  *
  * 两个页面是两条通道,但「有哪些模型可选」「这条对话说过什么」
- * 是同一件事。抽出来免得两份查询慢慢长歪 —— 尤其是那两个过滤条件
- * (模型启用、服务商启用、chat_unavailable_reason 为空),
- * 少一个就会把用户明确停用的东西又拉回列表里。
+ * 是同一件事。抽出来免得两份查询慢慢长歪。
+ *
+ * 过滤条件只有两个,而且都是**用户自己的决定**:模型启用、服务商启用。
+ * 我们不加任何「我们认为它不可用」的过滤。
  */
 
 export async function loadModels(
@@ -28,8 +29,14 @@ export async function loadModels(
     .select("model_id, provider_id, ai_providers (display_name, enabled)")
     .eq("organization_id", organizationId)
     .eq("enabled", true)
-    // 实际调用过、确认不能对话的模型不再出现在选择列表里
-    .is("chat_unavailable_reason", null)
+    // **不按任何「我们判断它不可用」的标记过滤。**
+    //
+    // 这里曾经加了 .is("chat_unavailable_reason", null) —— 一个模型探测
+    // 失败就从用户的选择列表里消失。而探测失败的原因常常是排队、限流、
+    // 探测超时,模型本身好好的。用户的原话:「任何模型、服务商都不允许限制」。
+    //
+    // 只认用户自己的开关(enabled)和服务商的开关。他关了就不显示,
+    // 我们不替他关。
     .order("model_id");
 
   return (data ?? []).flatMap((row) => {
