@@ -186,7 +186,7 @@ export async function POST(request: NextRequest) {
       actualModel = candidate.modelId;
       actualProviderId = candidate.providerId;
       if (candidate.providerId !== providerId || candidate.modelId !== model) {
-        fallbackNote = describeSwitch(requested, candidate, lastFailure);
+        fallbackNote = describeSwitch(requested, candidate);
       }
       break;
     } catch (e) {

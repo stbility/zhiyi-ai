@@ -154,7 +154,6 @@ describe("换服务商的说明", () => {
     const text = describeSwitch(
       { providerName: "nvidia", modelId: "z-ai/glm-5.2" },
       deepseek[0]!,
-      "排队已满",
     );
     // 悄悄换等于伪造来源:用户必须知道这次回答其实是别家跑的
     expect(text).toContain("nvidia");

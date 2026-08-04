@@ -24,43 +24,16 @@ export function vendorOf(modelId: string): string {
  * @param available 当前可选的全部模型(已通过可用性判定)
  * @param preferred 用户选中的模型
  */
-export function buildFallbackChain(
-  available: readonly string[],
-  preferred: string,
-): readonly string[] {
-  const chain = [preferred];
-  const seen = new Set([preferred]);
-  const preferredVendor = vendorOf(preferred);
 
-  // 第一梯队:不同厂商 —— 同厂商多半共用算力池,堵一起堵
-  for (const m of available) {
-    if (!seen.has(m) && vendorOf(m) !== preferredVendor) {
-      chain.push(m);
-      seen.add(m);
-    }
-  }
-
-  // 第二梯队:同厂商的其它模型,聊胜于无
-  for (const m of available) {
-    if (!seen.has(m)) {
-      chain.push(m);
-      seen.add(m);
-    }
-  }
-
-  return chain;
-}
-
-/**
- * 降级发生后给用户看的说明。
+/*
+ * buildFallbackChain / describeFallback 已删。
  *
- * 必须说,不能悄悄换。用户选了 DeepSeek 却收到 GLM 的回答,却不知道换过 ——
- * 那是拿另一个模型的输出冒充他选的模型,和伪造结果没有区别。
+ * 它们是「同一个服务商内部换模型」那一版降级的产物。后来降级改成
+ * 跨服务商(lib/ai/candidates.ts),这两个函数就没有调用方了 ——
+ * 而测试还在测它们,于是它们看起来一直是活的。
+ * 被测试养着的死代码比普通死代码更麻烦:它有绿色的证明,
+ * 谁也不敢删。
+ *
+ * 这个文件现在只剩 vendorOf,由 candidates.ts 用来判断
+ * 「这两个模型是不是同一家」。
  */
-export function describeFallback(
-  requested: string,
-  actual: string,
-  reason: string,
-): string {
-  return `「${requested}」当前不可用(${reason}),已自动改用「${actual}」完成本次回复。`;
-}

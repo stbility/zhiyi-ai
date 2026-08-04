@@ -4,7 +4,6 @@ import {
   createCipheriv,
   createDecipheriv,
   randomBytes,
-  timingSafeEqual,
 } from "node:crypto";
 
 import { getServerEnv } from "@/lib/env/server";
@@ -110,10 +109,3 @@ export function maskApiKey(plaintext: string): string {
   return `••••••••${plaintext.slice(-4)}`;
 }
 
-/** 恒定时间比较,避免通过响应时间差推断密钥内容 */
-export function secretEquals(a: string, b: string): boolean {
-  const bufA = Buffer.from(a, "utf8");
-  const bufB = Buffer.from(b, "utf8");
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
-}

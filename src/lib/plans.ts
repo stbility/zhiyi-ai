@@ -70,7 +70,3 @@ export const PLANS: readonly Plan[] = [
   },
 ];
 
-/** 价格是否已从 Stripe 取到真实值 */
-export function hasVerifiedPrice(plan: Plan): boolean {
-  return plan.price !== undefined;
-}

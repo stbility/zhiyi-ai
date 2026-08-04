@@ -188,11 +188,14 @@ export function createCredentialLoader(): (
  * 但只说**换过什么**,不说「谁不可用」:那是判决,而我们经常不知道
  * 真实原因(上游 529、我们自己协议写错、网络抖动,表现是一样的)。
  * 上游原话也不复述 —— 它可能很长,而且对用户没有可操作性。
+ *
+ * 曾经有第三个参数 reason(失败原因),但函数体从头到尾没用过它 ——
+ * 因为上面这条「不说谁不可用」的纪律恰恰要求不用。留着一个永远不被
+ * 读取的参数,只会让调用方以为它有影响,还得费神想「这里该传什么」。
  */
 export function describeSwitch(
   from: ModelCandidate | { providerName: string; modelId: string },
   to: ModelCandidate,
-  _reason: string,
 ): string {
   const sameProvider = from.providerName === to.providerName;
   return sameProvider

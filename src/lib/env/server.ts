@@ -111,11 +111,6 @@ export function getServerEnv(): ServerEnv {
   return cached;
 }
 
-/** 仅供测试重置缓存 */
-export function resetServerEnvCache(): void {
-  cached = undefined;
-}
-
 /**
  * 解析后的 Supabase 凭据 —— 屏蔽新旧命名差异,调用方不必关心用的是哪一套。
  */

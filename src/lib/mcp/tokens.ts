@@ -52,12 +52,15 @@ export function issueToken(): IssuedToken {
  * 而这里是 32 字节随机数 —— 穷举它跟穷举密钥本身一样不可行,
  * 慢哈希只会让每次 API 调用多花几十毫秒。
  */
-export function hashToken(token: string): string {
+// 不导出:只有本文件内部用。导出一个没有外部消费者的符号,
+// 会让人以为它是模块的对外契约,改动时凭空多一层顾虑。
+function hashToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
 /** 定长比较两个哈希 —— 逐字节早退会泄露哈希内容 */
-export function hashEquals(a: string, b: string): boolean {
+// 同上:内部使用,不对外
+function hashEquals(a: string, b: string): boolean {
   const bufA = Buffer.from(a, "utf8");
   const bufB = Buffer.from(b, "utf8");
   if (bufA.length !== bufB.length) return false;
