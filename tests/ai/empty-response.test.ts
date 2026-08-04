@@ -185,7 +185,13 @@ describe("只有思考过程时的处理", () => {
     expect(reasoning).toContain("再考虑边界");
 
     expect(content).toContain("先分析需求");
-    expect(content).toContain("没有产出正式回答");
+    // 正文里**只有模型自己的话**,不加任何由我们措辞的说明。
+    //
+    // 这里曾经要求前面必须拼一句「(本轮没有产出正式回答,以下是模型的
+    // 思考过程)」。那句话拼进的是 kind: "content",而对话路由把 content
+    // 累加进 full、以 `content: full` 落库 —— 于是它作为**模型的发言**
+    // 永久存进了数据库。界面上的旁白还能改掉,落进 messages 的改不掉。
+    expect(content).not.toMatch(/本轮|没有产出正式回答|以下是模型/);
     vi.unstubAllGlobals();
   });
 

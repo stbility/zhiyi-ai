@@ -284,6 +284,125 @@ function formatWaited(ms: number): string {
   return ms >= 1000 ? `${Math.round(ms / 1000)} 秒` : `${ms} 毫秒`;
 }
 
+/**
+ * 一帧 SSE 数据的解码结果。
+ *
+ * 两条通道(对话的 streamChat、智能体的 assembleToolStream)共用它。
+ *
+ * 为什么必须共用:此前两边各自把 chunk 解释了一遍,于是**同一帧数据
+ * 在两条线上含义不同**。已经发现一处真实分歧 ——
+ * 对话侧把流内错误读成 `error ?? detail`,智能体侧只读 `error`,
+ * 于是用 detail 字段报错的服务商在智能体这条线上会被**静默吞掉**,
+ * 表现成「这一轮什么都没有」,而错误信息就在那一帧里。
+ *
+ * 这正是「stream: false 拖了一星期」那个事故的同一形态:协议的两端
+ * 各自演化,测试各测各的,直到生产暴露。所以解释只写一遍。
+ */
+interface DecodedFrame {
+  /** 收到 [DONE],流正常结束 */
+  readonly done: boolean;
+  /** 心跳、注释、解析不出的行 —— 跳过,不是错误 */
+  readonly skip: boolean;
+  /** 上游以 HTTP 200 把错误塞在流里。非 null 必须中断,不能吞 */
+  readonly error: string | null;
+  readonly usage: { readonly input: number | null; readonly output: number | null } | null;
+  readonly finishReason: string | null;
+  readonly content: string;
+  readonly reasoning: string;
+  readonly toolCalls: readonly {
+    readonly index: number;
+    readonly id: string | null;
+    readonly name: string | null;
+    readonly argumentsFragment: string | null;
+  }[];
+  /** delta 里出现过的字段名,用于诊断 reasoning_content 这类非标准字段 */
+  readonly deltaKeys: readonly string[];
+}
+
+const SKIP: DecodedFrame = {
+  done: false,
+  skip: true,
+  error: null,
+  usage: null,
+  finishReason: null,
+  content: "",
+  reasoning: "",
+  toolCalls: [],
+  deltaKeys: [],
+};
+
+/**
+ * 把一行 SSE 解码成一帧。**这是唯一一处解释上游帧格式的地方。**
+ *
+ * 只做解释,不做累积 —— 两条通道的累积方式本就不同(一个逐段 yield,
+ * 一个拼成一次完整结果),那部分各自保留。会分歧的是「这一帧是什么意思」,
+ * 所以统一的是这一层。
+ */
+function decodeFrame(line: string): DecodedFrame {
+  if (!line.startsWith("data:")) return SKIP;
+  const data = line.slice(5).trim();
+  if (data === "[DONE]") return { ...SKIP, skip: false, done: true };
+
+  let chunk: {
+    choices?: {
+      delta?: Record<string, unknown>;
+      finish_reason?: string | null;
+    }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+    error?: { message?: string } | string;
+    message?: string;
+    detail?: string;
+  };
+  try {
+    chunk = JSON.parse(data);
+  } catch {
+    return SKIP; // 心跳或注释行
+  }
+
+  // 错误可能落在三个字段里的任意一个。三个都要看 ——
+  // 少看一个,那家服务商的报错就会被静默吞掉。
+  const error =
+    (typeof chunk.error === "string" ? chunk.error : chunk.error?.message) ??
+    chunk.detail ??
+    null;
+
+  const choice = chunk.choices?.[0];
+  const delta = (choice?.delta ?? {}) as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+
+  const toolCalls = Array.isArray(delta["tool_calls"])
+    ? (delta["tool_calls"] as {
+        index?: number;
+        id?: string;
+        function?: { name?: string; arguments?: string };
+      }[]).map((c) => ({
+        index: c.index ?? 0,
+        id: c.id ?? null,
+        name: c.function?.name ?? null,
+        argumentsFragment: c.function?.arguments ?? null,
+      }))
+    : [];
+
+  return {
+    done: false,
+    skip: false,
+    error,
+    usage: chunk.usage
+      ? {
+          input: chunk.usage.prompt_tokens ?? null,
+          output: chunk.usage.completion_tokens ?? null,
+        }
+      : null,
+    finishReason: choice?.finish_reason ?? null,
+    content: str(delta["content"]),
+    // 推理类模型把思考过程放在 reasoning_content,最终答案在 content。
+    // 字段名是 DeepSeek 与英伟达等多家共用的约定,按字段判断不按服务商判断。
+    reasoning: str(delta["reasoning_content"]),
+    toolCalls,
+    deltaKeys: Object.keys(delta),
+  };
+}
+
 /** 逐行读取 SSE 流 */
 async function* readSseLines(
   body: ReadableStream<Uint8Array>,
@@ -353,90 +472,69 @@ async function callOpenAICompatible(
     let reasoningBuffer = "";
 
     for await (const line of readSseLines(body)) {
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (data === "[DONE]") break;
-
-      let chunk: {
-        choices?: {
-          delta?: Record<string, unknown>;
-          finish_reason?: string | null;
-        }[];
-        usage?: { prompt_tokens?: number; completion_tokens?: number };
-        error?: { message?: string } | string;
-        message?: string;
-        detail?: string;
-      };
-
-      try {
-        chunk = JSON.parse(data);
-      } catch {
-        // 心跳或注释行,跳过
-        continue;
-      }
+      // 帧的解释统一由 decodeFrame 负责 —— 见它的注释:两边各解释一遍
+      // 会让同一帧数据在两条通道上含义不同,而那正是已经发生过的事故形态。
+      const f = decodeFrame(line);
+      if (f.skip) continue;
+      if (f.done) break;
 
       diagnostics.chunkCount += 1;
 
       // 上游可能以 HTTP 200 返回,把错误塞在流里。以前这里被静默吞掉,
       // 表现就是「空回复且无错误」—— 排查时毫无线索。现在直接中断并报出。
-      const streamError =
-        typeof chunk.error === "string"
-          ? chunk.error
-          : (chunk.error?.message ?? chunk.detail ?? null);
-      if (streamError) {
-        diagnostics.streamError = streamError;
-        throw new ProviderCallError(translateUpstreamError(streamError));
+      if (f.error) {
+        diagnostics.streamError = f.error;
+        throw new ProviderCallError(translateUpstreamError(f.error));
       }
 
-      if (chunk.usage) {
-        usage.inputTokens = chunk.usage.prompt_tokens ?? usage.inputTokens;
-        usage.outputTokens =
-          chunk.usage.completion_tokens ?? usage.outputTokens;
+      if (f.usage) {
+        usage.inputTokens = f.usage.input ?? usage.inputTokens;
+        usage.outputTokens = f.usage.output ?? usage.outputTokens;
+      }
+      if (f.finishReason) diagnostics.finishReason = f.finishReason;
+
+      for (const k of f.deltaKeys) keys.add(k);
+      if (f.deltaKeys.length > 0) diagnostics.seenDeltaKeys = [...keys];
+
+      // 正常情况下只产出 content —— 思考过程不该混进给用户看的回答里
+      if (f.content !== "") {
+        emittedContent = true;
+        yield { kind: "content", text: f.content } as const;
       }
 
-      const choice = chunk.choices?.[0];
-      if (choice?.finish_reason) {
-        diagnostics.finishReason = choice.finish_reason;
-      }
-
-      const delta = choice?.delta;
-      if (delta) {
-        for (const k of Object.keys(delta)) keys.add(k);
-        diagnostics.seenDeltaKeys = [...keys];
-
-        // 推理类模型把思考过程放在 reasoning_content,最终答案在 content。
-        // 正常情况下只产出 content —— 思考过程不该混进给用户看的回答里。
-        const text = delta["content"];
-        if (typeof text === "string" && text !== "") {
-          emittedContent = true;
-          yield { kind: "content", text } as const;
-        }
-
-        // 但也要把思考过程留着。有些推理模型(英伟达上的 deepseek-v4-pro
-        // 这类)在未关闭 thinking 时,整轮可能只吐 reasoning_content 而
-        // content 始终为空 —— 此前这会被判成「返回 200 却没有内容」,
-        // 用户看到一个空气泡,而模型其实是有输出的,只是放在了另一个字段。
-        //
-        // 字段名 reasoning_content 是 DeepSeek 与英伟达等多家共用的约定,
-        // 这里按字段判断,不按服务商判断。
-        const reasoning = delta["reasoning_content"];
-        if (typeof reasoning === "string" && reasoning !== "") {
-          reasoningBuffer += reasoning;
-          // 实时吐出去。它不是答案,但它证明模型正在工作 ——
-          // 前端据此显示「思考中」,看门狗据此知道没有卡住。
-          yield { kind: "reasoning", text: reasoning } as const;
-        }
+      // 但也要把思考过程留着。有些推理模型(英伟达上的 deepseek-v4-pro
+      // 这类)在未关闭 thinking 时,整轮可能只吐 reasoning_content 而
+      // content 始终为空 —— 此前这会被判成「返回 200 却没有内容」,
+      // 用户看到一个空气泡,而模型其实是有输出的,只是放在了另一个字段。
+      if (f.reasoning !== "") {
+        reasoningBuffer += f.reasoning;
+        // 实时吐出去。它不是答案,但它证明模型正在工作 ——
+        // 前端据此显示「思考中」,看门狗据此知道没有卡住。
+        yield { kind: "reasoning", text: f.reasoning } as const;
       }
     }
 
-    // 整轮下来一个字的正文都没有,但有思考过程 —— 把它交出来,并说明这是什么。
-    // 给出模型真实产生的内容,比报一句「没有内容」有用得多。
+    // 整轮下来一个字的正文都没有,但有思考过程 —— 把思考过程交出来。
+    //
+    // **一个字的说明都不加。**
+    //
+    // 这里曾经在思考过程前面拼一句由我们措辞的说明,告诉用户
+    // 「这一轮没有正式回答,下面是思考过程」。
+    // 那句话拼进的是 kind: "content" —— 对话路由把
+    // content 累加进 full,再以 `content: full` 落库(route.ts 两处)。
+    // 结果:那句话作为**模型的发言**永久存进了数据库,用户读到的是
+    // 「模型说的话」,而模型没说过。
+    //
+    // 界面上的旁白至少还能改掉,落进 messages 的改不掉 —— 它已经是
+    // 历史记录的一部分,而 messages 又是用量计费的唯一依据。
+    // 性质比界面文案严重,所以这一句必须删,不是缩短。
+    //
+    // 思考过程本身是**模型自己的输出**,原样给出去没有问题。
+    // 前端仍然知道这是什么:diagnostics.contentIsReasoningFallback 还在,
+    // 那是走诊断通道的,不进 content。
     if (!emittedContent && reasoningBuffer !== "") {
       diagnostics.contentIsReasoningFallback = true;
-      yield {
-        kind: "content",
-        text: `(本轮没有产出正式回答,以下是模型的思考过程)\n\n${reasoningBuffer}`,
-      } as const;
+      yield { kind: "content", text: reasoningBuffer } as const;
     }
   })();
 }
@@ -1097,68 +1195,40 @@ async function assembleToolStream(
   for await (const line of readSseLines(body)) {
     if (!line.startsWith("data:")) continue;
     frames += 1;
-    const data = line.slice(5).trim();
-    if (data === "[DONE]") break;
 
-    let chunk: {
-      choices?: {
-        delta?: {
-          content?: string | null;
-          reasoning_content?: string | null;
-          tool_calls?: {
-            index?: number;
-            id?: string;
-            function?: { name?: string; arguments?: string };
-          }[];
-        };
-        finish_reason?: string | null;
-      }[];
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-      error?: { message?: string } | string;
-    };
-    try {
-      chunk = JSON.parse(data);
-    } catch {
-      continue; // 心跳或注释行
-    }
+    // 与对话通道共用同一个解码器。此前这里自己解释了一遍,
+    // 而且漏看了 detail 字段 —— 用 detail 报错的服务商在这条线上
+    // 会被静默吞掉,表现成「这一轮什么都没有」。
+    const f = decodeFrame(line);
+    if (f.skip) continue;
+    if (f.done) break;
 
     // 上游以 HTTP 200 把错误塞在流里 —— 不能吞
-    const streamError =
-      typeof chunk.error === "string" ? chunk.error : chunk.error?.message;
-    if (streamError) {
-      throw new ProviderCallError(translateUpstreamError(streamError));
+    if (f.error) throw new ProviderCallError(translateUpstreamError(f.error));
+
+    if (f.usage) {
+      usage.inputTokens = f.usage.input ?? usage.inputTokens;
+      usage.outputTokens = f.usage.output ?? usage.outputTokens;
     }
+    if (f.finishReason) finishReason = f.finishReason;
 
-    if (chunk.usage) {
-      usage.inputTokens = chunk.usage.prompt_tokens ?? usage.inputTokens;
-      usage.outputTokens = chunk.usage.completion_tokens ?? usage.outputTokens;
-    }
-
-    const choice = chunk.choices?.[0];
-    if (choice?.finish_reason) finishReason = choice.finish_reason;
-
-    const delta = choice?.delta;
-    if (!delta) continue;
-
-    if (typeof delta.content === "string" && delta.content !== "") {
-      text += delta.content;
-      onText?.(delta.content);
+    if (f.content !== "") {
+      text += f.content;
+      onText?.(f.content);
     }
     // 思考过程同样实时推出去:它不是答案,但它证明模型确实在工作
-    if (
-      typeof delta.reasoning_content === "string" &&
-      delta.reasoning_content !== ""
-    ) {
-      reasoning += delta.reasoning_content;
-      onText?.(delta.reasoning_content);
+    if (f.reasoning !== "") {
+      reasoning += f.reasoning;
+      onText?.(f.reasoning);
     }
 
-    for (const c of delta.tool_calls ?? []) {
-      const i = c.index ?? 0;
+    for (const c of f.toolCalls) {
+      const i = c.index;
       const acc = calls.get(i) ?? { id: "", name: "", args: "" };
       if (c.id) acc.id = c.id;
-      if (c.function?.name) acc.name = c.function.name;
-      if (c.function?.arguments) acc.args += c.function.arguments;
+      if (c.name) acc.name = c.name;
+      // 参数是分片到达的,按 index 累积 —— 半截 JSON 绝不能拿去执行
+      if (c.argumentsFragment) acc.args += c.argumentsFragment;
       calls.set(i, acc);
     }
   }

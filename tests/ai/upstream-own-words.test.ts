@@ -35,6 +35,23 @@ async function load() {
   return await import("@/lib/ai/gateway");
 }
 
+/** 需要真实调用 streamChat 的用例得有一把可解密的密钥 */
+async function loadWithKey() {
+  vi.resetModules();
+  vi.doMock("server-only", () => ({}));
+  process.env["ENCRYPTION_KEY"] = Buffer.alloc(32, 7).toString("base64");
+  const { encryptSecret } = await import("@/lib/crypto/secret-box");
+  const gateway = await import("@/lib/ai/gateway");
+  return {
+    gateway,
+    credentials: {
+      kind: "openai_compatible" as const,
+      baseUrl: "https://api.example.com/v1",
+      apiKeyCipher: encryptSecret("k"),
+    },
+  };
+}
+
 const upstream = (status: number, body: string) =>
   new Response(body, { status, headers: { "Content-Type": "application/json" } });
 
@@ -120,5 +137,55 @@ describe("翻译可以有,替换不行", () => {
       "m",
     );
     expect(msg).toContain("Authorization failed");
+  });
+});
+
+describe("落进 messages.content 的只能是模型的输出", () => {
+  /**
+   * 这一条守的是**数据污染**,不是界面文案。
+   *
+   * gateway 里曾经在「整轮只有思考过程、没有正文」时,于思考过程前面
+   * 拼一句由我们措辞的说明,再以 kind: "content" 吐出去。
+   * 而对话路由把 content 累加进 full,以 `content: full` 落库(两处)。
+   *
+   * 结果是那句话作为**模型的发言**永久存进了数据库。界面上的旁白还能
+   * 改掉,落进 messages 的改不掉 —— 它已经是历史记录的一部分,
+   * 而 messages 又是用量计费的唯一依据。
+   */
+  it("只有思考过程时,原样给出思考过程,不加任何说明", async () => {
+    const { gateway, credentials } = await loadWithKey();
+
+    // 只有 reasoning_content,从头到尾没有 content
+    const sse =
+      'data: {"choices":[{"delta":{"reasoning_content":"我在想这道题"}}]}\n\n' +
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
+      "data: [DONE]\n\n";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(sse, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+      ),
+    );
+
+    const r = await gateway.streamChat({
+      credentials,
+      model: "m",
+      messages: [{ role: "user", content: "问题" }],
+      signal: new AbortController().signal,
+    });
+
+    let 正文 = "";
+    for await (const c of r.stream) {
+      if (c.kind === "content") 正文 += c.text;
+    }
+
+    // 模型自己的话,一字不多
+    expect(正文).toBe("我在想这道题");
+    // 任何由我们措辞的包装都不许有
+    expect(正文).not.toMatch(/本轮|以下是|思考过程\)/);
+    vi.unstubAllGlobals();
   });
 });

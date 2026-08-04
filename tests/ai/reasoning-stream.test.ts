@@ -94,9 +94,10 @@ describe("推理流", () => {
 
     const content = got.filter((g) => g.kind === "content");
     expect(content.length).toBe(1);
-    expect(content[0]!.text).toContain("想了很久");
-    // 要说清这是思考过程,不能冒充成正式回答
-    expect(content[0]!.text).toContain("没有产出正式回答");
+    // 一字不多:模型说了什么就是什么
+    expect(content[0]!.text).toBe("想了很久");
+    // 由我们措辞的包装一个字都不许有 —— 它会作为「模型的发言」落库
+    expect(content[0]!.text).not.toMatch(/本轮|没有产出正式回答|以下是模型/);
   });
 
   it("普通模型不受影响 —— 只有正文,没有多余事件", async () => {
