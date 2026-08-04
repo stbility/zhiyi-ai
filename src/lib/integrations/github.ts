@@ -326,7 +326,7 @@ export interface AppSlugResult {
  * 现在:环境变量里填的值不再被当成「未经查证」而弃用,
  * 而是花一个免鉴权的请求去查证它。查证通过就用,查不通过才拒绝。
  */
-async function 查证slug(slug: string): Promise<boolean> {
+export async function verifyAppSlug(slug: string): Promise<boolean> {
   try {
     const res = await fetch(
       `https://github.com/apps/${encodeURIComponent(slug)}`,
@@ -423,7 +423,7 @@ export async function getAppSlug(): Promise<AppSlugResult> {
   logger.warn({ failure }, "GET /app 未能取到 slug,改用环境变量并查证");
 
   // 认证这条路走不通,不代表安装这条路也走不通 —— 安装只需要 slug。
-  if (config.slug && (await 查证slug(config.slug))) {
+  if (config.slug && (await verifyAppSlug(config.slug))) {
     cachedSlug = config.slug;
     return { slug: config.slug, source: "public", error: failure };
   }

@@ -1,6 +1,7 @@
 import { Badge } from "@/components/primitives/Badge";
 import { Icon } from "@/components/icons/Icon";
 import { LinkButton } from "@/components/primitives/LinkButton";
+import { GitManualConnect } from "@/components/app/GitManualConnect";
 
 export interface GitConnectionProps {
   /** App 是否已在服务端配置。未配置时如实说明,不显示任何可点的连接入口 */
@@ -103,17 +104,21 @@ export function GitConnection({
             连接 GitHub
           </LinkButton>
         ) : (
-          // 拿不到查证过的 slug 时不给按钮。
+          // 自动拿不到安装地址时,给手动入口 —— 不给假按钮,但也不能让
+          // 整张卡片变成死页面。
           //
-          // 这里曾经放过一个「去 GitHub 安装应用」指向
-          // github.com/settings/installations —— 那是**已安装应用的管理页**,
-          // 不是本应用的安装入口。用户点过去只会看到一个和我们无关的列表。
-          // 官方的安装地址只有 github.com/apps/<slug>/installations/new
-          // 一种形式,拼不出 slug 就没有别的路可走 —— 与其给一个指向别处的
-          // 链接,不如如实说没有。
-          <p className="text-fg-tertiary text-caption">
-            暂时无法连接,详情见服务端日志。
-          </p>
+          // 这里曾经只有一句「暂时无法连接,详情见服务端日志」,
+          // 卡片上一个可交互元素都没有。而「未连接」那个状态标签是圆角、
+          // 带边框、有底色的小块,在一张写着"未连接"的卡片上看起来就是
+          // 该点的地方 —— 用户去点它是必然的,不是误解。
+          //
+          // 官方的安装地址只需要应用名,而用户自己知道那个名字。
+          <div className="flex flex-col gap-3">
+            <p className="text-fg-tertiary text-caption">
+              未能自动获取安装地址,详情见服务端日志。
+            </p>
+            <GitManualConnect />
+          </div>
         )
       ) : (
         <p className="text-fg-tertiary text-caption">

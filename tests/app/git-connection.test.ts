@@ -36,6 +36,46 @@ const 去注释 = (code: string) =>
 
 const CARD = 去注释(CARD_RAW);
 
+describe("卡片永远有可操作的东西", () => {
+  /**
+   * 用户的原话:「未连接旁边未连接按钮点击无效,只是一个假的图标」。
+   *
+   * 他说的那个「未连接」是 Badge —— 一个纯展示的 <span>,没有 onClick、
+   * 没有 href、不可聚焦,从设计上就是状态标签,点它本来就不会有反应。
+   *
+   * 但这个抱怨成立,而且指向真问题:当时**整张卡片没有一个可交互元素**。
+   * 而 Badge 是圆角、带边框、有底色的小块,在一张写着"未连接"的卡片上
+   * 看起来就是该点的地方 —— 页面上没有别的可点元素时,
+   * 用户去点它是必然的,不是误解。
+   *
+   * 「不给一个必然 404 的按钮」是对的,但不能因此让卡片变成空壳。
+   */
+  it("拿不到安装地址时,仍然给出手动连接入口", () => {
+    expect(CARD).toContain("GitManualConnect");
+  });
+
+  it("手动入口是真表单,不是又一段说明文字", () => {
+    const 手动 = read("src/components/app/GitManualConnect.tsx");
+    expect(手动).toMatch(/<form action=\{action\}/);
+    expect(手动).toMatch(/<SubmitButton/);
+    expect(手动).toMatch(/name="slug"/);
+  });
+
+  it("手动填的名称也要先查证再跳转 —— 不能又把人甩到 404", () => {
+    const 动作 = read("src/app/(app)/settings/integrations/git-actions.ts");
+    expect(动作).toContain("verifyAppSlug");
+    // 查证在跳转之前
+    expect(动作.indexOf("verifyAppSlug")).toBeLessThan(
+      动作.indexOf("redirect(installUrl"),
+    );
+  });
+
+  it("手填的值不落库 —— 它是平台级配置,不是某个组织的设置", () => {
+    const 动作 = read("src/app/(app)/settings/integrations/git-actions.ts");
+    expect(动作).not.toMatch(/\.from\(|insert\(|upsert\(/);
+  });
+});
+
 describe("卡片上不摊诊断细节", () => {
   /**
    * 用户的原话:「删除 保持干净」。
@@ -61,8 +101,10 @@ describe("卡片上不摊诊断细节", () => {
     });
   }
 
-  it("没有连接入口时只留一句短话", () => {
-    expect(CARD).toMatch(/暂时无法连接,详情见服务端日志。/);
+  it("失败原因只在卡片上留一句短话,细节进服务端日志", () => {
+    // 文案本身可以变,守的是「不把三段诊断铺在卡片上」这条原则。
+    // 日志是给运维的通道,卡片是给用户的通道。
+    expect(CARD).toMatch(/详情见服务端日志/);
   });
 
   it("已经用不上的 slug 属性不留在接口里", () => {
