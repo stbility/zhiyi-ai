@@ -64,6 +64,30 @@ export function GitConnection({
   keyFingerprint,
   notice,
 }: GitConnectionProps) {
+  // 凭据没通过验证时的指纹对照。
+  //
+  // **两个分支都要显示**,这一点我第一版做错了:只放进了「拿不到安装
+  // 地址」那一支。而 slug 现在能免鉴权从公开页查证 —— 私钥不对时照样
+  // 拿得到地址,走的是另一支,于是这块诊断永远不渲染,等于没做。
+  //
+  // 判据是 slugError:它非空就说明 GET /app 没通过,而那一步用的正是
+  // 私钥。此时指纹就是最直接的下一步。
+  const 指纹对照 =
+    slugError && keyFingerprint ? (
+      <div className="border-border-default rounded-control border border-dashed p-3">
+        <p className="text-fg-secondary text-caption">本站当前使用的私钥指纹</p>
+        <code className="text-fg text-label mt-1 block font-mono break-all select-all">
+          {keyFingerprint}
+        </code>
+        <p className="text-fg-tertiary text-label mt-2">
+          到 GitHub App 设置页的「Private keys」区块比对。
+          一致说明这把密钥属于该 App,问题在别处(多半是环境变量没进
+          Production,或改完没重新部署);不一致就是拿错了 App 或拿错了密钥。
+          换一把再试之前,先用这一行确认。
+        </p>
+      </div>
+    ) : null;
+
   return (
     <section className="bg-surface-2 border-border-default rounded-card font-zh border p-5">
       <div className="mb-1 flex flex-wrap items-center gap-2">
@@ -167,6 +191,7 @@ export function GitConnection({
                 {slugError}
               </p>
             )}
+            {指纹对照}
             <LinkButton href={installHref} size="sm" className="self-start">
               <Icon name="link" size={14} />
               连接 GitHub
@@ -196,22 +221,7 @@ export function GitConnection({
                 未能自动获取安装地址。
               </p>
             )}
-            {keyFingerprint && (
-              <div className="border-border-default rounded-control border border-dashed p-3">
-                <p className="text-fg-secondary text-caption">
-                  本站当前使用的私钥指纹
-                </p>
-                <code className="text-fg text-label mt-1 block font-mono break-all select-all">
-                  {keyFingerprint}
-                </code>
-                <p className="text-fg-tertiary text-label mt-2">
-                  到 GitHub App 设置页的「Private keys」区块比对。指纹一致说明
-                  这把密钥属于该 App;不一致就是拿错了 App 或拿错了密钥 ——
-                  换一把再试之前,先用这一行确认。
-                </p>
-              </div>
-            )}
-
+            {指纹对照}
             <GitManualConnect />
           </div>
         )
