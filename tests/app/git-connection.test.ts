@@ -133,11 +133,11 @@ describe("卡片上不摊诊断细节", () => {
     expect(CARD).not.toMatch(/详情见服务端日志/);
     // 只数**渲染点**(JSX 里的 {slugError...}),不数接口声明和解构 ——
     // 那两处是必需的,把它们算进来只会得到一个必须随写法调整的魔数。
-    // 一段诊断 = 一个条件 + 一次插值 = 2 处。
+    // 一段诊断 = 一个条件 + 一次插值 = 2 处;两个分支各一段 = 4 处。
     expect(
       (CARD.match(/\{slugError/g) ?? []).length,
       "slugError 渲染在多处 —— 又要铺开了",
-    ).toBeLessThanOrEqual(2);
+    ).toBeLessThanOrEqual(4);
   });
 
   it("诊断只给改得动配置的人看", () => {
@@ -145,13 +145,31 @@ describe("卡片上不摊诊断细节", () => {
     expect(PAGE).toMatch(/slugError=\{canManage \? slugResult\.error : null\}/);
   });
 
-  it("有安装地址时不显示诊断 —— 那时卡片本来就能用", () => {
-    // 诊断只在 installHref 为空的那一支里
+  it("有安装地址但凭据没过验证时,在点之前就说清楚", () => {
+    // 「有按钮」不等于「这条路走得通」。slug 有两个来源:
+    // GET /app(权威,要私钥认证)和公开页查证(免鉴权)。
+    // 私钥不对时走第二条 —— slug 拿得到、按钮出现,而认证是坏的。
+    //
+    // 此前这一支什么都不显示,用户点进去、在 GitHub 上装完、跳回来
+    // 才发现失败,还看不出为什么。把人送进一条注定走不通的路、
+    // 却不在入口提醒,是最糟的一种设计。
+    //
+    // getAppSlug 只在回退到公开页查证时才**带着 error 返回 slug**,
+    // 所以「installHref 有值且 slugError 非空」精确对应这一种情形。
     const 有链接支 = CARD.slice(
       CARD.indexOf("installHref ? ("),
-      CARD.indexOf("GitManualConnect"),
+      // 用 **JSX 标签**定位,不能用组件名 —— 组件名在文件顶部的 import
+      // 里也出现,而那一行排在前面,切出来是个空串。
+      // 上一版正是这样:空串配 .not.toMatch() 永远通过,
+      // 这条守卫从写下那天起就在空转,一次都没守过。
+      CARD.indexOf("<GitManualConnect"),
     );
-    expect(有链接支).not.toMatch(/\{slugError/);
+    expect(有链接支.length, "切片是空的 —— 守卫又在空转").toBeGreaterThan(100);
+    expect(有链接支).toMatch(/\{slugError/);
+    expect(
+      有链接支.indexOf("slugError"),
+      "提醒必须排在按钮前面 —— 点完再说就晚了",
+    ).toBeLessThan(有链接支.indexOf("连接 GitHub"));
   });
 
   it("诊断没有丢,只是换了通道 —— 服务端仍然记日志", () => {

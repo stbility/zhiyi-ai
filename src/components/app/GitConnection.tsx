@@ -133,10 +133,32 @@ export function GitConnection({
         </div>
       ) : canManage ? (
         installHref ? (
-          <LinkButton href={installHref} size="sm">
-            <Icon name="link" size={14} />
-            连接 GitHub
-          </LinkButton>
+          <div className="flex flex-col gap-3">
+            {/* 有安装地址**不等于**这条路走得通。
+                slug 有两个来源:GET /app(权威,要私钥认证)和公开页查证
+                (免鉴权)。私钥不对时会走第二条 —— slug 照样拿得到、
+                按钮照样出现,而认证其实是坏的。
+
+                此前这里什么都不显示,于是用户点进去、在 GitHub 上装完、
+                跳回来才发现失败,而且看不出为什么。**把人送进一条
+                注定走不通的路,却不在入口提醒,是最糟的一种设计。**
+
+                slugError 非空就说明 GET /app 没通过(getAppSlug 只在
+                回退到公开页查证时才带着 error 返回 slug)。 */}
+            {slugError && (
+              <p className="border-warning bg-warning-tint text-warning rounded-control text-caption p-3 whitespace-pre-line">
+                安装地址可用,但**应用凭据没通过验证** ——
+                你可以点下面的按钮去 GitHub 完成安装,但装完跳回来时
+                本站换取访问令牌会失败,状态不会变成「已连接」。
+                {"\n"}
+                {slugError}
+              </p>
+            )}
+            <LinkButton href={installHref} size="sm" className="self-start">
+              <Icon name="link" size={14} />
+              连接 GitHub
+            </LinkButton>
+          </div>
         ) : (
           // 自动拿不到安装地址时,给手动入口 —— 不给假按钮,但也不能让
           // 整张卡片变成死页面。
