@@ -1,6 +1,11 @@
 import "server-only";
 
-import { MCP_TOOLS, executeMcpTool } from "@/lib/mcp/tools";
+import {
+  MCP_GIT_TOOLS,
+  MCP_TOOLS,
+  executeMcpTool,
+  listMcpTools,
+} from "@/lib/mcp/tools";
 
 /**
  * MCP 的 JSON-RPC 2.0 处理。
@@ -99,14 +104,19 @@ export async function handleRpc(
     case "ping":
       return rpcResult(id, {});
 
-    case "tools/list":
+    // 清单按组织动态生成:连了 GitHub 才出现 Git 工具。
+    // 与站内智能体一致 —— 列一个必然失败的工具,对面只会先花几轮去试,
+    // 而真正的原因(这个组织没连仓库)它无从得知。
+    case "tools/list": {
+      const tools = await listMcpTools(organizationId);
       return rpcResult(id, {
-        tools: MCP_TOOLS.map((t) => ({
+        tools: tools.map((t) => ({
           name: t.name,
           description: t.description,
           inputSchema: t.inputSchema,
         })),
       });
+    }
 
     case "tools/call": {
       const params = message.params as
@@ -116,7 +126,16 @@ export async function handleRpc(
       if (typeof name !== "string") {
         return rpcError(id, RPC_INVALID_PARAMS, "缺少工具名");
       }
-      if (!MCP_TOOLS.some((t) => t.name === name)) {
+      // 认得出来就放行,不按「当前是否连了仓库」来判。
+      //
+      // 没连仓库时 executeMcpTool 会返回一句说明白的 isError 结果,
+      // 那是**工具的观察结果**,模型看得懂也改得了(去连一下)。
+      // 在这里当成 JSON-RPC 的「未知工具」拒掉,对面看到的是协议层错误,
+      // 只会以为是版本不匹配 —— 把一个可解决的问题伪装成了不可解决的。
+      const known =
+        MCP_TOOLS.some((t) => t.name === name) ||
+        MCP_GIT_TOOLS.some((t) => t.name === name);
+      if (!known) {
         return rpcError(id, RPC_INVALID_PARAMS, `未知的工具:${name}`);
       }
 

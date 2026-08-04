@@ -11,6 +11,7 @@ import { isEncryptionAvailable } from "@/lib/crypto/secret-box";
 import {
   getAppSlug,
   getGitHubAppConfig,
+  privateKeyFingerprint,
   installUrl,
   issueState,
 } from "@/lib/integrations/github";
@@ -178,6 +179,10 @@ export default async function IntegrationsPage({
         // 只给能改配置的人看 —— 普通成员既看不懂也改不动,
         // 对他们只是一段吓人的英文。
         slugError={canManage ? slugResult.error : null}
+        // 同样只给能改配置的人看。指纹是公开值,但对普通成员没有意义。
+        keyFingerprint={
+          canManage && appConfig ? privateKeyFingerprint(appConfig) : null
+        }
         notice={{
           ...(params.githubOk ? { ok: true } : {}),
           ...(params.githubError ? { error: params.githubError } : {}),

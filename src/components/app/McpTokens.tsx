@@ -81,6 +81,40 @@ export function McpTokens({
         </p>
       </div>
 
+      {/* 直接给能照抄的配置,而不是一句「配置为 HTTP 类型的 MCP server」。
+          后者要求用户自己去查 Hermes 的配置文件在哪、字段叫什么 ——
+          而那正是接入最容易卡住的一步,也是我们完全知道答案的一步。
+
+          格式取自官方文档:
+          hermes-agent.nousresearch.com/docs/user-guide/features/mcp
+          Hermes 读 ~/.hermes/config.yaml 的 mcp_servers,远程服务器用
+          url + headers,是 YAML 不是 JSON。 */}
+      <details className="border-border-default rounded-control mb-4 border p-3">
+        <summary className="text-fg-secondary text-caption cursor-pointer">
+          Hermes Agent 怎么接(照抄即可)
+        </summary>
+        <p className="text-fg-tertiary text-label mt-2">
+          写进 <code className="font-mono">~/.hermes/config.yaml</code>,把
+          <code className="font-mono"> 令牌 </code>换成上面签出来的那一串:
+        </p>
+        <pre className="bg-surface-3 rounded-control text-fg-secondary text-label mt-2 overflow-x-auto p-3 font-mono">
+          {`mcp_servers:
+  zhiyi:
+    url: "${endpoint}"
+    headers:
+      Authorization: "Bearer 令牌"`}
+        </pre>
+        <p className="text-fg-tertiary text-label mt-2">
+          接上后先让它调 <code className="font-mono">zhiyi_whoami</code>{" "}
+          验证连通性。工作区四件套一直可用;
+          <strong className="text-fg-secondary">
+            读写仓库、提 PR 的那三个工具,只有本组织连了 GitHub 之后才会出现在
+            清单里
+          </strong>
+          —— 没连就不列,免得它反复去试一个注定失败的调用。
+        </p>
+      </details>
+
       {/* 令牌明文只出现这一次。库里存的是 sha256,我们自己也还原不回来 */}
       {createState.token && (
         <div className="border-brand bg-brand-tint rounded-control mb-4 border p-3">

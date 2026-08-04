@@ -28,6 +28,18 @@ export interface GitConnectionProps {
    * 私钥一个字都不出现 —— 具体见 getAppSlug 里的构造。
    */
   slugError?: string | null | undefined;
+  /**
+   * 当前配置的私钥指纹,格式与 GitHub App 设置页「Private keys」里
+   * 列出的完全一致(官方算法:公钥 DER 的 SHA-256,再 base64)。
+   *
+   * 这一条是用来**终结猜测**的。GitHub 对「私钥不属于这个 App」返回的
+   * 原话是 `A JSON web token could not be decoded` —— 听起来像 JWT 拼错了,
+   * 排查方向因此被带偏过好几轮。指纹能一眼比对:一样就是同一把,
+   * 不一样就是拿错了,不必再换一次密钥重试一次。
+   *
+   * 指纹是**公开信息**(GitHub 自己就印在设置页上),私钥一个字节都不涉及。
+   */
+  keyFingerprint?: string | null | undefined;
   /** 回调带回来的提示 */
   notice?: { ok?: boolean; error?: string } | undefined;
 }
@@ -49,6 +61,7 @@ export function GitConnection({
   installHref,
   canManage,
   slugError,
+  keyFingerprint,
   notice,
 }: GitConnectionProps) {
   return (
@@ -183,6 +196,22 @@ export function GitConnection({
                 未能自动获取安装地址。
               </p>
             )}
+            {keyFingerprint && (
+              <div className="border-border-default rounded-control border border-dashed p-3">
+                <p className="text-fg-secondary text-caption">
+                  本站当前使用的私钥指纹
+                </p>
+                <code className="text-fg text-label mt-1 block font-mono break-all select-all">
+                  {keyFingerprint}
+                </code>
+                <p className="text-fg-tertiary text-label mt-2">
+                  到 GitHub App 设置页的「Private keys」区块比对。指纹一致说明
+                  这把密钥属于该 App;不一致就是拿错了 App 或拿错了密钥 ——
+                  换一把再试之前,先用这一行确认。
+                </p>
+              </div>
+            )}
+
             <GitManualConnect />
           </div>
         )

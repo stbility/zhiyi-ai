@@ -3,6 +3,7 @@ import "server-only";
 import { z } from "zod";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { GIT_TOOLS, executeGitTool, loadGitContext } from "@/lib/ai/git-tools";
 import { logger } from "@/lib/log";
 
 /**
@@ -106,6 +107,67 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   },
 ];
 
+/**
+ * Git 工具的 MCP 外壳。
+ *
+ * 定义**不在这里重写** —— 直接从 GIT_TOOLS 转译。两处各写一份 JSON Schema
+ * 的话,参数说明、必填项、边界值迟早对不上,而这些工具决定的是
+ * 「哪些仓库能碰」「能不能直接写 main」,对不上就是安全问题。
+ *
+ * 只做两件事:
+ *   · 名字加 zhiyi_ 前缀 —— MCP 客户端会同时接好几个服务器,
+ *     一个叫 git_read_file 的工具跟别家撞名是迟早的事
+ *   · parameters → inputSchema —— MCP 规范的字段名与 OpenAI 的不同
+ */
+const GIT_TOOL_PREFIX = "zhiyi_";
+
+export const MCP_GIT_TOOLS: readonly McpToolDefinition[] = GIT_TOOLS.map(
+  (t) => ({
+    name: `${GIT_TOOL_PREFIX}${t.function.name}`,
+    description: t.function.description,
+    inputSchema: t.function.parameters,
+  }),
+);
+
+/** MCP 侧的名字还原成内部工具名 */
+function internalGitName(name: string): string | null {
+  if (!name.startsWith(GIT_TOOL_PREFIX)) return null;
+  const inner = name.slice(GIT_TOOL_PREFIX.length);
+  return GIT_TOOLS.some((t) => t.function.name === inner) ? inner : null;
+}
+
+/**
+ * 这个组织当前能用的工具清单。
+ *
+ * Git 工具**只在真的连了仓库时才出现**,与站内智能体的行为一致
+ * (agent.ts 里也是 gitContext 有值才把 GIT_TOOLS 挂上去)。
+ *
+ * 为什么不无条件列出来:MCP 客户端拿到工具清单就会去用。列一个必然失败的
+ * git_read_file,对面会先花几轮去试、再自己猜原因 —— 而真正的原因
+ * (这个组织还没连 GitHub)它无从得知。不如不列。
+ *
+ * 这里只查一次数据库(有没有安装记录),不去 GitHub 拉仓库列表 ——
+ * tools/list 会被频繁调用,而完整白名单只有真正执行时才需要。
+ */
+export async function listMcpTools(
+  organizationId: string,
+): Promise<readonly McpToolDefinition[]> {
+  const admin = createSupabaseAdminClient();
+  if (!admin) return MCP_TOOLS;
+
+  const { data } = await admin
+    .from("git_installations")
+    .select("installation_id")
+    // service_role 绕过 RLS,这一句是唯一防线
+    .eq("organization_id", organizationId)
+    .eq("provider", "github")
+    .maybeSingle();
+
+  return data?.installation_id
+    ? [...MCP_TOOLS, ...MCP_GIT_TOOLS]
+    : MCP_TOOLS;
+}
+
 /** 单个文件回传给模型的上限 —— 与智能体侧同一个理由:上下文是有限的 */
 const MAX_READ_CHARS = 30_000;
 
@@ -124,6 +186,32 @@ export async function executeMcpTool(
 
   const admin = createSupabaseAdminClient();
   if (!admin) return fail("服务端未配置数据库访问,暂时无法处理。");
+
+  // Git 工具:装配上下文后交给**站内智能体用的同一个执行器**。
+  //
+  // 不在这里另写一遍。白名单校验、「不许直接写默认分支」、
+  // 「提交成功但开 PR 失败要说清楚改动已经在分支上」这些规则,
+  // 两份实现迟早分叉 —— 而分叉的后果是模型在某一条路上绕过了
+  // 另一条路上的硬规则。
+  const gitName = internalGitName(name);
+  if (gitName) {
+    const ctx = await loadGitContext(admin, organizationId);
+    if (!ctx) {
+      return fail(
+        "这个组织还没有连接 GitHub 仓库,或授权范围里没有任何仓库。" +
+          "请到智一 AI 的「设置 → 集成」页连接后再试。",
+      );
+    }
+    const outcome = await executeGitTool(
+      {
+        id: `mcp-${Date.now()}`,
+        name: gitName,
+        rawArguments: JSON.stringify(args ?? {}),
+      },
+      ctx,
+    );
+    return { text: outcome.content, isError: !outcome.ok };
+  }
 
   try {
     switch (name) {

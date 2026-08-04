@@ -221,19 +221,39 @@ describe("源码级守卫", () => {
     "utf8",
   );
 
-  it("每个 .from( 后面都要有 organization_id 收窄", () => {
-    // 笨办法,但挡的是最常见的成因:以后新加一个工具时忘了写那一句。
-    // 这条链路没有 RLS 兜底,忘了不会报错,只会静默泄露。
-    const blocks = SOURCE.split(/\.from\(/).slice(1);
-    for (const block of blocks) {
-      const window = block.slice(0, 700);
-      const scoped =
-        window.includes("organization_id") ||
-        // organizations 表按主键 id 等值查询,等价于按组织收窄
-        /^"organizations"/.test(window);
-      expect(scoped, `有一处 .from( 没带组织收窄:${window.slice(0, 90)}`).toBe(true);
-    }
-  });
+  /**
+   * 扫描范围必须覆盖**这条链路真正会执行到的每一个文件**。
+   *
+   * 一开始只扫 mcp/tools.ts。后来 Git 工具接进 MCP,执行路径延伸到了
+   * git-tools.ts —— 那里的 loadGitContext 同样用 service_role 查库,
+   * 同样没有 RLS 兜底,却落在守卫的扫描范围之外。
+   *
+   * 防线的边界要跟着调用链走,不能跟着文件名走。
+   */
+  const 链路上的文件 = ["src/lib/mcp/tools.ts", "src/lib/ai/git-tools.ts"];
+
+  for (const 文件 of 链路上的文件) {
+    it(`${文件}:每个 .from( 后面都要有 organization_id 收窄`, () => {
+      // 笨办法,但挡的是最常见的成因:以后新加一个工具时忘了写那一句。
+      // 这条链路没有 RLS 兜底,忘了不会报错,只会静默泄露。
+      const src = readFileSync(resolve(__dirname, "../../", 文件), "utf8");
+      const blocks = src.split(/\.from\(/).slice(1);
+      expect(blocks.length, `${文件} 里一个 .from( 都没有 —— 守卫在空转`).toBeGreaterThan(
+        0,
+      );
+      for (const block of blocks) {
+        const window = block.slice(0, 700);
+        const scoped =
+          window.includes("organization_id") ||
+          // organizations 表按主键 id 等值查询,等价于按组织收窄
+          /^"organizations"/.test(window);
+        expect(
+          scoped,
+          `${文件} 有一处 .from( 没带组织收窄:${window.slice(0, 90)}`,
+        ).toBe(true);
+      }
+    });
+  }
 
   it("注释里写明了「没有第二道网」,不靠人记着", () => {
     expect(SOURCE).toMatch(/唯一防线|没有第二道网/);

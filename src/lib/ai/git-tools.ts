@@ -2,10 +2,14 @@ import "server-only";
 
 import { z } from "zod";
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import type { ToolDefinition, ToolCall, ToolResult } from "@/lib/ai/tools";
+import { logger } from "@/lib/log";
 import {
   commitFiles,
   listRepoFiles,
+  listRepositories,
   openPullRequest,
   parseRepo,
   readRepoFile,
@@ -298,4 +302,54 @@ export async function executeGitTool(
     default:
       return fail(call, `未知的 Git 工具:${call.name}`);
   }
+}
+
+/**
+ * 装配 Git 工具上下文。
+ *
+ * **授权仓库列表实时从 GitHub 拉,不缓存在我们库里。**
+ *
+ * 这一点很要紧:用户随时可能在 GitHub 侧把某个仓库移出授权范围,
+ * 甚至整个卸载应用。把列表缓存下来意味着我们会拿着一份过期的白名单
+ * 继续放行 —— 虽然 GitHub 那边最终会拒绝,但我们在自己这一层就该
+ * 反映真实的授权状态,而不是让用户看到一个已经无权访问的仓库还在列表里。
+ *
+ * 代价是每次智能体运行多一次 GitHub 往返。相对于「权限判断基于过期数据」
+ * 这个风险,这点开销完全值得。
+ *
+ * 放在这里而不是 agent-turn 里:MCP 那条路(外部智能体接进来)需要
+ * **同一份**上下文。两处各写一遍的话,白名单和默认分支的取法迟早分叉 ——
+ * 而它们决定的是「哪些仓库能碰」和「能不能直接写 main」,分叉的后果是安全问题。
+ */
+export async function loadGitContext(
+  supabase: SupabaseClient,
+  organizationId: string,
+): Promise<GitToolContext | undefined> {
+  const { data } = await supabase
+    .from("git_installations")
+    .select("installation_id")
+    .eq("organization_id", organizationId)
+    .eq("provider", "github")
+    .maybeSingle();
+
+  const installationId = data?.installation_id as string | undefined;
+  if (!installationId) return undefined;
+
+  const repos = await listRepositories(installationId);
+  if (!repos.ok) {
+    logger.warn(
+      { organizationId, reason: repos.error },
+      "读取授权仓库列表失败,本轮不提供 Git 工具",
+    );
+    return undefined;
+  }
+  if (repos.repos.length === 0) return undefined;
+
+  return {
+    installationId,
+    allowedRepos: repos.repos.map((r) => r.fullName),
+    defaultBranches: Object.fromEntries(
+      repos.repos.map((r) => [r.fullName, r.defaultBranch]),
+    ),
+  };
 }

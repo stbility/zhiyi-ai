@@ -1,6 +1,11 @@
 import "server-only";
 
-import { createHmac, createSign } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  createPublicKey,
+  createSign,
+} from "node:crypto";
 
 import { logger } from "@/lib/log";
 
@@ -200,6 +205,41 @@ export function signAppJwt(config: GitHubAppConfig, now = Date.now()): string {
     .sign(config.privateKey);
 
   return `${data}.${base64url(signature)}`;
+}
+
+/**
+ * 算出当前配置的私钥的指纹,格式与 GitHub App 设置页里列出的一致。
+ *
+ * 这一条是用来**终结猜测**的。
+ *
+ * GitHub 对「私钥不属于这个 App」返回的原话是
+ * `A JSON web token could not be decoded` —— 它听起来像是 JWT 拼错了,
+ * 于是排查方向被带偏。实测复现过:同一个真实 Client ID,配一把不属于
+ * 该 App 的密钥,GitHub 回的就是这一句;而配一个假的 Client ID,
+ * 回的是 `'Issuer' claim ('iss') must be an Integer`。
+ * 两句话区分得很清楚,但只看前者是猜不出来的。
+ *
+ * 指纹能一眼比对:GitHub App 设置页的「Private keys」区块给每把密钥都
+ * 列了指纹,用户拿这里显示的值去对,是同一把还是不同的一把,不用再试。
+ *
+ * 算法用的是官方文档给的那条命令的等价实现:
+ *   openssl rsa -in KEY.pem -pubout -outform DER | openssl sha256 -binary | openssl base64
+ * 已实测两者输出一致。
+ *
+ * 只暴露**公钥**的哈希 —— 指纹本身是公开信息(GitHub 就印在页面上),
+ * 私钥的任何一个字节都不会出现在这里。
+ */
+export function privateKeyFingerprint(config: GitHubAppConfig): string | null {
+  try {
+    const der = createPublicKey(config.privateKey).export({
+      type: "spki",
+      format: "der",
+    });
+    return createHash("sha256").update(der).digest("base64");
+  } catch {
+    // 私钥解析不了时没有指纹可算 —— 那是另一种故障,由 checkPrivateKey 报
+    return null;
+  }
 }
 
 /**
