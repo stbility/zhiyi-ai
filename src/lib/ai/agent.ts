@@ -1,7 +1,7 @@
 import "server-only";
 
 import { ProviderCallError, callWithTools } from "@/lib/ai/gateway";
-import { isTransientFailure } from "@/lib/providers/model-filter";
+import { classifyFailure, shouldRetry } from "@/lib/ai/failure-kind";
 
 /**
  * 服务商在拒绝 tools / tool_choice 这两个参数本身。
@@ -326,12 +326,22 @@ export async function runAgent({
         //    has completed: Claude Code re-issues the request with the same
         //    backoff, and the turn continues.」
         // 所以断连要保留原文,并且直接按临时性失败处理。
-        const dropped = !(e instanceof ProviderCallError);
-        const err = dropped
-          ? new ProviderCallError(
-              `与模型服务的连接中断:${e instanceof Error ? e.message : String(e)}`,
-            )
-          : e;
+        // 分清是谁的问题。这里曾经是 `dropped = !(e instanceof ProviderCallError)`
+        // —— 任何不认识的异常都被当成断连而重试,包括 decryptSecret 抛的
+        // 密钥错误和代码 bug。那些错误一次上游都没调到,却会把整个预算
+        // 烧光。对话那条线是同一个缺陷,一并改成默认拒绝。
+        const kind = classifyFailure(e);
+        // 一律包成 ProviderCallError,下面几处要读 .message / .status。
+        // 但**文案按分类给**:平台自身的错误不能写成「与模型服务的连接
+        // 中断」—— 那句话会把人支去查服务商,而请求根本没送出去过。
+        const err =
+          e instanceof ProviderCallError
+            ? e
+            : new ProviderCallError(
+                kind === "platform"
+                  ? `本站内部错误,请求未发送到模型服务商:${e instanceof Error ? e.message : String(e)}`
+                  : `与模型服务的连接中断:${e instanceof Error ? e.message : String(e)}`,
+              );
 
         // 用户自己中止(关页面、点停止)不是失败,不重试
         if (signal.aborted) throw err;
@@ -369,7 +379,7 @@ export async function runAgent({
 
         // 永久性失败(密钥错、模型不存在)重试多少次都一样,只是白烧配额。
         // 断连没有状态码可判,但它按定义就是临时性的 —— 见上面的引文。
-        if (!dropped && !isTransientFailure(err.status, err.message)) throw err;
+        if (!shouldRetry(kind)) throw err;
 
         attempt += 1;
         if (attempt > limits.maxRetries) throw err;

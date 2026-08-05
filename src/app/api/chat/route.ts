@@ -8,6 +8,12 @@ import {
 } from "@/lib/ai/gateway";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  classifyFailure,
+  describeFailureKind,
+  MAX_ATTEMPTS,
+  shouldRetry,
+} from "@/lib/ai/failure-kind";
 import { logger } from "@/lib/log";
 import {
   isPlatformProviderId,
@@ -176,12 +182,26 @@ export async function POST(request: NextRequest) {
   // 指数退避,重试用尽之前不把错误给用户看。
   //
   // 次数不设上限 —— 界限只有剩余预算:退避时间超过剩余预算时就停。
-  const { isTransientFailure } = await import("@/lib/providers/model-filter");
+  // 分段计时。
+  //
+  // 此前只有一个 latencyMs,证明不了时间花在哪 —— 用户等了 200 秒,
+  // 到底是我们装配慢、退避烧掉的、还是上游真的在算,完全分不出来。
+  // 而这三种的修法完全不同。
+  //
+  //   platformMs   请求进来 → 即将发出第一次上游调用(鉴权、限流、
+  //                取凭据、装配上下文,全是我们自己的开销)
+  //   waitedMs     退避总时长(重试等待,不是上游在算)
+  //   firstTokenMs 发出调用 → 收到第一个字(上游的首字节延迟)
+  const platformMs = Date.now() - startedAt;
+  let waitedMs = 0;
+  let upstreamStartedAt = 0;
+  let firstTokenMs: number | null = null;
 
   let result: Awaited<ReturnType<typeof streamChat>>;
   let attempt = 0;
   for (;;) {
     try {
+      upstreamStartedAt = Date.now();
       result = await streamChat({
         credentials,
         model,
@@ -195,22 +215,35 @@ export async function POST(request: NextRequest) {
         return errorResponse("请求已取消。", 499);
       }
 
+      // 先分清是**谁**的问题。
+      //
+      // 这里曾经写成 `断连 = !(e instanceof ProviderCallError)` ——
+      // 任何不认识的异常都被当成传输故障去重试。于是 decryptSecret 抛的
+      // 密钥错误、代码 bug 抛的 TypeError,全都进入退避循环:
+      // **一次上游都没调到**,却烧掉整个预算(约 285 秒)。
+      // 用户干等三分半,页面看起来像模型服务商很慢。
+      //
+      // 现在只在能正面认出「上游忙」或「网络断了」时才重试,
+      // 认不出就立刻失败 —— 默认拒绝,不是默认放行。
+      const kind = classifyFailure(e);
       const err =
         e instanceof ProviderCallError
           ? e
           : new ProviderCallError(
-              `与模型服务的连接中断:${e instanceof Error ? e.message : String(e)}`,
+              kind === "platform"
+                ? e instanceof Error
+                  ? e.message
+                  : String(e)
+                : `与模型服务的连接中断:${e instanceof Error ? e.message : String(e)}`,
             );
-      // 传输层断了(fetch failed、连接被重置)按临时故障处理 ——
-      // 它没有状态码可判,但按定义就是临时的
-      const 断连 = !(e instanceof ProviderCallError);
 
       // 平台时限到了就是到了,重试也没有时间跑
       const 剩余 = TOTAL_BUDGET_MS - (Date.now() - startedAt);
+      // 三个条件缺一不可。**次数上限不能只靠预算兜底** ——
+      // 一个 1 秒就失败的错误,在 285 秒预算里会被重试几十次:
+      // 日志刷屏、上游被打、用户干等。次数让最坏情况可预期。
       const 可重试 =
-        !wd.reason &&
-        剩余 > 0 &&
-        (断连 || isTransientFailure(err.status, err.message));
+        !wd.reason && 剩余 > 0 && attempt < MAX_ATTEMPTS && shouldRetry(kind);
 
       if (可重试) {
         // 指数退避 1s / 2s / 4s / 8s 封顶。等待时间超过剩余预算就别等了 ——
@@ -223,14 +256,33 @@ export async function POST(request: NextRequest) {
             "上游临时失败,退避后重试同一个模型",
           );
           await new Promise((r) => setTimeout(r, backoff));
+          waitedMs += backoff;
           continue;
         }
       }
 
       wd.clear();
       // 上游说什么就是什么,不加推断、不替它解释。
-      const message = wd.reason ?? err.message;
-      logger.warn({ model, providerId, organizationId, reason: message }, "模型调用失败");
+      // 但**我们自己的错误要标明白** —— 不标的话用户会去查服务商状态、
+      // 换模型、重连账号,而问题全在我们这边。
+      const message = wd.reason ?? describeFailureKind(kind, err.message);
+      logger.warn(
+        {
+          model,
+          providerId,
+          organizationId,
+          kind,
+          attempts: attempt,
+          // 分段耗时。platform 那一档下 upstreamMs 接近 0 就是铁证:
+          // 时间全花在我们这边和退避上,一次上游都没真的跑过。
+          platformMs,
+          waitedMs,
+          upstreamMs: upstreamStartedAt > 0 ? Date.now() - upstreamStartedAt : 0,
+          totalMs: Date.now() - startedAt,
+          reason: message,
+        },
+        "模型调用失败",
+      );
 
       await insertAssistantMessage(supabase, {
         conversation_id: conversationId,
@@ -294,6 +346,11 @@ export async function POST(request: NextRequest) {
 
       try {
         for await (const chunk of result.stream) {
+          // 首字节:发出上游调用 → 收到第一个片段。
+          // 这一段是**上游真正在算**的时间,和我们的装配、退避彻底分开。
+          // 推理模型这一段天然很长(先想再说),那不是故障 ——
+          // 分不开的话,一次正常的推理会被当成「系统卡住」。
+          firstTokenMs ??= Date.now() - upstreamStartedAt;
 
           if (chunk.kind === "reasoning") {
             // 留一份。**这是被超时丢掉过的东西。**
@@ -379,6 +436,11 @@ export async function POST(request: NextRequest) {
           inputTokens: result.usage.inputTokens,
           outputTokens: result.usage.outputTokens,
           latencyMs: Date.now() - startedAt,
+          // 分段回传:总耗时之外,还要说清各段花在哪 ——
+          // 否则「为什么这么慢」永远只能猜
+          platformMs,
+          waitedMs,
+          firstTokenMs,
           // 真实的消息 id,客户端据此把临时 id 换掉,反馈按钮才点得动
           ...(saved ? { messageId: saved } : {}),
         });
