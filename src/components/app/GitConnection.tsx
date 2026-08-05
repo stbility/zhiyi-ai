@@ -13,6 +13,22 @@ export interface GitConnectionProps {
     installationId: string;
     connectedAt: string;
     /**
+     * 拿这个安装编号真的问过 GitHub,并且问到了。
+     *
+     * 「库里有一行」不等于「连接可用」。生产上出现过一条
+     * installation_id = "<151228033>" 的记录 —— 带尖括号,编码后是
+     * %3C…%3E,调任何接口都必然 404;而卡片照样显示「已连接」,
+     * 因为判断依据只是「查到了一行」。
+     *
+     * 用户一个文件都读不到,却没有任何办法看出区别。
+     * 状态必须以**当下问得到的事实**为准,不是以库里存过什么为准。
+     */
+    verified: boolean;
+    /** 安装编号本身的格式是否合法(纯数字)。不联网就能判 */
+    formatValid: boolean;
+    /** GitHub 当下回答的账号名。库里那份只是缓存,以这个为准 */
+    liveAccountLogin: string | null;
+    /**
      * 非空表示:应用**已在 GitHub 上装好**,但本站换取访问令牌失败,
      * 仓库工具暂时用不了。
      *
@@ -113,7 +129,13 @@ export function GitConnection({
           // 而用户看着 GitHub 上明明装好的应用,只能认为这功能是坏的。
           <StatusLabel tone="warning">已安装 · 凭据待修复</StatusLabel>
         ) : installation ? (
-          <StatusLabel tone="success">已连接</StatusLabel>
+          // 验证不过时**不显示「已连接」**。这是这张卡片上最要紧的一条:
+          // 说「已连接」而实际读不到任何文件,和放假数据是同一类问题。
+          installation.verified ? (
+            <StatusLabel tone="success">已连接</StatusLabel>
+          ) : (
+            <StatusLabel tone="warning">连接异常</StatusLabel>
+          )
         ) : (
           <StatusLabel>未连接</StatusLabel>
         )}
@@ -175,11 +197,33 @@ export function GitConnection({
               }
             />
             <span>
-              {installation.credentialError ? "已安装" : "已连接到"}{" "}
-              {installation.accountLogin ?? "GitHub 账号"}(安装编号{" "}
+              {installation.verified
+                ? "已连接到"
+                : installation.credentialError
+                  ? "已安装"
+                  : "连接记录存在,但未能向 GitHub 验证 ——"}{" "}
+              {installation.liveAccountLogin ??
+                installation.accountLogin ??
+                "GitHub 账号"}
+              (安装编号{" "}
               <span className="font-mono">{installation.installationId}</span>)
             </span>
           </div>
+          {/* 验证不过时把原因摆出来,并区分两种完全不同的成因。
+              不区分的话,用户会去重装应用 —— 而如果坏的是编号本身,
+              重装多少次都一样。 */}
+          {!installation.verified && (
+            <p className="border-warning bg-warning-tint text-warning rounded-control text-caption p-3">
+              {!installation.formatValid
+                ? "这条记录里的安装编号不是纯数字,不可能是 GitHub 发出来的" +
+                  "(多半是手工写进数据库的)。仓库工具用不了。" +
+                  "请点下面的「断开连接」清掉它,再走一次「连接 GitHub」。"
+                : "安装编号格式正常,但向 GitHub 查询这个安装时没有取到账号信息 ——" +
+                  "可能是应用已在 GitHub 侧被卸载,或本站凭据当前不可用。" +
+                  "重新走一次「连接 GitHub」即可;仍然如此的话,问题在应用凭据。"}
+            </p>
+          )}
+
           {/* 已连接状态下两个动作都要有:改仓库范围、断开。
               对齐 ChatGPT / Codex 的 GitHub 连接器 ——
               Choose repositories 与 Disconnect 是并列的两项。

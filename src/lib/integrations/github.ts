@@ -96,6 +96,40 @@ function statelessTokenHeader(): Record<string, string> {
  * 认不出来就返回 null,不硬猜 —— 猜错的代价还是一个 404,
  * 而 getAppSlug() 拿到 null 时会走公开页查证那条路,反而更稳。
  */
+/**
+ * 把安装编号规范化成 GitHub 认的形态(纯数字)。
+ *
+ * 【为什么需要这个】
+ * 真实事故:文档里的占位符写作 `installation_id=<数字>`,用户照着填时
+ * **把尖括号一起带上了** —— `?installation_id=<151228033>`。
+ * 这个值编码后是 %3C151228033%3E,换令牌必然失败。
+ *
+ * 而回调那一侧「跳转成功」看起来一切正常:页面确实跳回来了、库里确实
+ * 多了一行,卡片显示「已安装 · 凭据待修复」。于是排查方向被引向凭据,
+ * 而真正坏的只是两个尖括号。
+ *
+ * **用户按最自然的方式操作却失败,是设计的问题。** 占位符连着贴进去
+ * 是完全可以预料的,系统该认得出来 —— 就像 normalizeSlug 认得出
+ * 用户粘的是整条网址一样。
+ *
+ * 认得出的形态:
+ *   151228033          纯数字
+ *   <151228033>        带占位符的尖括号
+ *   "151228033"        带引号
+ *   ' 151228033 '      带空白
+ *
+ * 剥完不是纯数字的一律返回 null —— **不从一串杂字里"提取"数字**。
+ * 那样会把 `abc123def` 变成 `123`,拿一个凭空捏造的编号去调 GitHub,
+ * 比直接失败更糟。
+ */
+export function normalizeInstallationId(
+  raw: string | undefined | null,
+): string | null {
+  const v = raw?.trim().replace(/^[<"'\s]+|[>"'\s]+$/g, "");
+  if (!v) return null;
+  return /^[0-9]+$/.test(v) ? v : null;
+}
+
 export function normalizeSlug(raw: string | undefined | null): string | null {
   const value = raw?.trim();
   if (!value) return null;

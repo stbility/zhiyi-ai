@@ -7,6 +7,7 @@ import {
   getGitHubAppConfig,
   getInstallation,
   getInstallationToken,
+  normalizeInstallationId,
 } from "@/lib/integrations/github";
 import { logger } from "@/lib/log";
 
@@ -80,7 +81,26 @@ function back(request: NextRequest, params: Record<string, string>): NextRespons
 }
 
 export async function GET(request: NextRequest) {
-  const installationId = request.nextUrl.searchParams.get("installation_id");
+  // 规范化:占位符的尖括号、引号、空白一律剥掉,剥完必须是纯数字。
+  //
+  // 真实事故:文档里写作 `installation_id=<数字>`,用户照着填时把尖括号
+  // 一起带上了。带括号的值编码后是 %3C…%3E,换令牌必然失败 —— 而页面
+  // 确实跳回来了、库里确实多了一行,于是排查方向被引向凭据,
+  // 真正坏的只是两个尖括号。
+  const rawInstallationId =
+    request.nextUrl.searchParams.get("installation_id");
+  const installationId = normalizeInstallationId(rawInstallationId);
+
+  // 有值但规范化不过 —— 这和「什么都没带」是两回事,必须分开说。
+  // 混为一谈的话,用户会去查 Setup URL 配置,而那边根本没问题。
+  if (rawInstallationId && !installationId) {
+    return back(request, {
+      githubError:
+        `安装编号「${rawInstallationId}」不是合法的编号 —— GitHub 发出来的` +
+        `永远是**纯数字**。如果你是照着文档里的 <数字> 手工填的,` +
+        `多半是把尖括号一起带上了:去掉 < 和 > 再访问一次即可。`,
+    });
+  }
   const state = request.nextUrl.searchParams.get("state");
 
   if (!installationId) {

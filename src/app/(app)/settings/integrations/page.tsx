@@ -11,11 +11,13 @@ import { isEncryptionAvailable } from "@/lib/crypto/secret-box";
 import {
   getAppSlug,
   getGitHubAppConfig,
+  getInstallation,
   privateKeyFingerprint,
   installUrl,
   issueState,
 } from "@/lib/integrations/github";
 import { getSiteUrl } from "@/lib/env/server";
+import { logger } from "@/lib/log";
 import { getMyOrganizations } from "@/lib/db/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -77,7 +79,23 @@ async function loadIntegrations(
   }));
 }
 
-/** 已连接的 Git 安装。没有就是没有,不编造 */
+/**
+ * 已连接的 Git 安装。没有就是没有,不编造。
+ *
+ * 【「库里有一行」不等于「连接可用」】
+ *
+ * 生产上出现过一条 installation_id = "<151228033>" 的记录 ——
+ * 带尖括号。GitHub 的安装编号是纯数字,这个值编码后是 %3C…%3E,
+ * 调任何接口都必然 404。而 account_login / repository_selection 都是 null,
+ * 说明它不是回调写进去的(回调写库前会调 getInstallation 取这两个值)。
+ *
+ * 卡片当时照样显示「已连接」——因为判断依据只是「查到了一行」。
+ * 这就是**状态真假不一致**:界面说通了,实际一个文件都读不到,
+ * 而用户没有任何办法看出区别。
+ *
+ * 所以现在多做一步:拿这个安装编号真的去问一次 GitHub。
+ * 问不到就如实说「记录在,但验证不过」,而不是继续说「已连接」。
+ */
 async function loadGitInstallation(organizationId: string) {
   const supabase = await createSupabaseServerClient();
   if (!supabase) return null;
@@ -90,13 +108,68 @@ async function loadGitInstallation(organizationId: string) {
     .maybeSingle();
 
   if (!data) return null;
+
+  const installationId = data.installation_id as string;
+
+  // 先做**不联网**就能判的那一层:格式对不对。
+  // 分开报的理由和私钥那次一样 —— 「值本身是坏的」和「GitHub 不认」
+  // 是两件事、两个修法,混成一句会把人支去查一个没错的地方。
+  const 格式合法 = /^[0-9]+$/.test(installationId);
+
+  // 再问 GitHub。取到 account_login 就说明这个安装真实存在且我们能用它。
+  const live = 格式合法
+    ? await getInstallation(installationId)
+    : { accountLogin: null, repositorySelection: null };
+
+  const verified = 格式合法 && live.accountLogin !== null;
+  const storedError = (data.credential_error as string | null) ?? null;
+
+  // 验证通过就把存量的报错清掉。
+  //
+  // 【这是用户报的 bug,而且是同一个病的另一面】
+  // credential_error 是**上一次尝试留下的存量值**。安装编号修好之后,
+  // 卡片仍然读那个旧值,于是继续显示「凭据待修复」——
+  // 存下来的状态压过了当下问得到的事实。
+  //
+  // 和「库里有一行就说已连接」是完全对称的两个错误:
+  // 一个把陈旧的成功当成现在成功,一个把陈旧的失败当成现在失败。
+  // 两者的修法是同一条:**以当下问得到的事实为准**。
+  //
+  // 清库失败不影响这次显示 —— 下面 return 的是 verified 算出来的值,
+  // 不是库里那个。落库只是让下次少查一遍。
+  if (verified && storedError) {
+    const { error } = await supabase
+      .from("git_installations")
+      .update({
+        credential_error: null,
+        account_login: live.accountLogin,
+        repository_selection: live.repositorySelection,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("organization_id", organizationId)
+      .eq("provider", "github");
+    if (error) {
+      logger.warn(
+        { organizationId, dbError: error.message },
+        "验证已通过,但清除存量的凭据报错失败",
+      );
+    }
+  }
+
   return {
-    installationId: data.installation_id as string,
+    verified,
+    formatValid: 格式合法,
+    // 以 GitHub 当下的回答为准,库里那份只是缓存
+    liveAccountLogin: live.accountLogin,
+    installationId,
     accountLogin: (data.account_login as string | null) ?? null,
     connectedAt: data.created_at as string,
     // 非空 = 应用装上了,但本站的凭据换不到令牌。
     // 这和「没装上」是两回事,卡片必须分开显示。
-    credentialError: (data.credential_error as string | null) ?? null,
+    //
+    // verified 为真时一律置空:那个值是上一次尝试的存量,
+    // 而我们刚刚问过 GitHub 并且问到了 —— 当下的事实压过存量。
+    credentialError: verified ? null : storedError,
   };
 }
 
