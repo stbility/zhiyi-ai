@@ -43,7 +43,14 @@ create schema if not exists auth;
 -- 造多了反而会掩盖「迁移其实依赖了某个我们没注意到的列」这件事。
 create table if not exists auth.users (
   id    uuid primary key default gen_random_uuid(),
-  email text
+  email text,
+  -- 0001 的 handle_new_user 触发器读这一列取显示名。
+  -- 缺了它,`create trigger ... on auth.users` 本身能建起来
+  -- (plpgsql 的字段引用是运行时解析的),但一插入用户就会炸 ——
+  -- 而那种炸法在只建结构的 CI 里看不出来,会留到线上才发现。
+  raw_user_meta_data jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 -- 策略里到处在用。返回 NULL 是**有意的**:

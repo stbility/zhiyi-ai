@@ -42,11 +42,14 @@ for f in "$ROOT"/supabase/migrations/*.sql; do
   # --single-transaction:一条迁移要么整条生效,要么整条回滚。
   # 不这样的话,一条迁移执行到一半失败会留下半成品,
   # 后面的报错全是连带的,根本看不出是哪一条先坏的。
-  if "${PSQL[@]}" --single-transaction -f "$f"; then
+  # 报错原文必须留下来。只打「执行失败」的话,CI 日志里看不出是哪一句
+  # 出的问题,而这正是需要人去改迁移的那条信息。
+  if err="$("${PSQL[@]}" --single-transaction -f "$f" 2>&1)"; then
     echo "  ✓ $(basename "$f")"
     count=$((count + 1))
   else
     echo "  ✗ $(basename "$f") 执行失败"
+    echo "$err" | sed 's/^/      /'
     echo ""
     echo "从零重建数据库这条路是断的 —— 灾难恢复用不了。"
     exit 1
