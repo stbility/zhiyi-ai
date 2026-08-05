@@ -2,6 +2,7 @@ import { Icon } from "@/components/icons/Icon";
 import { StatusLabel } from "@/components/primitives/StatusLabel";
 import { LinkButton } from "@/components/primitives/LinkButton";
 import { GitDisconnect } from "@/components/app/GitDisconnect";
+import { GitTestAccess } from "@/components/app/GitTestAccess";
 import { GitManualConnect } from "@/components/app/GitManualConnect";
 
 export interface GitConnectionProps {
@@ -242,6 +243,9 @@ export function GitConnection({
                   调整授权的仓库
                 </LinkButton>
               )}
+              {/* 验证通过之后才给测试入口。没通过时链路的前一段就是断的,
+                  再点一次只会得到同一个错误,徒增一轮困惑。 */}
+              {installation.verified && <GitTestAccess />}
               <GitDisconnect
                 installationId={installation.installationId}
                 accountLogin={installation.accountLogin}

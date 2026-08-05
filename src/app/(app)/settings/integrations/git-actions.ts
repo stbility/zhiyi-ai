@@ -9,6 +9,7 @@ import { getMyOrganizations } from "@/lib/db/queries";
 import {
   installUrl,
   issueState,
+  listRepositories,
   normalizeSlug,
   uninstallApp,
   verifyAppSlug,
@@ -145,4 +146,60 @@ export async function disconnectGit(
 
   revalidatePath("/settings/integrations");
   return { ok: true };
+}
+
+export interface GitTestState {
+  error?: string;
+  /** 真实拉回来的仓库全名。空数组 = 连上了但一个仓库都没授权 */
+  repos?: string[];
+  ok?: boolean;
+}
+
+/**
+ * 真的调一次 GitHub,把这个安装能看到的仓库列出来。
+ *
+ * 【为什么需要这个按钮】
+ * 用户问「智能体真的能工作吗」,而在此之前唯一的验证方式是**跑一轮智能体**——
+ * 那要选模型、写提示词、等它决定去调工具,任何一环出问题都会被误读成
+ * 「Git 不通」。一次失败根本分不清是模型不行、提示词不对,还是仓库读不到。
+ *
+ * 这个动作只做一件事:用当前安装换一次令牌,拉一次仓库列表。
+ * 成功就把**真实的仓库名**摆出来 —— 那是伪造不了的证据,
+ * 也正好回答「智能体能碰哪些仓库」这个问题(它用的是同一份白名单)。
+ *
+ * 走的是 listRepositories,与 loadGitContext 装配智能体上下文时**同一个函数**。
+ * 所以这里通了,智能体那边就是通的;这里不通,那边也一定不通。
+ * 另写一个"测试专用"的调用是没有意义的 —— 它证明不了真实链路。
+ */
+export async function testGitAccess(
+  _prev: GitTestState,
+  _formData: FormData,
+): Promise<GitTestState> {
+  const orgs = await getMyOrganizations();
+  const org = orgs.find((o) => o.role === "owner" || o.role === "admin");
+  if (!org) return { error: "需要组织管理员才能测试仓库连接。" };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { error: "数据库不可用,请稍后再试。" };
+
+  const { data } = await supabase
+    .from("git_installations")
+    .select("installation_id")
+    .eq("organization_id", org.id)
+    .eq("provider", "github")
+    .maybeSingle();
+
+  const installationId = data?.installation_id as string | undefined;
+  if (!installationId) {
+    return { error: "这个组织还没有连接 GitHub。" };
+  }
+
+  const result = await listRepositories(installationId);
+  if (!result.ok) {
+    // 原话照抄。这一步失败的原因各不相同(私钥不对、安装已被卸载、
+    // 限流),每种对应不同的修法 —— 盖成一句「测试失败」等于什么都没说。
+    return { error: result.error };
+  }
+
+  return { ok: true, repos: result.repos.map((r) => r.fullName) };
 }

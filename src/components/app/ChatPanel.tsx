@@ -40,6 +40,21 @@ export interface ModelOption {
   modelId: string;
   /** 供 Select 使用的复合值:providerId::modelId */
   value: string;
+  /**
+   * 实测吞吐(token/秒),来自这个模型在本组织**真实跑过的调用**。
+   *
+   * 为什么要显示:用户反复问「为什么这么慢」,而慢的原因往往在服务商,
+   * 不在模型本身。生产实测:同一个 deepseek-v4-flash,
+   * 走 NVIDIA NIM 是 11 token/秒,走 DeepSeek 官方是 116 —— 差十倍。
+   * 光看模型名完全分不出来。
+   *
+   * 把实测值摆在选项上,「让用户自己选择」才是可操作的 ——
+   * 否则他只能凭名字猜,而名字不带这个信息。
+   *
+   * 样本不足时为 null:**不显示,也不猜**。一两次调用的均值没有意义,
+   * 而一个编出来的数字比没有数字更糟。
+   */
+  throughput?: { tokensPerSec: number; samples: number } | null;
 }
 
 export interface ConversationSummary {
@@ -1065,7 +1080,10 @@ export function ChatPanel({
               onChange={setSelected}
               options={models.map((m) => ({
                 value: m.value,
-                label: `${m.providerName} · ${m.modelId}`,
+                // 吞吐是**实测值**,没有样本就不写 —— 不猜、不留空占位
+                label: m.throughput
+                  ? `${m.providerName} · ${m.modelId}(实测 ${m.throughput.tokensPerSec} token/秒,${m.throughput.samples} 次)`
+                  : `${m.providerName} · ${m.modelId}`,
               }))}
               className="text-caption min-h-8 min-w-0 max-w-[15rem] px-2.5 py-0"
             />
