@@ -1,3 +1,7 @@
+agent_runs_conversation_idx
+agent_runs_organization_idx
+agent_runs_resumable_idx
+agent_steps_run_idx
 ai_model_exclusions_org_idx
 ai_models_org_idx
 ai_models_provider_idx

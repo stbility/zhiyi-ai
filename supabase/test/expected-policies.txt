@@ -1,3 +1,5 @@
+agent_runs_own
+agent_steps_own
 ai_model_exclusions_delete_admin
 ai_model_exclusions_insert_admin
 ai_model_exclusions_select_member

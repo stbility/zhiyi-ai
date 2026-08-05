@@ -166,7 +166,18 @@ export interface AgentModelOption {
 
 /** 循环过程中的进度回调,用于把每一步实时推给前端 */
 export interface AgentReporter {
-  onStep?(step: AgentStep): void;
+  /**
+   * 每一步结束时回调。
+   *
+   * **返回 Promise 时会被 await。** 这一点是刻意的:
+   * 落库必须排在推 SSE 之前,顺序是
+   *   执行工具 → 写 agent_steps → 提交 → 发 SSE → 下一轮模型调用
+   *
+   * 反过来的话(先推 SSE 再落库),用户在界面上看到了这一步、
+   * 而请求恰好在落库前被杀 —— 他看见过的东西数据库里没有,
+   * 刷新之后凭空消失。那正是这次要修的故障。
+   */
+  onStep?(step: AgentStep): void | Promise<void>;
   /**
    * 模型正在说的话,逐段推出去。
    *
@@ -423,7 +434,7 @@ export async function runAgent({
       // 此时工具调用的参数是残缺 JSON,执行会写出半截文件
       haltReason = "模型输出被长度上限截断。";
       steps.push({ index, text: turn.text, tools: [] });
-      reporter?.onStep?.({ index, text: turn.text, tools: [] });
+      await reporter?.onStep?.({ index, text: turn.text, tools: [] });
       break;
     }
 
@@ -456,7 +467,7 @@ export async function runAgent({
         );
       }
       steps.push({ index, text: turn.text, tools: [] });
-      reporter?.onStep?.({ index, text: turn.text, tools: [] });
+      await reporter?.onStep?.({ index, text: turn.text, tools: [] });
       break;
     }
 
@@ -509,7 +520,8 @@ export async function runAgent({
 
     const step: AgentStep = { index, text: turn.text, tools: results };
     steps.push(step);
-    reporter?.onStep?.(step);
+    // await:落库要在推送之前完成。见 onStep 的说明。
+    await reporter?.onStep?.(step);
 
     // 连续失败说明模型没在改正,再循环只是浪费配额
     const allFailed = results.every((r) => !r.ok);

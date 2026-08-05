@@ -47,6 +47,7 @@
 | `0024_supports_tools_tristate.sql` | 20260803214004 | supports_tools_tristate |
 | `0025_git_installation_credential_error.sql` | 20260804170117 | git_installation_credential_error |
 | `0026_platform_models.sql` | 20260804212457 | platform_models |
+| `0027_agent_runs_and_steps.sql` | 20260805… | agent_runs_and_steps |
 
 ### 备注 A：0005 在账本里没有记录
 

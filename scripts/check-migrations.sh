@@ -33,6 +33,19 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # 最后以 0 退出 —— 一条根本没建成的表会被当成建成了。
 PSQL=(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --quiet --no-psqlrc)
 
+# 把关键信息同时写到 GitHub 的**运行汇总页**。
+#
+# 这一条是被自己绊了一跤才加的:第一次 CI 红掉时,汇总页上只有
+# 「Process completed with exit code 1」,真正的报错埋在需要展开、
+# 而且需要仓库管理员权限才能通过 API 取到的日志里。
+# 于是排查卡在「我看不到错误」上,和之前「详情见服务端日志」
+# 是一模一样的毛病 —— **诊断信息不落到能看见的地方,等于没有诊断。**
+summary() {
+  echo "$1"
+  [ -n "${GITHUB_STEP_SUMMARY:-}" ] && echo "$1" >> "$GITHUB_STEP_SUMMARY"
+  return 0
+}
+
 echo "── 引导(角色、auth schema、pgcrypto)"
 "${PSQL[@]}" -f "$ROOT/supabase/test/bootstrap.sql"
 
@@ -48,10 +61,13 @@ for f in "$ROOT"/supabase/migrations/*.sql; do
     echo "  ✓ $(basename "$f")"
     count=$((count + 1))
   else
-    echo "  ✗ $(basename "$f") 执行失败"
-    echo "$err" | sed 's/^/      /'
-    echo ""
-    echo "从零重建数据库这条路是断的 —— 灾难恢复用不了。"
+    summary "### ✗ 迁移重放失败:$(basename "$f")"
+    summary ""
+    summary '```'
+    summary "$err"
+    summary '```'
+    summary ""
+    summary "从零重建数据库这条路是断的 —— 灾难恢复用不了。"
     exit 1
   fi
 done
@@ -72,12 +88,19 @@ if [ "$(wc -l < /tmp/expected-policies.txt)" -lt 40 ]; then
 fi
 
 fail=0
-if ! diff -u /tmp/expected-policies.txt /tmp/actual-policies.txt; then
-  echo "✗ 策略集合与生产不一致(- 是生产有而重建缺,+ 是重建多出来)"
+if ! d="$(diff -u /tmp/expected-policies.txt /tmp/actual-policies.txt)"; then
+  summary "### ✗ 策略集合与生产不一致"
+  summary "(\`-\` 是生产有而重建缺 → 功能会坏;\`+\` 是重建多出来 → 权限可能变宽)"
+  summary '```diff'
+  summary "$d"
+  summary '```'
   fail=1
 fi
-if ! diff -u /tmp/expected-indexes.txt /tmp/actual-indexes.txt; then
-  echo "✗ 索引集合与生产不一致"
+if ! d="$(diff -u /tmp/expected-indexes.txt /tmp/actual-indexes.txt)"; then
+  summary "### ✗ 索引集合与生产不一致"
+  summary '```diff'
+  summary "$d"
+  summary '```'
   fail=1
 fi
 
@@ -87,5 +110,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo ""
-echo "✓ 从空库重放 $count 条迁移成功,最终状态与生产一致。"
+summary "### ✓ 从空库重放 $count 条迁移成功,最终状态与生产一致"

@@ -69,6 +69,106 @@ as $$
   );
 $$;
 
--- 旧的 public 版本必须删掉 —— 留着就等于那个 RPC 端点还在
+-- ── 先把依赖旧函数的策略改指到 private,再删旧函数 ──────────────
+--
+-- 【这一段是补上去的,补之前从空库重放会直接失败】
+--
+-- 0001 / 0004 / 0006 里有 13 条策略写的是 public.is_org_member /
+-- public.has_org_role。而下面的 drop **不带 cascade** ——
+-- PostgreSQL 的依赖跟踪会直接拒绝:
+--   cannot drop function public.is_org_member(uuid) because other
+--   objects depend on it
+--
+-- 生产库当初能跑通,只说明**生产当时的策略不是仓库里这个样子**:
+-- 整套迁移是从生产反解出来的,反解的是「今天的样子」,不是「当时应用的
+-- 那一份」。于是仓库里的 0001 带着已经演化过的策略定义,而 0008 仍按
+-- 原始顺序删函数 —— 两者拼在一起就不自洽了。
+-- 这正是 CI 里那次真实重放抓出来的第一个问题。
+--
+-- 为什么不用 drop ... cascade:cascade 会**静默删掉**这些策略,
+-- 而删掉策略等于把表敞开。那种失败不会报错,只会在某天被人发现
+-- 数据谁都能读。宁可显式重建 13 条,也不让删除动作去猜该连带删什么。
+--
+-- 下面这些定义是从 0001/0004/0006 原文机械替换 schema 得到的,
+-- 不是手抄 —— 13 条手抄必然出错。
+
+drop policy if exists organizations_select_member on public.organizations;
+create policy organizations_select_member on public.organizations
+  for select to authenticated
+  using (private.is_org_member(id));
+
+drop policy if exists organizations_update_admin on public.organizations;
+create policy organizations_update_admin on public.organizations
+  for update to authenticated
+  using (private.has_org_role(id, array['owner', 'admin']::public.org_role[]))
+  with check (private.has_org_role(id, array['owner', 'admin']::public.org_role[]));
+
+drop policy if exists organizations_delete_owner on public.organizations;
+create policy organizations_delete_owner on public.organizations
+  for delete to authenticated
+  using (private.has_org_role(id, array['owner']::public.org_role[]));
+
+drop policy if exists memberships_select_member on public.memberships;
+create policy memberships_select_member on public.memberships
+  for select to authenticated
+  using (private.is_org_member(organization_id));
+
+drop policy if exists memberships_insert_admin on public.memberships;
+create policy memberships_insert_admin on public.memberships
+  for insert to authenticated
+  with check (
+    private.has_org_role(organization_id, array['owner', 'admin']::public.org_role[])
+  );
+
+drop policy if exists memberships_update_admin on public.memberships;
+create policy memberships_update_admin on public.memberships
+  for update to authenticated
+  using (
+    private.has_org_role(organization_id, array['owner', 'admin']::public.org_role[])
+  )
+  with check (
+    private.has_org_role(organization_id, array['owner', 'admin']::public.org_role[])
+  );
+
+drop policy if exists memberships_delete_admin on public.memberships;
+create policy memberships_delete_admin on public.memberships
+  for delete to authenticated
+  using (
+    private.has_org_role(organization_id, array['owner', 'admin']::public.org_role[])
+  );
+
+drop policy if exists audit_logs_select_member on public.audit_logs;
+create policy audit_logs_select_member on public.audit_logs
+  for select to authenticated
+  using (organization_id is not null and private.is_org_member(organization_id));
+
+drop policy if exists ai_providers_select_member on public.ai_providers;
+create policy ai_providers_select_member on public.ai_providers
+  for select to authenticated using (private.is_org_member(organization_id));
+
+drop policy if exists ai_providers_write_admin on public.ai_providers;
+create policy ai_providers_write_admin on public.ai_providers
+  for all to authenticated
+  using (private.has_org_role(organization_id, array['owner','admin']::public.org_role[]))
+  with check (private.has_org_role(organization_id, array['owner','admin']::public.org_role[]));
+
+drop policy if exists ai_models_select_member on public.ai_models;
+create policy ai_models_select_member on public.ai_models
+  for select to authenticated using (private.is_org_member(organization_id));
+
+drop policy if exists ai_models_write_admin on public.ai_models;
+create policy ai_models_write_admin on public.ai_models
+  for all to authenticated
+  using (private.has_org_role(organization_id, array['owner','admin']::public.org_role[]))
+  with check (private.has_org_role(organization_id, array['owner','admin']::public.org_role[]));
+
+drop policy if exists conversations_own on public.conversations;
+create policy conversations_own on public.conversations
+  for all to authenticated
+  using (user_id = auth.uid() and private.is_org_member(organization_id))
+  with check (user_id = auth.uid() and private.is_org_member(organization_id));
+
+-- 旧的 public 版本必须删掉 —— 留着就等于那个 RPC 端点还在。
+-- 上面已经把全部依赖改指到 private,所以这两条现在能成功。
 drop function if exists public.is_org_member(uuid);
 drop function if exists public.has_org_role(uuid, org_role[]);

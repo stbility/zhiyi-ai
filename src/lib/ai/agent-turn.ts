@@ -9,6 +9,8 @@ import {
   type AgentModelOption,
 } from "@/lib/ai/agent";
 import { loadGitContext } from "@/lib/ai/git-tools";
+import { isPlatformProviderId } from "@/lib/ai/platform-models";
+import { openRunJournal } from "@/lib/ai/run-journal";
 import { logger } from "@/lib/log";
 import type { AgentStep } from "@/lib/ai/agent";
 import { ProviderCallError } from "@/lib/ai/gateway";
@@ -161,6 +163,22 @@ export async function runAgentTurn({
         send("progress", { elapsedMs: Date.now() - startedAt });
       }, 5_000);
 
+      // 开一份运行日志。**每一步做完立刻落库**,不等整轮结束。
+      //
+      // 此前落库只发生在 runAgent() 完整返回之后 —— 一次 102 秒的中断
+      // 就让已经读回来的目录彻底消失,连"发生过"都没有痕迹。
+      // 开不出来(建记录失败)不阻断运行:检查点是为了少丢,
+      // 不该成为多一个让整轮崩掉的理由。
+      const journal = await openRunJournal(supabase, {
+        conversationId,
+        organizationId,
+        // 平台免费档在 ai_providers 里没有行
+        providerId: isPlatformProviderId(selected.providerId)
+          ? null
+          : selected.providerId,
+        modelId: selected.modelId,
+      });
+
       try {
         const outcome = await runAgent({
           model: selected,
@@ -181,7 +199,15 @@ export async function runAgentTurn({
             onText(text: string) {
               send("reasoning", { text });
             },
-            onStep(step: AgentStep) {
+            async onStep(step: AgentStep) {
+              // 顺序是硬要求:**先落库,再推送**。
+              //   执行工具 → 写 agent_steps → 提交 → 发 SSE → 下一轮
+              //
+              // 反过来的话,用户在界面上看到了这一步、而请求恰好在落库前
+              // 被杀 —— 他看见过的东西数据库里没有,刷新之后凭空消失。
+              // 那比什么都不显示更糟。
+              await journal?.record(step);
+
               // 每一步都实时推给用户 —— 智能体跑几分钟,期间什么都不显示
               // 会让人以为卡死了
               send("step", {
@@ -246,6 +272,13 @@ export async function runAgentTurn({
         // 系统消息和模型回复分属不同通道 —— 混进正文,用户就会当成
         // 模型说的话。
         if (outcome.haltReason) send("error", { message: outcome.haltReason });
+
+        // 收尾。跑完的不可续 —— resumable 由 finish 按结局决定。
+        await journal?.finish(
+          outcome.haltReason ? "interrupted" : "completed",
+          outcome.haltReason ?? undefined,
+        );
+
         send("done", {
           inputTokens: outcome.inputTokens,
           outputTokens: outcome.outputTokens,
@@ -283,6 +316,15 @@ export async function runAgentTurn({
             () => undefined,
           );
         }
+
+        // 失败也要收尾。不收的话状态永远停在 running,
+        // 恢复流程会把一堆早已死掉的运行当成「正在跑」。
+        //
+        // 分两档:被中止(用户关页面、平台强杀)标 interrupted,
+        // 那是**可续**的;真正的失败标 failed,续也没用。
+        await journal
+          ?.finish(signal.aborted ? "interrupted" : "failed", message)
+          .catch(() => undefined);
 
         send("error", { message });
       } finally {
