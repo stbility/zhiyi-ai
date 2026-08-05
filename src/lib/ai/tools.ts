@@ -40,6 +40,16 @@ export interface ToolResult {
   /** 给模型看的文本。成功失败都要说清楚,失败也是有用的观察 */
   readonly content: string;
   readonly ok: boolean;
+  /**
+   * 这次调用的入参(已解析)。留痕与界面都要用它 ——
+   * 「读了哪个仓库的哪个文件」不该只能从结果正文里猜。
+   *
+   * 解析失败时为 undefined:那种情况下原始字符串本来就不是 JSON,
+   * 硬塞一个 { raw: "..." } 只会让消费方以为拿到了结构化数据。
+   */
+  readonly args?: unknown;
+  /** 工具实际耗时。定位「慢在哪一环」要用 */
+  readonly durationMs?: number;
 }
 
 /**

@@ -298,6 +298,12 @@ export async function runAgentTurn({
                   name: t.name,
                   ok: t.ok,
                   content: t.content.slice(0, 300),
+                  // 完整长度一并推过去 —— 界面要据此说明「这是摘要」。
+                  // 只推截断后的内容,前端根本没有办法知道自己拿到的
+                  // 是不是全部,于是只能默默显示,用户只能默默误会。
+                  totalChars: t.content.length,
+                  truncated: t.content.length > 300,
+                  durationMs: t.durationMs ?? null,
                 })),
               });
             },

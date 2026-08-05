@@ -91,7 +91,18 @@ export async function openRunJournal(
         step_index: step.index * 100 + i,
         tool_call_id: t.callId,
         tool_name: t.name,
+        // 入参里有「哪个仓库、哪个路径」。不记的话,事后只能从结果
+        // 正文里猜读了什么 —— 而失败的调用连正文都没有
+        arguments: (t.args ?? null) as never,
         result_preview: t.content.slice(0, PREVIEW_CHARS),
+        // **记事实,不是记我们展示了什么。**
+        // 摘要 300 字这件事,既不能证明读成功了也不能证明没读成功;
+        // 原文多长才能。用户就是因为看不到这个数,
+        // 把 300 字的摘要误认成「读取中断」。
+        result_chars: t.content.length,
+        preview_chars: Math.min(t.content.length, PREVIEW_CHARS),
+        truncated: t.content.length > PREVIEW_CHARS,
+        duration_ms: t.durationMs ?? null,
         ok: t.ok,
         completed_at: new Date().toISOString(),
       }));
@@ -104,7 +115,12 @@ export async function openRunJournal(
           step_index: step.index * 100,
           tool_call_id: null as unknown as string,
           tool_name: null as unknown as string,
+          arguments: null as never,
           result_preview: step.text.slice(0, PREVIEW_CHARS),
+          result_chars: step.text.length,
+          preview_chars: Math.min(step.text.length, PREVIEW_CHARS),
+          truncated: step.text.length > PREVIEW_CHARS,
+          duration_ms: null,
           ok: true,
           completed_at: new Date().toISOString(),
         });

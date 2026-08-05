@@ -116,7 +116,15 @@ interface Turn {
    * 不存任何叙述。分界很清楚:一句由我们措辞、描述「它在跑」的话,
    * 是编的;而「write_file(src/app.tsx) 已写入 1240 字符」是发生过的事。
    */
-  tools?: { name: string; ok: boolean; content: string }[];
+  tools?: {
+    name: string;
+    ok: boolean;
+    content: string;
+    /** 工具返回的**完整**字符数。界面只展示摘要,必须说清差距 */
+    totalChars?: number;
+    truncated?: boolean;
+    durationMs?: number | null;
+  }[];
   /** 撞上时间上限且可续跑。显示「继续运行」按钮 */
   resumable?: boolean;
   /** 上下文被裁剪的说明 */
@@ -533,7 +541,7 @@ export function ChatPanel({
             | {
                 index: number;
                 text: string;
-                tools: { name: string; ok: boolean; content: string }[];
+                tools: NonNullable<Turn["tools"]>;
               }
             | {
                 inputTokens: number | null;
@@ -582,7 +590,7 @@ export function ChatPanel({
             // 只收工具执行,不收叙述:模型这一步说的话已经走 reasoning
             // 实时流出去了,再收一遍会重复。
             const p = payload as {
-              tools: { name: string; ok: boolean; content: string }[];
+              tools: NonNullable<Turn["tools"]>;
             };
             if (p.tools.length > 0) {
               ranTools = [...ranTools, ...p.tools];
@@ -890,6 +898,22 @@ export function ChatPanel({
                             <span className="text-fg-tertiary text-label ml-2 break-all">
                               {t.content}
                             </span>
+                            {/* 截断必须说出来。
+                                用户实测:README 只显示一段、没有任何标记,
+                                他合理地以为「读取中断了」—— 而智能体其实
+                                收到了完整内容。截断本身没错(整篇铺在对话里
+                                毫无意义),错的是**不说**。
+                                不说就等于让用户自己猜,而他猜错了。 */}
+                            {t.truncated && t.totalChars ? (
+                              <span className="text-fg-tertiary text-label mt-0.5 block italic">
+                                [ 此处仅展示前 {t.content.length.toLocaleString()} 字符;
+                                智能体实际收到 {t.totalChars.toLocaleString()} 字符
+                                {typeof t.durationMs === "number"
+                                  ? ` · 耗时 ${(t.durationMs / 1000).toFixed(1)} 秒`
+                                  : ""}
+                                {" ]"}
+                              </span>
+                            ) : null}
                           </span>
                         </>
                       );

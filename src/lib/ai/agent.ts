@@ -489,7 +489,22 @@ export async function runAgent({
     for (const call of turn.toolCalls) {
       // 按工具名分派:Git 工具走仓库,其余走工作区。
       // 两套工具的失败语义一致 —— 都返回观察结果而不抛错。
-      const result = call.name.startsWith("git_")
+      // 参数与耗时在这里补上 —— 这是**唯一**的工具执行入口,
+      // 在每个 return 处各写一遍会漏(git-tools 里就有六个 return)。
+      //
+      // 参数要留:「读了哪个仓库的哪个文件」不该只能从结果正文里猜。
+      // 耗时要留:定位「慢在哪一环」时,工具执行和模型生成必须分得开。
+      const startedTool = Date.now();
+      let parsedArgs: unknown;
+      try {
+        parsedArgs = JSON.parse(call.rawArguments === "" ? "{}" : call.rawArguments);
+      } catch {
+        // 解析失败时留 undefined。硬塞一个 { raw: "..." } 会让消费方
+        // 以为拿到了结构化数据,而它其实是一段非法 JSON
+        parsedArgs = undefined;
+      }
+
+      const raw = call.name.startsWith("git_")
         ? gitContext
           ? await executeGitTool(call, gitContext)
           : {
@@ -500,6 +515,12 @@ export async function runAgent({
                 "尚未连接 Git 仓库,无法使用仓库工具。请先到「集成」页连接 GitHub。",
             }
         : await executeTool(call, toolContext);
+
+      const result: ToolResult = {
+        ...raw,
+        ...(parsedArgs === undefined ? {} : { args: parsedArgs }),
+        durationMs: Date.now() - startedTool,
+      };
       results.push(result);
       messages.push({
         role: "tool",

@@ -49,6 +49,7 @@
 | `0026_platform_models.sql` | 20260804212457 | platform_models |
 | `0027_agent_runs_and_steps.sql` | 20260805… | agent_runs_and_steps |
 | `0028_memories.sql` | 20260807… | memories |
+| `0029_agent_steps_truncation_facts.sql` | 20260805… | agent_steps_truncation_facts |
 
 ### 备注 A：0005 在账本里没有记录
 
