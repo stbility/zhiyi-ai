@@ -23,12 +23,24 @@ import { describe, expect, it } from "vitest";
  * 函数、列级授权。它能挡住「漏了一整条迁移」和「策略集合漂移」这两类,
  * 挡不住语法错误和依赖顺序问题。
  *
- * 真正的验证仍然是拿一个全新的 PostgreSQL 跑一遍 supabase/migrations/
- * 再和生产库 diff。那需要开临时数据库(有成本),不在这个测试的范围内。
- * 把这一点写在这里,是为了不让人误以为「这个测试绿了 = 迁移链没问题」。
+ * 真实重放现在**在 CI 里跑**:.github/workflows/ci.yml 起一个 postgres:16
+ * 服务容器,scripts/check-migrations.sh 从空库把 migrations/ 全量应用一遍,
+ * 再和同一份期望清单 diff。开发机上没有 Docker 也没有 PostgreSQL,
+ * 所以这件事在本机做不到 —— 而做不到,正是漏掉整条 0012 没被发现的原因。
+ *
+ * 这个测试仍然保留,理由是它**快**:本机改迁移时秒级反馈,
+ * 不必等一轮 CI。两者用的是同一份期望清单,不会各说各的。
  */
 
 const DIR = resolve(__dirname, "../../supabase/migrations");
+
+/** 期望清单与 scripts/check-migrations.sh 共用,不在两处各写一份 */
+function 读清单(name: string): string[] {
+  return readFileSync(resolve(__dirname, "../../supabase/test", name), "utf8")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
 
 /** 按文件名排序重放 —— 与 Supabase 应用迁移的顺序一致 */
 const FILES = readdirSync(DIR)
@@ -78,106 +90,22 @@ function finalIndexes(): Set<string> {
 }
 
 /**
- * 生产库快照。取自 2026-08-05 的
+ * 生产库快照 —— **与 CI 里那个真实重放用的是同一份文件**。
+ *
+ * 事实只能有一处。分成两份的话,静态门禁和 CI 会各说各的,
+ * 而「两边都绿」会变成一种毫无意义的安心。
+ *
+ * 取自 2026-08-05 的
  *   select policyname from pg_policies where schemaname='public'
  *
  * 快照要跟着迁移一起改:改了策略就更新这里,两边对不上就是漂移。
  * 手工维护看着笨,但它把「生产是什么样」这件事**写进了仓库** ——
  * 在此之前,这个事实只存在于生产库里,谁都验证不了。
  */
-const 生产策略 = [
-  "ai_model_exclusions_delete_admin",
-  "ai_model_exclusions_insert_admin",
-  "ai_model_exclusions_select_member",
-  "ai_model_exclusions_update_admin",
-  "ai_models_delete_admin",
-  "ai_models_insert_admin",
-  "ai_models_select_member",
-  "ai_models_update_admin",
-  "ai_providers_delete_admin",
-  "ai_providers_insert_admin",
-  "ai_providers_select_member",
-  "ai_providers_update_admin",
-  "audit_logs_select_member",
-  "conversation_attachments_own",
-  "conversations_own",
-  "git_installations_delete_admin",
-  "git_installations_insert_admin",
-  "git_installations_select_member",
-  "git_installations_update_admin",
-  "integrations_delete_admin",
-  "integrations_insert_admin",
-  "integrations_select_member",
-  "integrations_update_admin",
-  "mcp_access_tokens_delete_admin",
-  "mcp_access_tokens_insert_admin",
-  "mcp_access_tokens_select_member",
-  "mcp_access_tokens_update_admin",
-  "memberships_delete_admin",
-  "memberships_insert_allowed",
-  "memberships_select_member",
-  "memberships_update_admin",
-  "message_feedback_delete_own",
-  "message_feedback_insert_own",
-  "message_feedback_select_member",
-  "message_feedback_update_own",
-  "messages_own",
-  "organizations_delete_owner",
-  "organizations_insert_self",
-  "organizations_select_visible",
-  "organizations_update_admin",
-  "platform_models_select_authenticated",
-  "profiles_insert_self",
-  "profiles_select_visible",
-  "profiles_update_self",
-  "workspace_files_delete_member",
-  "workspace_files_insert_member",
-  "workspace_files_select_member",
-  "workspace_files_update_member",
-  "workspaces_delete_admin",
-  "workspaces_insert_member",
-  "workspaces_select_member",
-  "workspaces_update_member",
-];
+const 生产策略 = 读清单("expected-policies.txt");
 
 /** 同上,取自 pg_indexes,排除主键与唯一约束自动生成的那些 */
-const 生产索引 = [
-  "ai_model_exclusions_org_idx",
-  "ai_models_org_idx",
-  "ai_models_provider_idx",
-  "ai_providers_created_by_idx",
-  "ai_providers_org_idx",
-  "audit_logs_actor_idx",
-  "audit_logs_org_created_idx",
-  "conversation_attachments_conversation_idx",
-  "conversation_attachments_organization_idx",
-  "conversations_org_channel_created_idx",
-  "conversations_organization_idx",
-  "conversations_user_idx",
-  "conversations_workspace_idx",
-  "git_installations_connected_by_idx",
-  "git_installations_organization_idx",
-  "integrations_created_by_idx",
-  "integrations_organization_idx",
-  "mcp_access_tokens_created_by_idx",
-  "mcp_access_tokens_organization_idx",
-  "memberships_org_idx",
-  "memberships_user_idx",
-  "message_feedback_created_by_idx",
-  "message_feedback_message_idx",
-  "message_feedback_organization_idx",
-  "messages_conversation_idx",
-  "messages_organization_idx",
-  "messages_provider_idx",
-  "organizations_created_by_idx",
-  "platform_models_tier_idx",
-  "rate_limits_window_idx",
-  "workspace_files_conversation_idx",
-  "workspace_files_organization_idx",
-  "workspace_files_workspace_idx",
-  "workspaces_created_by_idx",
-  "workspaces_organization_idx",
-];
+const 生产索引 = 读清单("expected-indexes.txt");
 
 describe("迁移编号连续", () => {
   it("没有断号", () => {
@@ -229,4 +157,24 @@ describe("守卫自己没有空转", () => {
     expect(finalPolicies().size).toBeGreaterThan(40);
     expect(finalIndexes().size).toBeGreaterThan(25);
   });
+});
+
+describe("迁移清单覆盖每一个文件", () => {
+  /**
+   * 清单(MANIFEST.md)把「仓库文件 ↔ 生产账本」这层对应关系写进仓库。
+   * 在此之前它只存在于生产库里,谁都验证不了 —— 而正是这个缺口
+   * 让整条 0012 只存在于生产、从未进过仓库。
+   *
+   * 清单漏记一个文件,就等于这层对应关系又出现了一个盲区。
+   */
+  const MANIFEST = readFileSync(
+    resolve(__dirname, "../../supabase/migrations/MANIFEST.md"),
+    "utf8",
+  );
+
+  for (const f of FILES) {
+    it(`${f} 在清单里`, () => {
+      expect(MANIFEST, `${f} 没有记进 MANIFEST.md`).toContain(f);
+    });
+  }
 });

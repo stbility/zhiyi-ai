@@ -1,0 +1,57 @@
+name: CI
+
+# 此前**完全没有 CI** —— pnpm verify 只在本机跑过。
+#
+# 这正是「生产验收证据不足」的根子之一:每一次「门禁全过」都只是
+# 某台机器上某一刻的结果,没有任何人能独立复现。而本机跑不动的东西
+# (比如真起一个 PostgreSQL 重放迁移)就永远不会被跑。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    name: 类型 · 规范 · 测试 · 构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # 不过滤输出。曾经用 grep '^src/' 过滤过 typecheck 的结果,
+      # 于是 tests/ 下的类型错误被全部滤掉 —— 本机全绿,CI 报 16 个。
+      - run: pnpm verify
+
+  migrations:
+    name: 真实 PostgreSQL 迁移重放
+    runs-on: ubuntu-latest
+
+    # 官方 postgres 镜像。这一步做的是本机做不到的事:
+    # 开发机上没有 Docker 也没有 PostgreSQL,所以「从空库重放一遍」
+    # 这件事在本机永远无法验证 —— 而漏掉整条 0012 正是因此没被发现。
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        # 不等健康检查就连,会撞上「数据库还没起来」的偶发失败,
+        # 而那种失败看起来像迁移有问题
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: 从空库重放全部迁移并核对最终状态
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: bash scripts/check-migrations.sh
