@@ -16,7 +16,7 @@ function test(name: string, fn: TestFn) {
   tests.push({ name, fn });
 }
 
-function assert(cond: boolean, hint = "assertion failed") {
+function assert(cond: unknown, hint = "assertion failed") {
   if (!cond) throw new Error(hint);
 }
 
