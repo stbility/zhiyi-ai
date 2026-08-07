@@ -28,7 +28,8 @@ export default async function BillingPage() {
   const entitlements = await getMyEntitlements();
 
   const planId = entitlements?.planId ?? "free";
-  const plan = PLANS.find((p) => p.id === planId) ?? PLANS[0];
+  // PLANS[0] 恒为 free,兜底不会 miss —— 用 ! 断言类型而非运行时依赖
+  const plan = PLANS.find((p) => p.id === planId) ?? PLANS[0]!;
 
   const turnsQuota = entitlements ? quotaOf(entitlements, "monthly_agent_turns") : null;
   const workflowsQuota = entitlements

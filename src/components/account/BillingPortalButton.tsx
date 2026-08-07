@@ -31,12 +31,14 @@ export function BillingPortalButton({
     setError(null);
     try {
       const endpoint = upgradePriceId ? "/api/stripe/checkout" : "/api/stripe/portal";
-      const body = upgradePriceId ? { priceId: upgradePriceId } : undefined;
 
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: body ? JSON.stringify(body) : undefined,
+        // exactOptionalPropertyTypes:不传 undefined body,分支构造
+        ...(upgradePriceId
+          ? { body: JSON.stringify({ priceId: upgradePriceId }) }
+          : {}),
       });
       const data = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
       if (!res.ok || !data.url) {
