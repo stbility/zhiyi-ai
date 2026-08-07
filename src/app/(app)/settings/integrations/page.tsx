@@ -7,6 +7,7 @@ import {
 } from "@/components/app/IntegrationManager";
 import { GitConnection } from "@/components/app/GitConnection";
 import { McpTokens, type McpTokenRow } from "@/components/app/McpTokens";
+import { McpServersCard, type McpServerRow } from "@/components/app/McpServersCard";
 import { isEncryptionAvailable } from "@/lib/crypto/secret-box";
 import {
   getAppSlug,
@@ -50,6 +51,31 @@ async function loadMcpTokens(organizationId: string): Promise<McpTokenRow[]> {
     createdAt: row.created_at as string,
     lastUsedAt: (row.last_used_at as string | null) ?? null,
     revokedAt: (row.revoked_at as string | null) ?? null,
+  }));
+}
+
+async function loadMcpServers(organizationId: string): Promise<McpServerRow[]> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return [];
+
+  const { data } = await supabase
+    .from("mcp_servers")
+    .select(
+      "id, name, url, auth_token_masked, enabled, timeout_ms, last_tested_at, last_test_ok, last_test_error",
+    )
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false });
+
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    name: row.name as string,
+    url: row.url as string,
+    credentialMasked: row.auth_token_masked as string,
+    enabled: (row.enabled as boolean | null) ?? true,
+    timeoutMs: (row.timeout_ms as number) ?? 15_000,
+    lastTestedAt: (row.last_tested_at as string | null) ?? null,
+    lastTestOk: (row.last_test_ok as boolean | null) ?? null,
+    lastTestError: (row.last_test_error as string | null) ?? null,
   }));
 }
 
@@ -199,6 +225,7 @@ export default async function IntegrationsPage({
   }
 
   const integrations = await loadIntegrations(org.id);
+  const mcpServers = await loadMcpServers(org.id);
   const canManage = org.role === "owner" || org.role === "admin";
 
   // App 未配置时不生成任何可点的入口 —— 给一个点了必然失败的按钮,
@@ -270,6 +297,12 @@ export default async function IntegrationsPage({
         tokens={mcpTokens}
         canManage={canManage}
         endpoint={`${getSiteUrl()}/api/mcp`}
+      />
+
+      <McpServersCard
+        organizationId={org.id}
+        servers={mcpServers}
+        canManage={canManage}
       />
 
       <IntegrationManager

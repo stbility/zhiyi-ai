@@ -175,6 +175,8 @@ export async function testGitAccess(
   _prev: GitTestState,
   _formData: FormData,
 ): Promise<GitTestState> {
+  void _prev; // useActionState(prev, formData) 签名占位,本 action 不需要 prev
+  void _formData; // 同上;所有输入走 getMyOrganizations / git_installations
   const orgs = await getMyOrganizations();
   const org = orgs.find((o) => o.role === "owner" || o.role === "admin");
   if (!org) return { error: "需要组织管理员才能测试仓库连接。" };
