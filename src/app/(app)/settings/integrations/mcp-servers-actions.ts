@@ -6,6 +6,7 @@ import { z } from "zod";
 import { encryptSecret, maskApiKey } from "@/lib/crypto/secret-box";
 import { validateServerUrl, mcpInitialize } from "@/lib/mcp/client";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logger } from "@/lib/log";
 
 /**
@@ -133,18 +134,36 @@ export async function testMcpServer(
   if (!supabase) return { error: "认证服务未配置。" };
 
   // 密文只走 service_role 取 —— 但授权判断在此之前已完成:
-  // 用用户身份客户端先读这一行,读得到就说明 RLS 认可访问权
+  // 用用户身份客户端先读这一行(**只取可见列**:0030 迁移列级 REVOKE 后,
+  // authenticated 对 auth_token_cipher 没有 SELECT 权限,select 它会 42501,
+  // 测试连接会永远失败),读得到就说明 RLS 认可访问权
   const { data: row } = await supabase
     .from("mcp_servers")
-    .select("name, url, auth_token_cipher, timeout_ms")
+    .select("name, url, timeout_ms")
     .eq("id", parsed.data.id)
     .eq("organization_id", parsed.data.organizationId)
     .maybeSingle();
   if (!row) return { error: "找不到这个 server,或你没有权限访问它。" };
 
+  // 密文列 authenticated 不可读 —— 必须由 service_role(admin)客户端取。
+  // 授权判断已在上一步完成:用户身份读到了可见列 = RLS 认可。
+  const admin = createSupabaseAdminClient();
+  if (!admin) {
+    return { error: "服务端密钥未配置,无法读取令牌密文。" };
+  }
+  const { data: secret } = await admin
+    .from("mcp_servers")
+    .select("auth_token_cipher")
+    .eq("id", parsed.data.id)
+    .eq("organization_id", parsed.data.organizationId)
+    .maybeSingle();
+  if (!secret?.auth_token_cipher) {
+    return { error: "令牌解密失败。请删除后重新登记。" };
+  }
+
   let token: string;
   try {
-    token = await decryptCipher(row.auth_token_cipher as string);
+    token = await decryptCipher(secret.auth_token_cipher as string);
   } catch {
     return { error: "令牌解密失败。请删除后重新登记。" };
   }
