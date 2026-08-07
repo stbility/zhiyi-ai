@@ -52,6 +52,7 @@
 | `0029_agent_steps_truncation_facts.sql` | 20260805… | agent_steps_truncation_facts |
 | `0030_mcp_servers.sql` | 20260807… | mcp_servers |
 | `0031_skills.sql` | 20260807… | skills, skill_files |
+| `0032_alert_cleanup_fk_indexes.sql` | 20260807… | alert_cleanup_fk_indexes |
 
 ### 备注 A：0005 在账本里没有记录
 
