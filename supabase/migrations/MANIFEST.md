@@ -53,6 +53,9 @@
 | `0030_mcp_servers.sql` | 20260807… | mcp_servers |
 | `0031_skills.sql` | 20260807… | skills, skill_files |
 | `0032_alert_cleanup_fk_indexes.sql` | 20260807… | alert_cleanup_fk_indexes |
+| `0033_stripe_customers_and_subscriptions.sql` | 20260807… | stripe_customers, subscriptions |
+| `0034_entitlements.sql` | 20260807… | entitlements, get_entitlements |
+| `0035_usage_metering.sql` | 20260807… | usage_metering, bump_usage, get_monthly_usage |
 
 ### 备注 A：0005 在账本里没有记录
 
