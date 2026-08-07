@@ -39,6 +39,7 @@ export async function runAgentTurn({
   history,
   signal,
   budgetMs,
+  resumeRunId,
 }: {
   supabase: SupabaseClient;
   userId: string;
@@ -54,6 +55,11 @@ export async function runAgentTurn({
    * 这里不写秒数 —— 换 Vercel 计划只需要改路由上那**一个**数。
    */
   budgetMs: number;
+  /**
+   * 续跑上一轮被中断的运行。传了它,userMessage 会追加一段
+   * 「之前已完成的步骤」摘要 —— 模型从断点接着干,而不是从头再来。
+   */
+  resumeRunId?: string | undefined;
 }): Promise<Response> {
   // 工作区真正用到时才建,而且只建一次。
   // 无条件建的话,模型一个文件都没写的运行也会留下一个空工作区。
@@ -179,10 +185,85 @@ export async function runAgentTurn({
         modelId: selected.modelId,
       });
 
+      // 把 runId 推给前端。前端拿到它,才知道撞上限后该带哪个 run 续跑。
+      // journal 开不出来时没有 runId —— 那种情况本来就不承诺续跑能力。
+      if (journal) send("run", { runId: journal.runId });
+
+      // 续跑:把上一轮已经完成的步骤摘出来,追加进这一轮的输入。
+      //
+      // 模型看到「这一步已经做过了、结果是什么」,就会接着往下做,
+      // 而不是从头再来一遍 —— 从头再来的话,读过的文件要重读、
+      // 写过的东西可能被重写,而时间预算并不因此变多。
+      //
+      // 摘要的来源是检查点(agent_steps),不是浏览器里的临时状态:
+      // 检查点是落过库的,浏览器刷新了它还在 —— 这正是「能续」的定义。
+      let resumeContext = "";
+      if (resumeRunId) {
+        const { data: prevSteps } = await supabase
+          .from("agent_steps")
+          .select("step_index, tool_name, result_preview")
+          .eq("run_id", resumeRunId)
+          .order("step_index", { ascending: true })
+          .limit(100);
+
+        if (prevSteps && prevSteps.length > 0) {
+          const lines = (prevSteps as {
+            step_index: number;
+            tool_name: string | null;
+            result_preview: string | null;
+          }[]).map(
+            (s) =>
+              `- 步骤 ${Math.floor(s.step_index / 100) + 1} · ${
+                s.tool_name ?? "模型回复"
+              }: ${(s.result_preview ?? "").slice(0, 500)}`,
+          );
+          resumeContext =
+            `\n\n【续跑上下文 —— 以下步骤在此前的运行中已完成,不要重做,直接继续】\n` +
+            lines.join("\n");
+        }
+      }
+      // 召回本组织的记忆,注入这一轮的上下文。
+      //
+      // 这是「沉淀为记忆」的消费端:用户确认过的记忆在这里被带进任务,
+      // 模型据此给出更符合用户偏好的回答 —— 记忆闭环到此闭合。
+      // 召回失败不阻断运行:没有记忆可用的智能体仍然能干活,
+      // 只是不那么「懂你」而已。
+      let memoryBlock = "";
+      try {
+        const { recallMemories, touchMemory } = await import(
+          "@/lib/db/memories"
+        );
+        const memories = await recallMemories(supabase, organizationId, 8);
+        if (memories.length > 0) {
+          memoryBlock =
+            `\n\n【你的记忆 —— 用户确认过的事实与偏好,回答时请遵循】\n` +
+            memories
+              .map(
+                (m) =>
+                  `- [${m.category}] ${m.content}${m.confidence !== null ? ` (置信度 ${Math.round(m.confidence * 100)}%)` : ""}`,
+              )
+              .join("\n");
+          // 异步点亮最近使用时间,让召回按使用频率自适应 —— 不阻塞本次运行
+          void Promise.all(
+            memories.map((m) => touchMemory(supabase, m.id)),
+          ).catch(() => undefined);
+        }
+      } catch (e) {
+        logger.warn(
+          { org: organizationId, err: e instanceof Error ? e.message : String(e) },
+          "记忆召回失败,本轮不带记忆运行",
+        );
+      }
+
+      const effectiveUserMessage =
+        resumeContext || memoryBlock
+          ? `${userMessage}${resumeContext}${memoryBlock}`
+          : userMessage;
+
       try {
         const outcome = await runAgent({
           model: selected,
-          userMessage,
+          userMessage: effectiveUserMessage,
           history,
           toolContext,
           gitContext,

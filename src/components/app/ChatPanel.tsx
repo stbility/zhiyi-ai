@@ -117,6 +117,8 @@ interface Turn {
    * 是编的;而「write_file(src/app.tsx) 已写入 1240 字符」是发生过的事。
    */
   tools?: { name: string; ok: boolean; content: string }[];
+  /** 撞上时间上限且可续跑。显示「继续运行」按钮 */
+  resumable?: boolean;
   /** 上下文被裁剪的说明 */
   trimming?: string;
   /** 联网检索的说明 */
@@ -379,6 +381,10 @@ export function ChatPanel({
   /** 桌面端历史栏是否展开。收起后输出区能多出 224px 宽度 */
   const [historyOpen, setHistoryOpen] = useState(true);
 
+  // 智能体续跑。上一轮撞上时间上限后,前端记住 runId,
+  // 用户点「继续运行」时带着它重发 —— 服务端从检查点续跑。
+  const resumeRef = useRef<string | null>(null);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -417,7 +423,17 @@ export function ChatPanel({
 
   async function send(e: FormEvent) {
     e.preventDefault();
-    const content = draft.trim();
+    await submitTurn(draft.trim(), undefined);
+  }
+
+  /** 智能体撞上时间上限后,点「继续运行」从检查点续跑 */
+  async function resumeTurn() {
+    const runId = resumeRef.current;
+    if (!runId || streaming) return;
+    await submitTurn("继续上次被中断的任务。", runId);
+  }
+
+  async function submitTurn(content: string, resumeRunId: string | undefined) {
     if (content === "" || streaming) return;
 
     const [providerId, modelId] = selected.split("::");
@@ -463,6 +479,7 @@ export function ChatPanel({
           providerId,
           model: modelId,
           content,
+          ...(resumeRunId ? { resumeRunId } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(webSearch ? { webSearch: true } : {}),
         }),
@@ -533,8 +550,9 @@ export function ChatPanel({
           if (event === "meta" && "conversationId" in payload) {
             setConversationId(payload.conversationId);
             if (payload.fallback) patchAssistant({ fallback: payload.fallback });
-
-
+          } else if (event === "run" && "runId" in payload) {
+            // 智能体这一轮运行的 id。撞上时间上限后,用它续跑。
+            resumeRef.current = (payload as { runId: string }).runId;
           } else if (event === "delta" && "text" in payload) {
             text += payload.text;
             patchAssistant({ content: text });
@@ -572,6 +590,14 @@ export function ChatPanel({
             }
           } else if (event === "error" && "message" in payload) {
             patchAssistant({ error: payload.message });
+            // 撞上「时间上限」且知道 runId —— 这是**能续**的失败。
+            // 界面据此显示「继续运行」按钮(见下方渲染)。
+            if (
+              resumeRef.current &&
+              (payload.message as string).includes("时间上限")
+            ) {
+              patchAssistant({ resumable: true });
+            }
           }
         }
       }
@@ -926,6 +952,23 @@ export function ChatPanel({
                     那个模型,查得到,只是不再往回答旁边贴一句解释。 */}
                 {turn.error && (
                   <p className="text-error text-label">{turn.error}</p>
+                )}
+                {turn.resumable && (
+                  <div className="mt-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={resumeTurn}
+                      disabled={streaming}
+                    >
+                      <Icon name="refresh" size={13} />
+                      继续运行
+                    </Button>
+                    <span className="text-fg-tertiary text-label ml-2">
+                      上次运行撞上了平台的时间上限,已保存检查点,可以接着跑。
+                    </span>
+                  </div>
                 )}
 
                 {/* 用户自己写的长提示词同样需要复制 —— 常要改一版重发 */}

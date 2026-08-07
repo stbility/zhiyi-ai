@@ -49,6 +49,15 @@ export const turnBodySchema = z.object({
   model: z.string().trim().min(1, "请选择模型"),
   content: z.string().trim().min(1, "请输入内容").max(32_000, "内容过长"),
   /**
+   * 续跑上一轮被时间上限中断的智能体运行。
+   *
+   * 传了它,content 会被追加一段「之前已完成的步骤」摘要,
+   * 然后开一个新的 300 秒窗口继续跑 —— 这是突破 Vercel 300s
+   * 上限的方式:不是把单次请求拉长,而是把任务切成多个窗口,
+   * 每个窗口的起点是上一个窗口留下的检查点。
+   */
+  resumeRunId: z.string().uuid().optional(),
+  /**
    * 本轮是否联网检索。
    *
    * 由用户显式开启,而不是让模型自己决定 —— 模型判断「要不要搜」并不可靠,
@@ -134,6 +143,8 @@ export interface TurnContext {
   readonly model: string;
   /** 用户自己打的那句话,不含附件与检索材料 */
   readonly content: string;
+  /** 续跑上一轮被中断的运行。没传为 null */
+  readonly resumeRunId: string | null;
   /** 交给模型的这一轮输入:附件 + 检索材料 + 用户原话 */
   readonly userMessage: string;
   /**
@@ -538,6 +549,7 @@ export async function preflightTurn(
       apiKeyCipher,
       model,
       content,
+      resumeRunId: parsed.data.resumeRunId ?? null,
       userMessage,
       history: built.messages,
       messages: [...built.messages, { role: "user" as const, content: userMessage }],
