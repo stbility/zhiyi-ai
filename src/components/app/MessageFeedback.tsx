@@ -10,6 +10,10 @@ import {
   submitFeedback,
   type FeedbackState,
 } from "@/app/(app)/assistant/feedback-actions";
+import {
+  memorizeMessage,
+  type MemoryActionState,
+} from "@/app/(app)/assistant/memory-actions";
 
 /**
  * 回答下方的反馈控件。
@@ -26,7 +30,13 @@ export function MessageFeedback({ messageId }: { messageId: string }) {
     submitFeedback,
     {},
   );
+  const [memState, memAction] = useActionState<MemoryActionState, FormData>(
+    memorizeMessage,
+    {},
+  );
   const [editing, setEditing] = useState(false);
+  /** 沉淀为记忆的分类选择是否展开 */
+  const [memorizing, setMemorizing] = useState(false);
   /** 本地记住已提交的判定,让按钮当场变成选中态 —— 不必等整页刷新 */
   const [chosen, setChosen] = useState<string | null>(null);
 
@@ -106,11 +116,82 @@ export function MessageFeedback({ messageId }: { messageId: string }) {
           <Icon name="edit" size={13} />
         </button>
 
+        {/* 沉淀为记忆。与赞/踩/编辑同一条操作行,同一套视觉 ——
+            低频动作,不该占重视觉;语义由 aria-label 与 title 承担。
+            这是五条闭环的最后一环:确认过的内容存成记忆,后续对话召回。
+            memory 图标与导航里的「记忆」同源,语义一致。 */}
+        <button
+          type="button"
+          onClick={() => setMemorizing((v) => !v)}
+          aria-label="沉淀为记忆"
+          title="把这条回答的内容记下来,后续对话会召回它"
+          aria-pressed={memorizing}
+          className={cn(
+            "inline-flex cursor-pointer items-center transition-colors duration-[var(--duration-hover)] ease-standard",
+            memorizing ? "text-brand" : "text-fg-tertiary hover:text-fg-secondary",
+          )}
+        >
+          <Icon name="memory" size={13} />
+        </button>
+
         {state.ok && <span className="text-success text-label">{state.ok}</span>}
         {state.error && (
           <span className="text-error text-label">{state.error}</span>
         )}
       </div>
+
+      {memorizing && (
+        <form action={memAction} className="flex flex-col gap-2">
+          <input type="hidden" name="messageId" value={messageId} />
+          <p className="text-fg-tertiary text-label">
+            沉淀为记忆 —— 后续对话会召回它。给这条记忆分个类:
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                ["fact", "事实"],
+                ["preference", "偏好"],
+                ["convention", "约定"],
+                ["knowledge", "知识"],
+                ["persona", "人设"],
+              ] as const
+            ).map(([value, label]) => (
+              <label
+                key={value}
+                className="bg-surface-2 text-fg font-zh text-label hover:border-border-focus flex cursor-pointer items-center gap-1.5 rounded-control border-border-default border px-3 py-1.5"
+              >
+                <input
+                  type="radio"
+                  name="category"
+                  value={value}
+                  defaultChecked={value === "fact"}
+                  className="accent-[var(--color-brand)]"
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <SubmitButton size="sm" pendingText="保存中…">
+              记住
+            </SubmitButton>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setMemorizing(false)}
+            >
+              取消
+            </Button>
+          </div>
+          {memState.ok && (
+            <span className="text-success text-label">{memState.ok}</span>
+          )}
+          {memState.error && (
+            <span className="text-error text-label">{memState.error}</span>
+          )}
+        </form>
+      )}
 
       {editing && (
         <form action={action} className="flex flex-col gap-2">

@@ -54,11 +54,11 @@ export const logger = pino({
  */
 export function logDbFailure(
   operation: string,
-  error: { message: string; code?: string | undefined },
+  error: { message: string; code?: string | undefined } | null | undefined,
   context: Record<string, unknown> = {},
 ): void {
   logger.error(
-    { operation, dbError: error.message, dbCode: error.code, ...context },
+    { operation, dbError: error?.message, dbCode: error?.code, ...context },
     "数据库写入失败",
   );
 }

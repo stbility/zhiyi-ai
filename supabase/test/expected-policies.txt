@@ -35,6 +35,10 @@ message_feedback_delete_own
 message_feedback_insert_own
 message_feedback_select_member
 message_feedback_update_own
+memories_delete_own
+memories_insert_own
+memories_select_member
+memories_update_own
 messages_own
 organizations_delete_owner
 organizations_insert_self
