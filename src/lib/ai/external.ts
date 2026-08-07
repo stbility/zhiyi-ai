@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { loadSkill, type SkillSummary } from "@/lib/ai/skills";
 import { decryptSecret } from "@/lib/crypto/secret-box";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { McpClientToolContext } from "@/lib/ai/tools";
 import type { McpServerConfig } from "@/lib/mcp/client";
 import { validateServerUrl } from "@/lib/mcp/client";
@@ -26,9 +27,11 @@ export async function buildExternalContext(
   supabase: SupabaseClient,
   organizationId: string,
 ): Promise<McpClientToolContext | undefined> {
-  // 先拿启用的 server(不含密文列)。查不到 = 没配 = 无外部能力,
-  // 返回 undefined,agent 行为与旧版完全一致。
-  const { data: servers } = await supabase
+  // 0030 对 auth_token_cipher 做了列级 REVOKE SELECT FROM authenticated,
+  // 用户身份客户端查不到密文列。走两步:
+  // 1. 用户身份客户端查可见列(RLS 验权,组织成员才进)
+  // 2. admin 客户端取 auth_token_cipher(解密后装配 serverMap)
+  const { data: publicRows } = await supabase
     .from("mcp_servers")
     .select("id, name, url, auth_token_cipher, timeout_ms")
     .eq("organization_id", organizationId)
@@ -42,47 +45,58 @@ export async function buildExternalContext(
     .eq("enabled", true)
     .order("name");
 
-  const hasServers = Array.isArray(servers) && servers.length > 0;
+  const hasServers = Array.isArray(publicRows) && publicRows.length > 0;
   const hasSkills = Array.isArray(skillRows) && skillRows.length > 0;
-  // 两者都没有:没有外部能力,不装配。agent 行为与旧版完全一致
   if (!hasServers && !hasSkills) return undefined;
 
+  // 两步取密文:用户身份查可见列 → admin 取 auth_token_cipher → 解密装配
+  // (0030 列级 REVOKE 后 authenticated 不能 SELECT auth_token_cipher)
   const serverMap = new Map<string, McpServerConfig>();
-  for (const row of servers ?? []) {
-    const name = row.name as string;
-    const url = row.url as string;
-
-    const urlProblem = validateServerUrl(url);
-    if (urlProblem) {
-      logger.warn(
-        { organizationId, server: name, urlProblem },
-        "跳过 MCP server:URL 不合法",
-      );
-      continue;
+  if (hasServers) {
+    const admin = createSupabaseAdminClient();
+    if (!admin) {
+      logger.warn({ organizationId }, "跳过所有 MCP server:无法创建 admin 客户端");
+      return undefined;
     }
-
-    let token: string | null = null;
-    try {
-      token = decryptSecret(row.auth_token_cipher as string);
-    } catch (e) {
-      logger.warn(
-        {
-          organizationId,
-          server: name,
-          err: e instanceof Error ? e.message : "unknown",
-        },
-        "跳过 MCP server:令牌解密失败",
-      );
-      continue;
+    const serverIds = (publicRows ?? []).map((r) => r.id as string);
+    const { data: cipherRows } = await admin
+      .from("mcp_servers")
+      .select("id, auth_token_cipher")
+      .in("id", serverIds);
+    const cipherMap = new Map(
+      (cipherRows ?? []).map((r) => [r.id as string, r.auth_token_cipher as string]),
+    );
+    for (const row of publicRows ?? []) {
+      const name = row.name as string;
+      const url = row.url as string;
+      const urlProblem = validateServerUrl(url);
+      if (urlProblem) {
+        logger.warn({ organizationId, server: name, urlProblem }, "跳过 MCP server:URL 不合法");
+        continue;
+      }
+      const cipher = cipherMap.get(row.id as string);
+      if (!cipher) {
+        logger.warn({ organizationId, server: name }, "跳过 MCP server:admin 查不到密文");
+        continue;
+      }
+      let token: string | null = null;
+      try {
+        token = decryptSecret(cipher);
+      } catch (e) {
+        logger.warn(
+          { organizationId, server: name, err: e instanceof Error ? e.message : "unknown" },
+          "跳过 MCP server:令牌解密失败",
+        );
+        continue;
+      }
+      serverMap.set(name, {
+        id: row.id as string,
+        name,
+        url,
+        authToken: token,
+        timeoutMs: (row.timeout_ms as number) ?? 15000,
+      });
     }
-
-    serverMap.set(name, {
-      id: row.id as string,
-      name,
-      url,
-      authToken: token,
-      timeoutMs: (row.timeout_ms as number) ?? 15000,
-    });
   }
 
   const skills: SkillSummary[] = (skillRows ?? []).map((r) => ({
