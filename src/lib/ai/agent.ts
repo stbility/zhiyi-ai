@@ -23,10 +23,14 @@ import { GIT_TOOLS, executeGitTool, type GitToolContext } from "@/lib/ai/git-too
 import {
   AGENT_SYSTEM_PROMPT,
   FILE_TOOLS,
+  executeExternalTool,
   executeTool,
+  type McpClientToolContext,
   type ToolContext,
+  type ToolDefinition,
   type ToolResult,
 } from "@/lib/ai/tools";
+import { mcpListTools, mcpToolName } from "@/lib/mcp/client";
 
 /**
  * 智能体运行循环。
@@ -200,6 +204,7 @@ export async function runAgent({
   history,
   toolContext,
   gitContext,
+  externalContext,
   signal,
   limits,
   reporter,
@@ -226,11 +231,77 @@ export async function runAgent({
    * 给一个必然失败的工具,模型会反复尝试并把步数耗光。
    */
   gitContext?: GitToolContext | undefined;
+  /**
+   * 外部能力上下文:登记的 MCP server + 技能库。
+   *
+   * 未提供时行为与以前完全一致 —— 不注入任何 mcp__* / skill_* 工具。
+   * 提供时,启用的 server 的工具会被拉取并动态装配成
+   * mcp__<server>__<tool> 声明,技能库的 skill_list / skill_view 一并挂上。
+   */
+  externalContext?: McpClientToolContext | undefined;
   signal: AbortSignal;
   limits: AgentLimits;
   reporter?: AgentReporter;
 }): Promise<AgentOutcome> {
   const startedAt = Date.now();
+
+  // 外部工具装配:启用的 MCP server 的工具清单 + 技能库工具。
+  // 只装配一次 —— 每次循环都去拉外部 server 会白烧预算,
+  // 而且工具清单在这轮运行内不会变。
+  //
+  // server 拉取失败(网络/超时)时降级:该 server 的工具不注入,
+  // 但其余 server 与技能库照常 —— 一个坏 server 不该拖垮整轮。
+  // 失败原因不在这里报,模型调用那个工具时才会看到说明。
+  const externalToolDefs: ToolDefinition[] = [];
+  if (externalContext) {
+    for (const [serverName, cfg] of externalContext.servers) {
+      const listed = await mcpListTools(cfg);
+      if (!listed.ok) continue;
+      for (const t of listed.tools) {
+        externalToolDefs.push({
+          type: "function",
+          function: {
+            name: mcpToolName(serverName, t.name),
+            description: t.description,
+            parameters: t.inputSchema,
+          },
+        });
+      }
+    }
+    // 技能库工具:有 server 或技能库时都挂上 —— 空技能库也值得让模型
+    // 知道「skill_list 会告诉它没有」(观察结果,不是错误)
+    externalToolDefs.push(
+      {
+        type: "function",
+        function: {
+          name: "skill_list",
+          description:
+            "列出组织技能库里启用的技能(名称 + 一句话描述)。任务开始前先看有没有适用的技能。",
+          parameters: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "skill_view",
+          description:
+            "加载一个技能的完整内容(方法论、步骤、护栏、验收标准)与附件。技能与当前任务相关时用它,然后严格照技能执行。",
+          parameters: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "技能名(slug),如 weekly-report" },
+            },
+            required: ["name"],
+            additionalProperties: false,
+          },
+        },
+      },
+    );
+  }
 
   // 对话消息数组会在循环里不断追加(助手的工具请求 + 工具结果),
   // 所以用宽松类型 —— tool 角色不在 ChatMessage 的三种之内。
@@ -296,7 +367,10 @@ export async function runAgent({
           credentials: model.credentials,
           model: model.modelId,
           messages,
-          tools: gitContext ? [...FILE_TOOLS, ...GIT_TOOLS] : FILE_TOOLS,
+          tools: [
+            ...(gitContext ? [...FILE_TOOLS, ...GIT_TOOLS] : FILE_TOOLS),
+            ...externalToolDefs,
+          ],
           // 第一步强制动工具,之后放开。
           //
           // 「智能体」和「聊天助手」的分界线是产物落进工作区,而不是贴在
@@ -514,7 +588,18 @@ export async function runAgent({
               content:
                 "尚未连接 Git 仓库,无法使用仓库工具。请先到「集成」页连接 GitHub。",
             }
-        : await executeTool(call, toolContext);
+        : call.name.startsWith("mcp__") ||
+            call.name === "skill_list" ||
+            call.name === "skill_view"
+          ? externalContext
+            ? await executeExternalTool(call, externalContext)
+            : {
+                callId: call.id,
+                name: call.name,
+                ok: false,
+                content: "外部工具未装配。",
+              }
+          : await executeTool(call, toolContext);
 
       const result: ToolResult = {
         ...raw,

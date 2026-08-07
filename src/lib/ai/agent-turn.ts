@@ -9,6 +9,7 @@ import {
   type AgentModelOption,
 } from "@/lib/ai/agent";
 import { loadGitContext } from "@/lib/ai/git-tools";
+import { buildExternalContext } from "@/lib/ai/external";
 import { isPlatformProviderId } from "@/lib/ai/platform-models";
 import { openRunJournal } from "@/lib/ai/run-journal";
 import { logger } from "@/lib/log";
@@ -85,6 +86,10 @@ export async function runAgentTurn({
   // 交给模型,而不是给了再拒绝:给一个必然失败的工具,模型会反复尝试
   // 并把有限的步数耗光。
   const gitContext = await loadGitContext(supabase, organizationId);
+
+  // 外部能力上下文:登记的 MCP server + 技能库。两者都没有时返回
+  // undefined,agent 行为与旧版完全一致(不注入任何外部工具)。
+  const externalContext = await buildExternalContext(supabase, organizationId);
 
   // 用户选的那一个服务商 + 模型。**不准备备用,也不自动换。**
   //
@@ -267,6 +272,7 @@ export async function runAgentTurn({
           history,
           toolContext,
           gitContext,
+          externalContext,
           signal,
           limits: { ...DEFAULT_LIMITS, budgetMs },
           reporter: {
