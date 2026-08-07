@@ -63,14 +63,15 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
     id: "4",
     label: "Tool Registry、Agent、工作流状态机、Worker",
     state: "partial",
-    missing: "工具注册与智能体循环已完成;工作流状态机与后台 Worker 未做",
+    missing:
+      "工具注册与智能体循环已完成;续跑(检查点摘要恢复,突破 300s 上限)已实现;工作流状态机与后台 Worker 未做",
   },
   {
     id: "5",
     label: "文件上传、解析、RAG、长期记忆",
     state: "partial",
     missing:
-      "文件夹上传、跨轮保留、上下文预算已完成;解析、RAG、长期记忆未做",
+      "文件夹上传、跨轮保留、上下文预算已完成;记忆沉淀闭环已实现(0028 memories 表 + 确认沉淀 + LLM Wiki 同步,代码已合入 main);解析、RAG、记忆管理页未做",
   },
   { id: "6", label: "Entitlement Service、Stripe 订阅", state: "todo" },
   {
