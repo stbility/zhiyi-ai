@@ -10,7 +10,10 @@ import {
 } from "@/lib/ai/agent";
 import { loadGitContext } from "@/lib/ai/git-tools";
 import { buildExternalContext } from "@/lib/ai/external";
-import { isPlatformProviderId } from "@/lib/ai/platform-models";
+import {
+  isPlatformProviderId,
+  platformCredentialsFor,
+} from "@/lib/ai/platform-models";
 import { openRunJournal } from "@/lib/ai/run-journal";
 import { logger } from "@/lib/log";
 import type { AgentStep } from "@/lib/ai/agent";
@@ -100,40 +103,56 @@ export async function runAgentTurn({
   // 两个不一样的模型名。从用户那一侧看,这和编造无法区分。
   //
   // 模型不可用就如实报错,让他自己换。这是他的选择,不是我们的。
-  const { data: providerRow } = await supabase
-    .from("ai_providers")
-    .select("kind, base_url, display_name, enabled")
-    .eq("id", providerId)
-    .eq("organization_id", organizationId)
-    .maybeSingle();
+  //
+  // 凭据装配分两支,与 /api/chat 同一个实现:
+  //   · 平台档(providerId 形如 platform:openai:https://…):ai_providers 里
+  //     没有行,密钥来自环境变量。必须走 platformCredentialsFor ——
+  //     授权判定(free_only、环境变量配没配、模型有没有下架)只有这一处。
+  //   · BYOK:查 ai_providers 行,RLS 保证只能读到自己组织的。
+  const credentials = isPlatformProviderId(providerId)
+    ? await platformCredentialsFor(supabase, organizationId, providerId, model)
+    : await (async () => {
+        const { data: providerRow } = await supabase
+          .from("ai_providers")
+          .select("kind, base_url, display_name, enabled")
+          .eq("id", providerId)
+          .eq("organization_id", organizationId)
+          .maybeSingle();
 
-  const credentials =
-    providerRow && providerRow.enabled !== false
-      ? await (async () => {
-          const cipher = await loadProviderCipher(providerId);
-          return cipher
-            ? {
-                kind: providerRow.kind as ProviderKind,
-                baseUrl: providerRow.base_url as string | null,
-                apiKeyCipher: cipher,
-              }
-            : null;
-        })()
-      : null;
+        if (!providerRow || providerRow.enabled === false) return null;
+
+        const cipher = await loadProviderCipher(providerId);
+        return cipher
+          ? {
+              kind: providerRow.kind as ProviderKind,
+              baseUrl: providerRow.base_url as string | null,
+              apiKeyCipher: cipher,
+            }
+          : null;
+      })();
 
   if (!credentials) {
     return new Response(
       JSON.stringify({
-        error:
-          "这个服务商当前不可用。请到「模型服务」确认它已启用且密钥有效。",
+        error: isPlatformProviderId(providerId)
+          ? "这个模型当前不可用。它属于平台免费档 —— 可能是服务端未配置密钥,或你的组织不在该档位。"
+          : "这个服务商当前不可用。请到「模型服务」确认它已启用且密钥有效。",
       }),
       { status: 503, headers: { "Content-Type": "application/json" } },
     );
   }
 
+  const providerName = isPlatformProviderId(providerId)
+    ? "智一 AI 免费档"
+    : ((await supabase
+        .from("ai_providers")
+        .select("display_name")
+        .eq("id", providerId)
+        .maybeSingle()).data?.display_name as string | undefined) ?? "";
+
   const selected: AgentModelOption = {
     providerId,
-    providerName: (providerRow?.display_name as string) ?? "",
+    providerName,
     modelId: model,
     credentials,
   };
@@ -202,29 +221,57 @@ export async function runAgentTurn({
       //
       // 摘要的来源是检查点(agent_steps),不是浏览器里的临时状态:
       // 检查点是落过库的,浏览器刷新了它还在 —— 这正是「能续」的定义。
+      //
+      // 续跑入口必须先校验这个 run **属于当前对话**且**确实可续**:
+      //   · conversation_id 必须等于本次请求的对话 —— 否则自己的 A 对话
+      //     步骤摘要会被注入 B 对话的上下文,跨对话数据混合。
+      //   · status 必须是被中断的、resumable 必须为 true —— 对 completed /
+      //     failed 的运行反复续跑会重放副作用(比如重复 git_propose_changes
+      //     开出第二个分支,正是 run-journal 里 resumable 注释点名的场景)。
+      //   RLS(agent_steps_own)已保证跨用户读不到,这里补的是同用户内的
+      //   对话与状态约束 —— 两层都不可省。
       let resumeContext = "";
       if (resumeRunId) {
-        const { data: prevSteps } = await supabase
-          .from("agent_steps")
-          .select("step_index, tool_name, result_preview")
-          .eq("run_id", resumeRunId)
-          .order("step_index", { ascending: true })
-          .limit(100);
+        const { data: run } = await supabase
+          .from("agent_runs")
+          .select("conversation_id, status, resumable")
+          .eq("id", resumeRunId)
+          .maybeSingle();
 
-        if (prevSteps && prevSteps.length > 0) {
-          const lines = (prevSteps as {
-            step_index: number;
-            tool_name: string | null;
-            result_preview: string | null;
-          }[]).map(
-            (s) =>
-              `- 步骤 ${Math.floor(s.step_index / 100) + 1} · ${
-                s.tool_name ?? "模型回复"
-              }: ${(s.result_preview ?? "").slice(0, 500)}`,
+        const canResume =
+          run &&
+          run.conversation_id === conversationId &&
+          run.status === "interrupted" &&
+          run.resumable === true;
+
+        if (canResume) {
+          const { data: prevSteps } = await supabase
+            .from("agent_steps")
+            .select("step_index, tool_name, result_preview")
+            .eq("run_id", resumeRunId)
+            .order("step_index", { ascending: true })
+            .limit(100);
+
+          if (prevSteps && prevSteps.length > 0) {
+            const lines = (prevSteps as {
+              step_index: number;
+              tool_name: string | null;
+              result_preview: string | null;
+            }[]).map(
+              (s) =>
+                `- 步骤 ${Math.floor(s.step_index / 100) + 1} · ${
+                  s.tool_name ?? "模型回复"
+                }: ${(s.result_preview ?? "").slice(0, 500)}`,
+            );
+            resumeContext =
+              `\n\n【续跑上下文 —— 以下步骤在此前的运行中已完成,不要重做,直接继续】\n` +
+              lines.join("\n");
+          }
+        } else {
+          logger.warn(
+            { runId: resumeRunId, conversationId },
+            "续跑被拒:run 不属于当前对话、或状态不可续",
           );
-          resumeContext =
-            `\n\n【续跑上下文 —— 以下步骤在此前的运行中已完成,不要重做,直接继续】\n` +
-            lines.join("\n");
         }
       }
       // 召回本组织的记忆,注入这一轮的上下文。

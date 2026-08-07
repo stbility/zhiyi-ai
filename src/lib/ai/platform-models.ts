@@ -138,3 +138,41 @@ export async function platformPoolAvailable(
 ): Promise<boolean> {
   return (await loadPlatformCandidates(supabase, freeOnly)).length > 0;
 }
+
+/**
+ * 平台档模型的运行时凭据。
+ *
+ * 平台免费档在 ai_providers 里**没有行** —— 密钥来自环境变量,装载时已就地
+ * 加密(见 loadPlatformCandidates)。chat 与 agent 两条通道共用这一个实现,
+ * 授权判定(free_only、环境变量配没配、模型有没有下架)只能有一处。
+ * 在这里另写一遍「是平台模型就放行」,等于给免费档开一个不受档位约束的后门。
+ */
+export async function platformCredentialsFor(
+  supabase: SupabaseClient,
+  organizationId: string,
+  providerId: string,
+  modelId: string,
+): Promise<{
+  readonly kind: ProviderKind;
+  readonly baseUrl: string | null;
+  readonly apiKeyCipher: string;
+} | null> {
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("free_only")
+    .eq("id", organizationId)
+    .maybeSingle();
+
+  // 读不到时按免费档处理 —— 出错时选代价小的默认值
+  const list = await loadPlatformCandidates(supabase, org?.free_only !== false);
+  const hit = list.find(
+    (c) => c.providerId === providerId && c.modelId === modelId,
+  );
+  if (!hit) return null;
+
+  return {
+    kind: hit.kind,
+    baseUrl: hit.baseUrl,
+    apiKeyCipher: hit.apiKeyCipher,
+  };
+}

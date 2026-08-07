@@ -96,6 +96,51 @@ export class ProviderCallError extends Error {
   }
 }
 
+/**
+ * 已校验通过的 hostname 缓存。DNS 解析有成本,而同一服务商的 base_url
+ * 在一天内不会变 —— 每次请求都重新解析是浪费。缓存只存判定结果,
+ * 不存原始地址;服务商换 IP(公网 CDN 常见)不影响判定,因为判定依据
+ * 是「解析结果是否落在私有段」,公网 IP 永远通过。
+ */
+const SAFE_HOST_CACHE = new Map<string, boolean>();
+
+/**
+ * SSRF 守卫:请求发出前校验用户自填的 base_url(见 base-url-guard.ts)。
+ *
+ * 为什么单独一个 async 函数而不是塞进 resolveBaseUrl:
+ *   resolveBaseUrl 被 fetch 调用点的模板串里同步使用,一旦变 async,
+ *   fetch 调用会推迟到 DNS 解析之后 —— 客户端已 abort 时,原本在
+ *   fetch 上立即触发的 AbortError 会变成挂起(测试 agent-timeout
+ *   「客户端自己断开」抓到的正是这个)。守卫拆出来在 fetch 之前
+ *   await,abort 语义保持原样。
+ *
+ * 只对**用户自填**的 base_url 做 —— 官方默认地址(api.openai.com 等)
+ * 是 registry 里写死的,不存在被污染的路径。
+ */
+async function guardUserBaseUrl(creds: ProviderCredentials): Promise<void> {
+  if (!creds.baseUrl) return;
+  const { assertSafeBaseUrl } = await import("@/lib/ai/base-url-guard");
+  let hostname: string;
+  try {
+    hostname = new URL(creds.baseUrl.replace(/\/+$/, "")).hostname;
+  } catch {
+    throw new ProviderCallError("该模型服务的接口地址不是合法的 URL。");
+  }
+  if (!SAFE_HOST_CACHE.has(hostname)) {
+    const problem = await assertSafeBaseUrl(creds.baseUrl);
+    SAFE_HOST_CACHE.set(hostname, problem === null);
+    if (problem !== null) {
+      throw new ProviderCallError(
+        `该模型服务的接口地址不可用:${problem}`,
+      );
+    }
+  } else if (SAFE_HOST_CACHE.get(hostname) === false) {
+    throw new ProviderCallError(
+      "该模型服务的接口地址曾判定为不可达(内网/本机地址),已被拒绝。",
+    );
+  }
+}
+
 function resolveBaseUrl(creds: ProviderCredentials): string {
   const spec = getProviderSpec(creds.kind);
   const base = creds.baseUrl ?? spec.defaultBaseUrl;
@@ -442,6 +487,7 @@ async function callOpenAICompatible(
   signal: AbortSignal,
 ): Promise<AsyncGenerator<StreamChunk, void, unknown>> {
   const apiKey = decryptSecret(creds.apiKeyCipher);
+  await guardUserBaseUrl(creds);
   const response = await fetch(`${resolveBaseUrl(creds)}/chat/completions`, {
     method: "POST",
     headers: {
@@ -557,6 +603,7 @@ async function callAnthropic(
     .join("\n\n");
   const rest = messages.filter((m) => m.role !== "system");
 
+  await guardUserBaseUrl(creds);
   const response = await fetch(`${resolveBaseUrl(creds)}/messages`, {
     method: "POST",
     headers: {
@@ -650,6 +697,7 @@ async function callGoogle(
       parts: [{ text: m.content }],
     }));
 
+  await guardUserBaseUrl(creds);
   const url =
     `${resolveBaseUrl(creds)}/models/${encodeURIComponent(model)}` +
     `:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
@@ -1095,6 +1143,14 @@ export async function callWithTools({
 
   let response: Response;
   try {
+    await guardUserBaseUrl(credentials);
+    // 客户端在守卫的异步 DNS 期间走掉了:不等 fetch(fetch 对已 abort 的
+    // signal 不会触发 abort listener —— 测试 agent-timeout「客户端自己
+    // 断开」依赖 fetch 收到的是原始 AbortError)。这里主动检查并原样透传,
+    // 保持「断开即走」的语义。
+    if (signal.aborted) {
+      throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    }
     response = await fetch(`${resolveBaseUrl(credentials)}/chat/completions`, {
       method: "POST",
       headers: {

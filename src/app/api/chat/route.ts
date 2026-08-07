@@ -17,7 +17,7 @@ import {
 import { logger } from "@/lib/log";
 import {
   isPlatformProviderId,
-  loadPlatformCandidates,
+  platformCredentialsFor,
 } from "@/lib/ai/platform-models";
 import { createStallWatchdog } from "@/lib/ai/stall-watchdog";
 import {
@@ -505,32 +505,6 @@ export async function POST(request: NextRequest) {
  * 不能因为 providerId 长得像平台标识就放行 —— 那个标识是客户端传上来的,
  * 而客户端传什么都不能构成授权。
  */
-async function platformCredentialsFor(
-  supabase: SupabaseClient,
-  organizationId: string,
-  providerId: string,
-  modelId: string,
-): Promise<ProviderCredentials | null> {
-  const { data: org } = await supabase
-    .from("organizations")
-    .select("free_only")
-    .eq("id", organizationId)
-    .maybeSingle();
-
-  // 读不到时按免费档处理 —— 出错时选代价小的默认值
-  const list = await loadPlatformCandidates(supabase, org?.free_only !== false);
-  const hit = list.find(
-    (c) => c.providerId === providerId && c.modelId === modelId,
-  );
-  if (!hit) return null;
-
-  return {
-    kind: hit.kind,
-    baseUrl: hit.baseUrl,
-    apiKeyCipher: hit.apiKeyCipher,
-  };
-}
-
 async function byokCredentials(
   supabase: SupabaseClient,
   organizationId: string,
