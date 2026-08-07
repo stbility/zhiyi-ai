@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { encryptSecret, maskApiKey } from "@/lib/crypto/secret-box";
-import { validateServerUrl, mcpInitialize } from "@/lib/mcp/client";
+import { validateServerUrl, mcpInitialize, mcpListTools } from "@/lib/mcp/client";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logger } from "@/lib/log";
@@ -33,7 +33,10 @@ const createSchema = z.object({
     .trim()
     .min(1, "请给这个 server 起个名字")
     .max(40, "名字过长")
-    .regex(/^[a-z0-9][a-z0-9-_]*$/, "名字只能含小写字母、数字、连字符、下划线"),
+    .regex(
+      /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/,
+      "名字只能含小写字母、数字,可用 - 或 _ 分隔(不能连续、不能开头或结尾)。工具名格式为 mcp__<名字>__<工具>,名字里的 _ 会与分隔符冲突,例如 foo__bar 无法解析",
+    ),
   url: z.string().trim().min(1, "请填写 server 地址").max(500, "地址过长"),
   authToken: z.string().trim().min(1, "请填写访问令牌").max(1000, "令牌过长"),
   timeoutMs: z.coerce
@@ -168,13 +171,39 @@ export async function testMcpServer(
     return { error: "令牌解密失败。请删除后重新登记。" };
   }
 
+  // P3-9:测试连接用独立且更小的超时(上限 15s)。页面 maxDuration=60,
+  // 若按 server 配置的最大 60s 超时跑,Server Action 可能先被平台掐断,
+  // 报错与 server 无关、误导排查。
+  const testTimeoutMs = Math.min((row.timeout_ms as number) ?? 15000, 15000);
+
   const outcome = await mcpInitialize({
     id: parsed.data.id,
     name: row.name as string,
     url: row.url as string,
     authToken: token,
-    timeoutMs: (row.timeout_ms as number) ?? 15000,
+    timeoutMs: testTimeoutMs,
   });
+
+  // P1-3:连接成功 ≠ 工具可用。initialize 握手只证明「连得上」,
+  // 运行时能否注入工具取决于 tools/list —— 这里一并验证,
+  // 把「发现 N 个工具」写进结果,避免「连接正常却零工具」的误导。
+  let toolsMsg = "";
+  if (outcome.ok) {
+    const listed = await mcpListTools({
+      id: parsed.data.id,
+      name: row.name as string,
+      url: row.url as string,
+      authToken: token,
+      timeoutMs: testTimeoutMs,
+    });
+    if (!listed.ok) {
+      toolsMsg = `，但 tools/list 失败:${listed.message}`;
+      outcome.ok = false;
+      outcome.message = `initialize 成功${toolsMsg}`;
+    } else {
+      toolsMsg = `，发现 ${listed.tools.length} 个工具`;
+    }
+  }
 
   const { error } = await supabase
     .from("mcp_servers")
@@ -194,7 +223,7 @@ export async function testMcpServer(
 
   revalidatePath("/settings/integrations");
   return outcome.ok
-    ? { ok: "连接成功。" }
+    ? { ok: `连接成功${toolsMsg}。` }
     : { error: `连接失败:${outcome.message}` };
 }
 

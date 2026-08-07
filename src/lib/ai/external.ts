@@ -33,7 +33,7 @@ export async function buildExternalContext(
   // 2. admin 客户端取 auth_token_cipher(解密后装配 serverMap)
   const { data: publicRows } = await supabase
     .from("mcp_servers")
-    .select("id, name, url, auth_token_cipher, timeout_ms")
+    .select("id, name, url, timeout_ms")
     .eq("organization_id", organizationId)
     .eq("enabled", true)
     .order("name");

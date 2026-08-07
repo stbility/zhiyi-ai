@@ -32,6 +32,16 @@ vi.mock("@/lib/mcp/client", async (importOriginal) => {
   return {
     ...orig,
     mcpInitialize: vi.fn(async () => ({ ok: true, message: "连接成功" })),
+    // P1-3:testMcpServer 现在在 initialize 后追加 tools/list,
+    // 契约测试 mock 掉真实网络调用
+    mcpListTools: vi.fn(async () => ({
+      ok: true,
+      message: "发现 2 个工具",
+      tools: [
+        { name: "tool_a", description: "工具 A", inputSchema: {} },
+        { name: "tool_b", description: "工具 B", inputSchema: {} },
+      ],
+    })),
   };
 });
 
@@ -187,7 +197,7 @@ describe("testMcpServer", () => {
     const { testMcpServer } = await load();
     const out = await testMcpServer({}, idForm());
     expect(out.error).toBeUndefined();
-    expect(out.ok).toBe("连接成功。");
+    expect(out.ok).toBe("连接成功，发现 2 个工具。");
     // 用户身份查询只取可见列 —— 0030 列级 REVOKE 下,select 密文列会 42501
     expect(userSelectLog[0]).toBe("name, url, timeout_ms");
     expect(userSelectLog[0]).not.toContain("auth_token_cipher");

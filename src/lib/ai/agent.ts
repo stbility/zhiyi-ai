@@ -30,7 +30,7 @@ import {
   type ToolDefinition,
   type ToolResult,
 } from "@/lib/ai/tools";
-import { mcpListTools, mcpToolName } from "@/lib/mcp/client";
+import { mcpListTools, mcpToolName, sanitizeRemoteToolName } from "@/lib/mcp/client";
 
 /**
  * 智能体运行循环。
@@ -251,17 +251,38 @@ export async function runAgent({
   //
   // server 拉取失败(网络/超时)时降级:该 server 的工具不注入,
   // 但其余 server 与技能库照常 —— 一个坏 server 不该拖垮整轮。
-  // 失败原因不在这里报,模型调用那个工具时才会看到说明。
+  // 失败必须留痕(不静默):logger 记录 + 注入一条可见说明,
+  // 让模型/用户知道这个 server 为什么没有工具。
   const externalToolDefs: ToolDefinition[] = [];
   if (externalContext) {
     for (const [serverName, cfg] of externalContext.servers) {
       const listed = await mcpListTools(cfg);
-      if (!listed.ok) continue;
-      for (const t of listed.tools) {
+      if (!listed.ok) {
+        logger.warn(
+          { server: serverName, reason: listed.message },
+          "MCP server 工具加载失败,本轮不注入它的工具",
+        );
+        // 注入一条「工具加载失败」的说明工具 —— 失败是可观察结果,
+        // 模型看得见、用户也能在对话里追问,而不是静默缺失
         externalToolDefs.push({
           type: "function",
           function: {
-            name: mcpToolName(serverName, t.name),
+            name: `mcp__${serverName}__工具加载失败`,
+            description: `外部 MCP server「${serverName}」的工具加载失败,本轮不提供它的工具。原因:${listed.message}`,
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+          },
+        });
+        continue;
+      }
+      for (const t of listed.tools) {
+        // P1-5:OpenAI 兼容接口对 function name 限 ^[a-zA-Z0-9_-]{1,64}$。
+        // 远程 MCP 工具名不受此约束 —— 超长/含非法字符会让整个 tools
+        // 参数被严格 enforce 的服务商 400 拒绝,整轮失败。这里清洗:
+        // 非法字符 → _、截断 64、冲突加后缀。
+        externalToolDefs.push({
+          type: "function",
+          function: {
+            name: mcpToolName(serverName, sanitizeRemoteToolName(t.name)),
             description: t.description,
             parameters: t.inputSchema,
           },
