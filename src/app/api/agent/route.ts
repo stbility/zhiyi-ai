@@ -49,6 +49,34 @@ export async function POST(request: NextRequest) {
     history,
   } = pre.ctx;
 
+  // 权益守卫:智能体是多步工具循环,消耗 monthly_agent_turns 额度。
+  //
+  // 挡在入口,不等到循环启动 —— 一个必然越权的任务不该被开始。
+  // 免费用户跑智能体会先撞这里:明确告诉他这是套餐边界,
+  // 而不是让他在「正在思考」的界面里等一个注定失败的运行。
+  // 判断走数据库(get_entitlements),不信任客户端传的 plan。
+  if (!resumeRunId) {
+    const { getMyEntitlements, quotaOf } = await import(
+      "@/lib/billing/entitlements"
+    );
+    const entitlements = await getMyEntitlements();
+    // quota null = 不限额度(enterprise);0 = 本月额度已耗尽;其余 = 还有余量
+    const turnsQuota = entitlements ? quotaOf(entitlements, "monthly_agent_turns") : 0;
+    const blocked =
+      !entitlements || (turnsQuota !== null && turnsQuota <= 0);
+    if (blocked) {
+      return errorResponse(
+        entitlements
+          ? `本月的智能体运行额度已用完,升级 Professional(月付 HK$49)可提升额度。`
+          : `智能体运行需要 Professional 及以上套餐(月付 HK$49)。` +
+              `升级后即可使用多步工具循环;或改用「AI 助手」对话通道。`,
+        402,
+      );
+    }
+  }
+  // resumeRunId 存在时跳过权益检查 —— 续跑的是用户已经付过费的运行,
+  // 订阅在运行中途到期也不该把「把已开始的任务掐断」。
+
   // 挡在入口,而不是等跑到第一步再失败。
   //
   // callWithTools 里已经有这道判断,但那时智能体循环已经启动、
