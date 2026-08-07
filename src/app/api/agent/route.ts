@@ -44,6 +44,7 @@ export async function POST(request: NextRequest) {
     providerId,
     providerKind,
     model,
+    resumeRunId,
     userMessage,
     history,
   } = pre.ctx;
@@ -78,5 +79,6 @@ export async function POST(request: NextRequest) {
     userMessage,
     history,
     signal: request.signal,
+    ...(resumeRunId ? { resumeRunId } : {}),
   });
 }
