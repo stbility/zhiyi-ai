@@ -12,5 +12,7 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./tests/setup.ts"],
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
+    // 8GB 机器限制并发，避免内存被打爆
+    maxWorkers: 2,
   },
 });
