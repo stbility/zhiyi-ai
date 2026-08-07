@@ -55,3 +55,25 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
         run: bash scripts/check-migrations.sh
+
+  # 真实网络冒烟 —— 与主门禁隔离的独立 job。
+  #
+  # 为什么单独一个 job:tests/live/ 打的是真实 GitHub,而 CI 共享出口 IP 上
+  # github.com 偶发超时(2026-08-07 实测:同一 commit 两次 CI 一红一绿,红的
+  # 唯一原因是一次 HEAD 超时)。主门禁(verify / migrations)必须确定性 ——
+  # 网络抖动不该决定代码能不能合。真实网络冒烟保留它的价值(防「全 mock 绿
+  # 但线上挂」),失败如实标红;main 未设 required checks,不阻塞合并。
+  # 不重试、不掩盖:GitHub 持续不可达时它必须红,那是真实信号。
+  live-smoke:
+    name: 真实网络冒烟(tests/live)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:live
