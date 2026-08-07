@@ -42,6 +42,7 @@ rate_limits_window_idx
 skill_files_skill_idx
 skills_created_by_idx
 skills_organization_idx
+subscriptions_user_idx
 workspace_files_conversation_idx
 workspace_files_organization_idx
 workspace_files_workspace_idx

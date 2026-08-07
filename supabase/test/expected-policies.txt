@@ -15,6 +15,7 @@ ai_providers_update_admin
 audit_logs_select_member
 conversation_attachments_own
 conversations_own
+entitlements_select_all
 git_installations_delete_admin
 git_installations_insert_admin
 git_installations_select_member
@@ -60,6 +61,9 @@ skills_delete_admin
 skills_insert_admin
 skills_select_member
 skills_update_admin
+stripe_customers_select_own
+subscriptions_select_own
+usage_metering_select_own
 workspace_files_delete_member
 workspace_files_insert_member
 workspace_files_select_member
