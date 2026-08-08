@@ -300,7 +300,7 @@ export async function runAgentTurn({
         const { recallMemories, touchMemory } = await import(
           "@/lib/db/memories"
         );
-        const memories = await recallMemories(supabase, organizationId, 8);
+        const memories = await recallMemories(supabase, organizationId, 8, userMessage);
         if (memories.length > 0) {
           memoryBlock =
             `\n\n【你的记忆 —— 用户确认过的事实与偏好,回答时请遵循】\n` +

@@ -60,6 +60,7 @@
 | `0037_entitlements_quota_alignment.sql` | 待应用 | entitlements(配额 500/5000,见备注 C) |
 | `0038_knowledge_files.sql` | 待应用 | knowledge_files |
 | `0039_eval_runs.sql` | 待应用 | eval_runs, eval_run_cases |
+| `0040_memory_embeddings.sql` | 待应用 | pgvector 扩展 + memories.embedding + search_memories |
 
 ### 备注 A：0005 在账本里没有记录
 
