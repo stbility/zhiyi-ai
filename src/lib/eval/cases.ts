@@ -21,9 +21,34 @@ export interface EvalCase {
   readonly mustNotContain?: readonly string[];
   /** 单条超时(毫秒) */
   readonly timeoutMs: number;
+  /** 来源:内置随版本走 git;feedback 从用户改写沉淀 */
+  readonly source?: "seed" | "feedback";
+}
+
+/** eval_cases 表行 → EvalCase(反馈飞轮长出来的用例进同一个 runner) */
+export function dbRowToEvalCase(row: {
+  key: string;
+  name: string;
+  prompt: string;
+  must_contain: string[];
+  must_contain_any: string[];
+  must_not_contain: string[];
+  timeout_ms: number;
+}): EvalCase {
+  return {
+    key: row.key,
+    name: row.name,
+    prompt: row.prompt,
+    mustContain: row.must_contain,
+    mustContainAny: row.must_contain_any,
+    mustNotContain: row.must_not_contain,
+    timeoutMs: row.timeout_ms,
+    source: "feedback",
+  };
 }
 
 export const EVAL_CASES: readonly EvalCase[] = [
+  // 内置 20 条:source 默认 seed(随版本走 git)
   // ── 工作区纪律(智能体 vs 聊天框的分界)──
   {
     key: "ws-write-todo",

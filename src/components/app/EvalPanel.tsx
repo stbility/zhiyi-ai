@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useActionState } from "react";
 
 import { Button, StatusLabel } from "@/components/primitives";
-import { startEval } from "@/app/(app)/settings/eval/actions";
+import { startEval, syncFeedbackCases } from "@/app/(app)/settings/eval/actions";
 import type { EvalCase } from "@/lib/eval/cases";
 
 export interface EvalRunRow {
@@ -42,6 +42,7 @@ export function EvalPanel({
 }) {
   const [expandedRun, setExpandedRun] = useState<string | null>(null);
   const [state, action, running] = useActionState(startEval, undefined);
+  const [syncState, syncAction, syncing] = useActionState(syncFeedbackCases, undefined);
 
   // 可复现性对比:同版本最近两次运行
   const sameVersionPairs: { version: string; a: EvalRunRow; b: EvalRunRow }[] = [];
@@ -64,22 +65,32 @@ export function EvalPanel({
       <div className="flex flex-wrap items-center gap-3">
         <form action={action}>
           <Button size="sm" type="submit" disabled={running}>
-            {running ? "评测运行中(20 条串行,预算内尽量跑完)…" : "一键跑评测(20 条)"}
+            {running ? "评测运行中(预算内尽量跑完)…" : "一键跑评测"}
+          </Button>
+        </form>
+        <form action={syncAction}>
+          <Button size="sm" variant="secondary" type="submit" disabled={syncing}>
+            {syncing ? "同步中…" : "从反馈改写同步用例"}
           </Button>
         </form>
         {state?.error && <p className="text-error text-caption">{state.error}</p>}
         {state?.ok && <p className="text-success text-caption">{state.ok}</p>}
+        {syncState?.error && <p className="text-error text-caption">{syncState.error}</p>}
+        {syncState?.ok && <p className="text-success text-caption">{syncState.ok}</p>}
       </div>
 
       {/* 用例集 */}
       <section className="bg-surface-2 border-border-default rounded-card font-zh border p-4">
-        <h3 className="text-fg text-body font-medium mb-2">用例集({cases.length} 条)</h3>
+        <h3 className="text-fg text-body font-medium mb-2">
+          用例集({cases.length} 条,内置 + 反馈沉淀)
+        </h3>
         <div className="max-h-80 overflow-auto">
           <table className="w-full text-caption">
             <thead>
               <tr className="text-fg-tertiary text-left">
                 <th className="py-1 pr-3">键</th>
                 <th className="py-1 pr-3">名称</th>
+                <th className="py-1 pr-3">来源</th>
                 <th className="py-1 pr-3">判定(确定性)</th>
               </tr>
             </thead>
@@ -88,6 +99,11 @@ export function EvalPanel({
                 <tr key={c.key}>
                   <td className="py-1.5 pr-3 font-mono">{c.key}</td>
                   <td className="py-1.5 pr-3">{c.name}</td>
+                  <td className="py-1.5 pr-3">
+                    <StatusLabel tone={c.source === "feedback" ? "warning" : "neutral"}>
+                      {c.source === "feedback" ? "来自反馈" : "内置"}
+                    </StatusLabel>
+                  </td>
                   <td className="text-fg-tertiary py-1.5 pr-3">
                     {c.mustContain?.join(" / ") ??
                       c.mustContainAny?.join(" / ") ??

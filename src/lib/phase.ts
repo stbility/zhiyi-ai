@@ -91,6 +91,6 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
     id: "8",
     label: "安全、监控、部署、备份回滚",
     state: "partial",
-    missing: "部署、密钥加密、限流已完成;评测集(20 用例)与 runner 已上线(/settings/eval,结果落 eval_runs,可同版本连跑对比);结构化日志、监控、备份回滚未做",
+    missing: "部署、密钥加密、限流已完成;评测集(20 内置用例 + 反馈沉淀用例)与 runner 已上线(/settings/eval,结果落 eval_runs,可同版本连跑对比);反馈飞轮消费端已通(改写反馈一键同步为评测用例,message_feedback.edited → eval_cases);结构化日志、监控、备份回滚未做",
   },
 ];
