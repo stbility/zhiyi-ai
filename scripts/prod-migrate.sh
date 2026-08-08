@@ -5,14 +5,22 @@
 # 背景:0028-0035 此前是「写完文件就算交付」——仓库有文件,生产库从未应用,
 #       也没有任何管道。本脚本把交付变成自动化:
 #         - 首次运行自动探测生产库状态,补齐缺口(见下)
-#         - 之后每次 main 推送(或手动触发)只应用账本缺失的迁移
+#         - 之后每次 main 推送(或手动触发)只应用缺失的迁移
 #         - 每个迁移独立请求、失败即停、全部幂等可安全重跑
 #
-# 首次运行三种情形(自动判定,不需要人工参数):
-#   1. 全新空库(public 无表)         → 全量应用 0001-0035
-#   2. 已有库、无迁移账本(=当前生产) → 基线 0001-0027 入账(已实测验证),
-#                                      再应用 0028-0035
-#   3. 已有账本                        → 只应用账本缺失的版本
+# 版本体系说明(2026-08-08 事故后修正):
+#   生产账本(supabase_migrations.schema_migrations)的历史版本是 supabase CLI
+#   的时间戳格式(如 20260727150136),而仓库文件是 0001-0035 编号 ——
+#   两套体系不能直接比对。判定「已应用」的规则:
+#     · 文件编号 <= BASELINE(0027,生产库实测基线)→ 视为已应用,绝不重跑
+#       (重跑 0001-0027 会撞上裸 create policy 的 already exists,0010 事故)
+#     · 文件编号 > BASELINE 且已在本脚本写入的账本前缀行里 → 已应用
+#     · 其余 → 待应用
+#   账本里的时间戳历史行(30 条)只作参考,不参与判定。
+#
+# 首次运行两种情形(自动判定):
+#   1. 全新空库(public 无表)→ 全量应用 0001-0035
+#   2. 已有库 → 基线核对后,应用 > BASELINE 且未入账的迁移(当前为 0028-0035)
 #
 # 通道:Supabase Management API(database/query)。
 #       只需要 access token,不需要数据库密码 —— token 存 GitHub secret。
@@ -31,7 +39,7 @@ API="https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query"
 MIG_DIR="$(cd "$(dirname "$0")/../supabase/migrations" && pwd)"
 
 # 生产库实测基线(2026-08-08 anon 探测验证):0001-0027 已应用,0028-0035 缺失。
-# 仅「已有库且无账本」时生效;空库自动走全量,无需改动。
+# 空库判定时此常量不生效(走全量);新环境若从空库起步会自动全量应用,无需改动。
 BASELINE="0027"
 
 if [ -z "$TOKEN" ]; then
@@ -102,7 +110,7 @@ LOCAL_VERSIONS=($(ls "$MIG_DIR" | grep -E '^[0-9]{4}_.*\.sql$' | sed 's/_.*\.sql
 
 echo "=============================================================="
 echo "生产迁移自动交付  项目: $PROJECT_REF"
-echo "本地迁移版本: ${LOCAL_VERSIONS[0]} .. ${LOCAL_VERSIONS[${#LOCAL_VERSIONS[@]}-1]}(${#LOCAL_VERSIONS[@]} 个)"
+echo "本地迁移版本: ${LOCAL_VERSIONS[0]} .. ${LOCAL_VERSIONS[${#LOCAL_VERSIONS[@]}-1]}(${#LOCAL_VERSIONS[@]} 个)  基线: $BASELINE"
 echo "=============================================================="
 
 # 1. 探测生产库状态
@@ -131,31 +139,45 @@ count=${count:-0}
 # 2. 计算要应用的版本
 echo "[2/4] 计算缺失版本"
 declare -a TO_APPLY=()
-if $ledger_exists; then
-  applied_set=$(api_raw "select version from supabase_migrations.schema_migrations;" | scalar_list)
-  for v in "${LOCAL_VERSIONS[@]}"; do
-    if ! echo " $applied_set " | grep -q " $v "; then
-      TO_APPLY+=("$v")
-    fi
-  done
-  echo "    账本已含 $(echo "$applied_set" | wc -w | tr -d ' ') 个,待应用 ${#TO_APPLY[@]} 个"
-elif [ "$count" -eq 0 ]; then
+if [ "$count" -eq 0 ]; then
   TO_APPLY=("${LOCAL_VERSIONS[@]}")
   echo "    空库判定 → 全量应用 ${#TO_APPLY[@]} 个迁移"
 else
-  echo "    已有库判定 → 核对基线(0001-0027 已应用,0028 缺失)"
+  # 基线核对:0001-0027 已应用(表在),0028 缺失(表不在)
+  echo "    已有库判定 → 核对基线(<= $BASELINE 已应用,> $BASELINE 待查)"
   run_sql "基线核对:memories 表应不存在" \
     "select to_regclass('public.memories') is null as memories_missing;"
   run_sql "基线核对:agent_runs 应存在" \
     "select to_regclass('public.agent_runs') is not null as agent_runs_ok;"
   run_sql "基线核对:git_installations 应存在" \
     "select to_regclass('public.git_installations') is not null as git_ok;"
+
+  # 本脚本已记录的迁移(前缀行,如 0028-0035)
+  local_applied=""
+  if $ledger_exists; then
+    local_applied=$(api_raw "select version from supabase_migrations.schema_migrations where version ~ '^[0-9]{4}\$';" | scalar_list)
+    echo "    账本前缀行: $(echo "$local_applied" | wc -w | tr -d ' ' | sed 's/^0$/无/') 条"
+  fi
+
+  # 清理误写的前缀行(<= BASELINE 的 0001-0027 前缀行只可能来自版本体系误判事故)
+  bogus=""
   for v in "${LOCAL_VERSIONS[@]}"; do
-    if [[ "$v" > "$BASELINE" ]]; then
+    if [[ "$v" < "$BASELINE" || "$v" == "$BASELINE" ]]; then
+      [ -n "$bogus" ] && bogus="$bogus,"
+      bogus="$bogus'$v'"
+    fi
+  done
+  if $ledger_exists && [ -n "$bogus" ]; then
+    run_sql "清理账本误写前缀行(<= $BASELINE)" \
+      "delete from supabase_migrations.schema_migrations where version in ($bogus);"
+  fi
+
+  for v in "${LOCAL_VERSIONS[@]}"; do
+    if [[ "$v" > "$BASELINE" ]] && ! echo " $local_applied " | grep -q " $v "; then
       TO_APPLY+=("$v")
     fi
   done
-  echo "    待应用增量(> $BASELINE):${#TO_APPLY[@]} 个"
+  echo "    待应用(> $BASELINE 且未入账):${#TO_APPLY[@]} 个"
 fi
 
 if [ "${#TO_APPLY[@]}" -eq 0 ]; then
@@ -163,7 +185,7 @@ if [ "${#TO_APPLY[@]}" -eq 0 ]; then
   exit 0
 fi
 
-# 3. 准备迁移账本
+# 3. 确保账本存在
 echo "[3/4] 准备迁移账本"
 run_sql "创建账本表(如缺)" \
   "create schema if not exists supabase_migrations;
@@ -172,20 +194,6 @@ run_sql "创建账本表(如缺)" \
      name text,
      statements text[]
    );"
-if ! $ledger_exists && [ "$count" -gt 0 ]; then
-  vals=""
-  for v in "${LOCAL_VERSIONS[@]}"; do
-    if [[ "$v" < "$BASELINE" || "$v" == "$BASELINE" ]]; then
-      fname=$(ls "$MIG_DIR" | grep -E "^${v}_.*\.sql$" | head -1)
-      [ -n "$vals" ] && vals="$vals,"
-      vals="$vals('$v','$fname')"
-    fi
-  done
-  run_sql "基线入账 0001-0027" \
-    "insert into supabase_migrations.schema_migrations (version, name)
-     select v.version, v.name from (values $vals) as v(version, name)
-     on conflict (version) do nothing;"
-fi
 
 # 4. 按序应用
 echo "[4/4] 应用 ${#TO_APPLY[@]} 个迁移"
