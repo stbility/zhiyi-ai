@@ -39,7 +39,12 @@ export async function getMyEntitlements(): Promise<Entitlements | null> {
   const { data, error } = await supabase.rpc("get_entitlements", {
     p_user_id: user.id,
   });
-  if (error || !data || !Array.isArray(data)) return null;
+  if (error) return null; // 网络/鉴权错误 → null,调用方按无订阅处理
+  if (!data || !Array.isArray(data)) {
+    // RPC 成功但返回空数组 → subscriptions 表无记录 = free plan
+    // 不是错误,直接返回 free entitlements
+    return { planId: "free" as const, byFeature: new Map() };
+  }
 
   const rows = data as EntitlementRow[];
   const planId = rows[0]?.plan_id ?? "free";
