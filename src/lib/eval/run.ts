@@ -5,8 +5,24 @@ import { readAgentStream } from "@/lib/ai/read-agent-stream";
 import {
   EVAL_CASES,
   checkEvalCase,
+  dbRowToEvalCase,
   type EvalCase,
 } from "@/lib/eval/cases";
+
+/** 加载调用者自己的反馈用例(反馈飞轮消费端) */
+export async function loadDynamicCases(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<EvalCase[]> {
+  const { data, error } = await supabase
+    .from("eval_cases")
+    .select("key, name, prompt, must_contain, must_contain_any, must_not_contain, timeout_ms")
+    .eq("created_by", userId)
+    .eq("enabled", true)
+    .order("created_at", { ascending: false });
+  if (error || !Array.isArray(data)) return [];
+  return data.map((r) => dbRowToEvalCase(r as never));
+}
 
 /**
  * 评测 runner:一键跑完 20 条用例,结果落 eval_runs。
@@ -82,13 +98,17 @@ export async function runEvalSuite(
     model: string;
   },
 ): Promise<EvalRunResult> {
+  // 内置 20 条(随版本走 git)+ 反馈飞轮长出来的用例(表)
+  const dynamic = await loadDynamicCases(supabase, input.userId);
+  const allCases = [...EVAL_CASES, ...dynamic];
+
   const { data: run, error: runError } = await supabase
     .from("eval_runs")
     .insert({
       status: "running",
       version_sha: input.versionSha,
       model: input.model,
-      total_cases: EVAL_CASES.length,
+      total_cases: allCases.length,
       created_by: input.userId,
     })
     .select("id")
@@ -100,7 +120,7 @@ export async function runEvalSuite(
   const records: EvalCaseRecord[] = [];
   const budgetDeadline = Date.now() + EVAL_BUDGET_MS;
 
-  for (const c of EVAL_CASES) {
+  for (const c of allCases) {
     if (Date.now() > budgetDeadline) {
       records.push({
         key: c.key,

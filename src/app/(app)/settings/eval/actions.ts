@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { runEvalSuite } from "@/lib/eval/run";
+import { syncFeedbackToEvalCases } from "@/lib/eval/feedback-sync";
 
 export interface EvalActionState {
   readonly ok?: string;
@@ -42,4 +43,26 @@ export async function startEval(): Promise<EvalActionState> {
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/** 反馈飞轮消费端:把用户改写过的回答沉淀为评测用例 */
+export async function syncFeedbackCases(): Promise<EvalActionState> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { error: "认证服务未配置。" };
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "请先登录。" };
+
+  const result = await syncFeedbackToEvalCases(supabase, user.id);
+  revalidatePath("/settings/eval");
+  if (result.created === 0) {
+    return {
+      ok:
+        result.total === 0
+          ? "没有可同步的改写反馈(去对话里把一条回答改成你想要的,它就会出现在这里)。"
+          : `扫描到 ${result.total} 条改写反馈,但都没有提取出可判定的新信息段(纯风格改动不生成用例)。`,
+    };
+  }
+  return { ok: `已沉淀 ${result.created} 条反馈改写为评测用例(跳过 ${result.skipped} 条)。` };
 }

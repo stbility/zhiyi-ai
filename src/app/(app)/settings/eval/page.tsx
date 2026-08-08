@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { EvalPanel, type EvalRunRow } from "@/components/app/EvalPanel";
-import { EVAL_CASES } from "@/lib/eval/cases";
+import { EVAL_CASES, dbRowToEvalCase, type EvalCase } from "@/lib/eval/cases";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "评测 · 智一 AI" };
@@ -13,12 +13,23 @@ export default async function EvalPage() {
   const supabase = await createSupabaseServerClient();
 
   let runs: EvalRunRow[] = [];
+  let dynamicCases: EvalCase[] = [];
   if (supabase) {
     const {
       data: { user },
     } = await supabase.auth.getUser();
 
     if (user) {
+      const { data: caseRows } = await supabase
+        .from("eval_cases")
+        .select("key, name, prompt, must_contain, must_contain_any, must_not_contain, timeout_ms")
+        .eq("created_by", user.id)
+        .eq("enabled", true)
+        .order("created_at", { ascending: false });
+      dynamicCases = ((caseRows ?? []) as unknown[]).map((r) =>
+        dbRowToEvalCase(r as never),
+      );
+
       const { data } = await supabase
         .from("eval_runs")
         .select("id, status, version_sha, model, total_cases, passed, failed, skipped, pass_rate, started_at, finished_at")
@@ -66,7 +77,7 @@ export default async function EvalPage() {
         </p>
       </header>
 
-      <EvalPanel cases={EVAL_CASES} runs={runs} />
+      <EvalPanel cases={[...EVAL_CASES, ...dynamicCases]} runs={runs} />
     </div>
   );
 }

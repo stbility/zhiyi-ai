@@ -16,6 +16,9 @@ audit_logs_select_member
 conversation_attachments_own
 conversations_own
 entitlements_select_all
+eval_cases_delete_own
+eval_cases_insert_own
+eval_cases_select_own
 eval_run_cases_insert_own
 eval_run_cases_select_own
 eval_runs_insert_own

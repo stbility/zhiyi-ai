@@ -61,6 +61,7 @@
 | `0038_knowledge_files.sql` | 待应用 | knowledge_files |
 | `0039_eval_runs.sql` | 待应用 | eval_runs, eval_run_cases |
 | `0040_memory_embeddings.sql` | 待应用 | pgvector 扩展 + memories.embedding + search_memories |
+| `0041_eval_cases.sql` | 待应用 | eval_cases(反馈飞轮消费端) |
 
 ### 备注 A：0005 在账本里没有记录
 
