@@ -11,6 +11,8 @@ export interface PricingCardProps {
   highlighted?: boolean | undefined;
   /** 年付优惠说明(如「年付 HK490,约省 2 个月」);undefined 时不显示 */
   annualNote?: string | undefined;
+  /** 年付购买链接(Stripe Payment Link);有 annualNote + 此链接时,月付按钮下方显示年付按钮 */
+  annualHref?: string | undefined;
   ctaLabel?: string | undefined;
   /** 有 href 时 CTA 渲染为链接:外部地址(external=true)新开标签页,站内地址用 next/link */
   href?: string | undefined;
@@ -40,6 +42,7 @@ export function PricingCard({
   features = [],
   highlighted = false,
   annualNote,
+  annualHref,
   ctaLabel = "升级套餐",
   href,
   external,
@@ -99,6 +102,19 @@ export function PricingCard({
         >
           {ctaLabel}
         </Button>
+      )}
+
+      {/* 年付优惠按钮:月付下方,ghost 变体。文案直接复用 annualNote(如「年付 HK490,约省 2 个月」),
+          一眼看到省多少;无 annualHref 时不渲染 —— 年付购买未开通就不给假的购买入口。 */}
+      {annualHref && annualNote && (
+        <LinkButton
+          href={annualHref}
+          external
+          variant="ghost"
+          className="mt-1 w-full"
+        >
+          {annualNote} 立即开通
+        </LinkButton>
       )}
 
       {ctaDisabled && ctaDisabledReason && (

@@ -24,10 +24,14 @@ export interface Plan {
   /** 已确定的价格展示文案;undefined 表示尚未从 Stripe 取到真实价格 */
   readonly price: string | undefined;
   readonly period: string;
+  /** 月付 Stripe Payment Link;undefined 表示月付购买未开通 */
+  readonly stripeUrl: string | undefined;
   /** 年付价格展示文案(两个月免费惯例);undefined 表示年付未开通 */
   readonly annualPrice: string | undefined;
   /** 年付说明文案,展示「省多少」增强感知 */
   readonly annualNote: string | undefined;
+  /** 年付 Stripe Payment Link;undefined 表示年付购买未开通 */
+  readonly annualStripeUrl: string | undefined;
   readonly features: readonly string[];
   readonly highlighted: boolean;
 }
@@ -38,8 +42,10 @@ export const PLANS: readonly Plan[] = [
     name: "Free",
     price: "HK0",
     period: "月",
+    stripeUrl: undefined,
     annualPrice: undefined,
     annualNote: undefined,
+    annualStripeUrl: undefined,
     features: [
       "1 个工作流",
       "基础知识库",
@@ -53,8 +59,10 @@ export const PLANS: readonly Plan[] = [
     name: "Professional 专业版",
     price: "HK49",
     period: "月",
+    stripeUrl: "https://buy.stripe.com/28E4gB8S35O54ga2JCfbq02",
     annualPrice: "HK490/年",
     annualNote: "年付 HK490,约省 2 个月",
+    annualStripeUrl: "https://buy.stripe.com/7sYbJ30lx0tL3c6ckcfbq04",
     features: [
       "多个工作流与自定义 Agent",
       "文件解析与向量检索",
@@ -69,8 +77,10 @@ export const PLANS: readonly Plan[] = [
     name: "Enterprise 企业版",
     price: "HK229",
     period: "月",
+    stripeUrl: "https://buy.stripe.com/fZueVffgr2BT5ke1Fyfbq03",
     annualPrice: "HK2,290/年",
     annualNote: "年付 HK2,290,约省 2 个月",
+    annualStripeUrl: "https://buy.stripe.com/9B68wR5FR5O59Au4RKfbq05",
     features: [
       "组织、成员与角色权限",
       "组织知识库与团队级检索",

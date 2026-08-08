@@ -4,6 +4,7 @@ import { PricingCard } from "@/components/account/PricingCard";
 import { Badge } from "@/components/primitives/Badge";
 import { LinkButton } from "@/components/primitives/LinkButton";
 import { Tag } from "@/components/primitives/Tag";
+import { PLANS } from "@/lib/plans";
 
 export const metadata: Metadata = {
   title: "订阅方案 · 智一 AI",
@@ -19,48 +20,9 @@ export const metadata: Metadata = {
  *   · LinkButton external —— 外部支付链接(新开标签页 + noopener)
  * 不拼接、不手抄类名、不写死颜色 —— 与设计系统守卫测试一致。
  *
- * 价格标准格式:HK49 / HK229(不带货币符号 $)。
+ * 价格与支付链接的唯一来源是 @/lib/plans(plans.ts)——
+ * 不在页面里重复定义,改价格/链接只改一处。
  */
-
-const PLANS = [
-  {
-    id: "professional",
-    name: "Professional 专业版",
-    price: "HK49",
-    period: "月",
-    annualNote: "年付 HK490,约省 2 个月",
-    desc: "适合个人知识工作者与独立研究者",
-    features: [
-      "多个工作流与自定义 Agent",
-      "文件解析与向量检索",
-      "工作流执行历史与追溯",
-      "每月 500 次 Agent 额度",
-      "包含 Free 全部权益",
-    ],
-    highlighted: true,
-    checkoutUrl: "https://buy.stripe.com/28E4gB8S35O54ga2JCfbq02",
-  },
-  {
-    id: "enterprise",
-    name: "Enterprise 企业版",
-    price: "HK229",
-    period: "月",
-    annualNote: "年付 HK2,290,约省 2 个月",
-    desc: "将个人工作流扩展到组织协作,面向专业团队",
-    features: [
-      "组织、成员与角色权限",
-      "组织知识库与团队级检索",
-      "私有模型网关接入",
-      "完整审计日志",
-      "数据隔离与合规支持",
-      "SLA 与专属支持",
-      "每月 5,000 次 Agent 额度",
-      "包含 Professional 全部权益",
-    ],
-    highlighted: false,
-    checkoutUrl: "https://buy.stripe.com/fZueVffgr2BT5ke1Fyfbq03",
-  },
-];
 
 const MARKET_TIERS = [
   {
@@ -168,12 +130,15 @@ export default function PricingPage() {
             <div key={plan.id} className="flex justify-center">
               <PricingCard
                 name={plan.name}
-                price={plan.price}
-                period={plan.period}
+                price={plan.price ?? "价格待定"}
+                period={plan.period ?? ""}
                 features={plan.features}
                 highlighted={plan.highlighted}
-                ctaLabel={`立即订阅 ${plan.price}`}
-                href={plan.checkoutUrl}
+                annualNote={plan.annualNote}
+                annualHref={plan.annualStripeUrl}
+                ctaLabel={`立即订阅 ${plan.price ?? ""}`}
+                href={plan.stripeUrl}
+                external
                 className="w-full"
               />
             </div>
@@ -192,19 +157,19 @@ export default function PricingPage() {
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3">
             <LinkButton
-              href="https://buy.stripe.com/28E4gB8S35O54ga2JCfbq02"
+              href={PLANS.find((p) => p.id === "professional")?.stripeUrl ?? "/"}
               external
               size="lg"
             >
-              订阅专业版 HK49 →
+              订阅专业版 {PLANS.find((p) => p.id === "professional")?.price ?? ""} →
             </LinkButton>
             <LinkButton
-              href="https://buy.stripe.com/fZueVffgr2BT5ke1Fyfbq03"
+              href={PLANS.find((p) => p.id === "enterprise")?.stripeUrl ?? "/"}
               external
               variant="secondary"
               size="lg"
             >
-              企业版 HK229
+              企业版 {PLANS.find((p) => p.id === "enterprise")?.price ?? ""}
             </LinkButton>
           </div>
         </div>

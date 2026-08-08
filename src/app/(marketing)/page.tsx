@@ -180,17 +180,16 @@ export default function HomePage() {
               features={plan.features}
               highlighted={plan.highlighted}
               annualNote={plan.annualNote}
+              annualHref={plan.annualStripeUrl}
               ctaLabel={
                 plan.id === "free"
                   ? "免费开始"
                   : `立即订阅 ${plan.price ?? ""}`
               }
               href={
-                plan.id === "professional"
-                  ? "https://buy.stripe.com/28E4gB8S35O54ga2JCfbq02"
-                  : plan.id === "enterprise"
-                    ? "https://buy.stripe.com/fZueVffgr2BT5ke1Fyfbq03"
-                    : "/register"
+                plan.id === "free"
+                  ? "/register"
+                  : (plan.stripeUrl ?? undefined)
               }
               external={plan.id !== "free"}
             />
