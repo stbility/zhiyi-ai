@@ -56,6 +56,7 @@
 | `0033_stripe_customers_and_subscriptions.sql` | 20260807… | stripe_customers, subscriptions |
 | `0034_entitlements.sql` | 20260807… | entitlements, get_entitlements |
 | `0035_usage_metering.sql` | 20260807… | usage_metering, bump_usage, get_monthly_usage |
+| `0036_workflows.sql` | 待应用 | workflows, workflow_runs |
 
 ### 备注 A：0005 在账本里没有记录
 

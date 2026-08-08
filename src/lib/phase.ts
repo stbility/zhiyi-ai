@@ -64,7 +64,7 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
     label: "Tool Registry、Agent、工作流状态机、Worker",
     state: "partial",
     missing:
-      "工具注册与智能体循环已完成;续跑(检查点摘要恢复,突破 300s 上限)已实现;工作流状态机与后台 Worker 未做",
+      "工具注册与智能体循环已完成;续跑(检查点摘要恢复,突破 300s 上限)已实现;工作流已上线(0036:10 态状态机 + 定义/步骤编辑 + 同步执行,单次最多 5 步,运行历史留痕);后台 Worker 排队执行与人工闸门(等待输入/等待确认)后续上线",
   },
   {
     id: "5",
