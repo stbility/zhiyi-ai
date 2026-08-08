@@ -21,7 +21,7 @@ async function loadSkills(organizationId: string): Promise<SkillRow[]> {
 
   const { data: skills } = await supabase
     .from("skills")
-    .select("id, name, title, description, version, tags, enabled, created_at")
+    .select("id, name, title, description, version, tags, body, enabled, created_at")
     .eq("organization_id", organizationId)
     .order("created_at", { ascending: false });
 
@@ -32,6 +32,7 @@ async function loadSkills(organizationId: string): Promise<SkillRow[]> {
     description: row.description as string,
     version: row.version as string,
     tags: (row.tags as string[] | null) ?? [],
+    body: (row.body as string | null) ?? "",
     enabled: (row.enabled as boolean | null) ?? true,
     createdAt: row.created_at as string,
   }));
@@ -76,7 +77,8 @@ export default async function SkillsPage() {
   }
 
   const skills = await loadSkills(org.id);
-  const canManage = org.role === "owner" || org.role === "admin";
+  // 0042 起写操作放开到组织成员 —— 技能库就是给非工程师编辑的
+  const canManage = true;
 
   return (
     <SkillsManager

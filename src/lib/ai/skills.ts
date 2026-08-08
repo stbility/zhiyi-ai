@@ -211,3 +211,46 @@ export function parseSkillMarkdown(markdown: string): ParsedSkill {
     body,
   };
 }
+
+/** name slug 合法性 —— 编辑器与解析器共用同一把尺子 */
+export function isValidSkillName(name: string): boolean {
+  return /^[a-z0-9][a-z0-9-_]*$/.test(name);
+}
+
+export interface SkillDraft {
+  readonly name: string;
+  readonly title: string;
+  readonly description: string;
+  readonly version: string;
+  readonly author: string;
+  readonly license: string;
+  readonly platforms: readonly string[];
+  readonly tags: readonly string[];
+  readonly relatedSkills: readonly string[];
+  readonly body: string;
+}
+
+/**
+ * 编辑器的逆序列化:字段 → SKILL.md 文本。
+ * 与 parseSkillMarkdown 互为逆操作(round-trip 有测试兜底),
+ * 保证「页内编辑保存」和「粘贴导入」两条路产出的技能文件同构。
+ */
+export function buildSkillMarkdown(d: SkillDraft): string {
+  const list = (v: readonly string[]) => v.join(",");
+  const esc = (v: string) => v.replace(/\n/g, " ").replace(/\r/g, "");
+  const frontmatter = [
+    "---",
+    `name: ${d.name}`,
+    `title: ${esc(d.title)}`,
+    `description: ${esc(d.description)}`,
+    `version: ${d.version}`,
+    `author: ${esc(d.author)}`,
+    `license: ${d.license}`,
+    `platforms: ${list(d.platforms)}`,
+    `tags: ${list(d.tags)}`,
+    `related_skills: ${list(d.relatedSkills)}`,
+    "---",
+    "",
+  ].join("\n");
+  return `${frontmatter}${d.body.trim()}\n`;
+}
