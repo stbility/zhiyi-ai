@@ -266,6 +266,20 @@ export async function runAgentTurn({
             resumeContext =
               `\n\n【续跑上下文 —— 以下步骤在此前的运行中已完成,不要重做,直接继续】\n` +
               lines.join("\n");
+
+          // 【Bug 3 修复】workspace_files 内容注入上下文
+          // 续跑时只恢复了文字描述,模型不知道已有哪些文件。
+          // 把 workspace 里已有的文件列表注入,让模型知道直接使用而非重写。
+          const { data: prevFiles } = await supabase
+            .from("workspace_files")
+            .select("path, size_chars")
+            .eq("written_by_conversation", conversationId)
+            .order("path");
+          if (prevFiles && prevFiles.length > 0) {
+            const fileList = (prevFiles as { path: string; size_chars: number }[])
+              .map((f) => `  - ${f.path} (${f.size_chars}字符)`)
+              .join("\n");
+            resumeContext += `\n\n【工作区已有文件 —— 不要重写,直接使用】\n${fileList}`;
           }
         } else {
           logger.warn(
