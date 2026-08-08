@@ -72,4 +72,21 @@ describe("工作流定义解析", () => {
     expect(() => parseDefinition({ steps: [{ id: "s1", title: "", prompt: "x" }] })).toThrow();
     expect(() => parseDefinition({ steps: [{ id: "s1", title: "x", prompt: "" }] })).toThrow();
   });
+
+  it("步骤可带 Agent 与审批闸门,非法 Agent 名被拒绝", () => {
+    const def = parseDefinition({
+      steps: [
+        { id: "s1", title: "调研", prompt: "做 A", agent: "研研究" },
+        { id: "s2", title: "确认", prompt: "做 B", needsApproval: true },
+      ],
+    });
+    expect(def.steps[0]?.agent).toBe("研研究");
+    expect(def.steps[1]?.needsApproval).toBe(true);
+    expect(def.steps[1]?.agent).toBeUndefined();
+    expect(() =>
+      parseDefinition({
+        steps: [{ id: "s1", title: "x", prompt: "y", agent: "a".repeat(31) }],
+      }),
+    ).toThrow(/Agent 名最多 30 字/);
+  });
 });

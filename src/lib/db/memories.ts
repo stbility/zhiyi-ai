@@ -224,6 +224,70 @@ ${input.content}
  * 走 RPC:服务端装配上下文时用,不走客户端查询。
  * 客户端查了也没用 —— 召回发生在服务端,用户看到的是已经带进上下文的回答。
  */
+/**
+ * 工作流产物沉淀为记忆(闭环最后一环)。
+ *
+ * 与 saveMemory 的区别:工作流步骤没有 messageId —— 产物来自运行输出,
+ * source_type 固定为 from_workflow(设计系统徽章语义:从工作流生成),
+ * 归组织级、可召回。沉淀失败只记日志,不阻断工作流本身 ——
+ * 运行已经完成,记忆是增强不是承诺(与 wiki 同步同一哲学)。
+ */
+import { buildWorkflowMemoryContent } from "@/lib/workflow/memory-content";
+
+export { buildWorkflowMemoryContent, WORKFLOW_MEMORY_MAX_CHARS } from "@/lib/workflow/memory-content";
+
+export async function saveWorkflowMemory(
+  supabase: SupabaseClient,
+  input: {
+    organizationId: string;
+    createdBy: string;
+    content: string;
+  },
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const content = buildWorkflowMemoryContent(input.content);
+  if (content === "") {
+    return { ok: false, error: "没有可沉淀的产物内容。" };
+  }
+
+  const { data: created, error } = await supabase
+    .from("memories")
+    .insert({
+      organization_id: input.organizationId,
+      conversation_id: null,
+      message_id: null,
+      created_by: input.createdBy,
+      category: "knowledge",
+      content,
+      source_type: "from_workflow",
+      confidence: null,
+      scope: "organization",
+      recall_enabled: true,
+    })
+    .select("id")
+    .single();
+
+  if (error || !created) {
+    logDbFailure("memories.workflow_insert", error, {
+      organizationId: input.organizationId,
+    });
+    return { ok: false, error: `未能沉淀工作流记忆:${error?.message ?? "未知错误"}` };
+  }
+
+  // 与对话记忆同一待遇:同步进 LLM Wiki。失败不影响记忆本身。
+  await syncMemoryToWiki(supabase, {
+    organizationId: input.organizationId,
+    conversationId: null,
+    memoryId: created.id as string,
+    category: "knowledge",
+    content,
+    createdBy: input.createdBy,
+  }).catch((e) => {
+    logDbFailure("memories.workflow_wiki_sync", e instanceof Error ? e : undefined);
+  });
+
+  return { ok: true, id: created.id as string };
+}
+
 export async function recallMemories(
   supabase: SupabaseClient,
   organizationId: string,
