@@ -196,6 +196,14 @@ create policy organizations_update_admin on public.organizations
   using (public.has_org_role(id, array['owner', 'admin']::public.org_role[]))
   with check (public.has_org_role(id, array['owner', 'admin']::public.org_role[]));
 
+-- 【MED-3 修复】created_by 是 bootstrap 提权链的锚点
+-- (organizations_select_visible / bootstrap 都依赖 created_by = auth.uid())。
+-- 允许 admin 改写 created_by = 允许把任意用户变成该组织创建者,进而自封 owner。
+-- 用列级 REVOKE(与 0018/0022/0030 密文列同款模式):created_by 对
+-- authenticated 彻底只读 —— UPDATE 无法改它,INSERT 仍可写(创建时赋值)。
+revoke update (created_by) on public.organizations from authenticated, anon;
+grant update (id, name, slug, created_at, updated_at) on public.organizations to authenticated;
+
 drop policy if exists organizations_delete_owner on public.organizations;
 create policy organizations_delete_owner on public.organizations
   for delete to authenticated
@@ -222,6 +230,13 @@ create policy memberships_update_admin on public.memberships
   )
   with check (
     public.has_org_role(organization_id, array['owner', 'admin']::public.org_role[])
+    -- 【HIGH-2 修复】角色上限:admin 不能把角色改成 owner(或更高),
+    -- 也不能给他人授予超过自己权限的角色 —— 否则 admin 可自封 owner 提权。
+    -- owner 可授任意角色;非 owner(admin)目标角色只能是 member/admin。
+    and (
+      public.has_org_role(organization_id, array['owner']::public.org_role[])
+      or public.memberships.role <> 'owner'::public.org_role
+    )
   );
 
 drop policy if exists memberships_delete_admin on public.memberships;

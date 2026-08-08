@@ -43,7 +43,7 @@ describe("0033 Stripe 客户与订阅", () => {
   it("订阅状态机锁死 —— 权益判断只认 active/trialing", () => {
     expect(M0033).toMatch(/status\s+text not null/);
     expect(M0033).toMatch(
-      /check \(status in \('active','trialing','past_due','canceled','unpaid','incomplete'\)\)/,
+      /check \(status in \('active','trialing','past_due','canceled','unpaid','incomplete','paused','incomplete_expired'\)\)/,
     );
   });
 

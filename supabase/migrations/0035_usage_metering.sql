@@ -48,6 +48,16 @@ declare
   v_month text := to_char(now() at time zone 'UTC', 'YYYY-MM');
   v_total integer;
 begin
+  -- 【越权修复】RPC 是公开 HTTP 面:此前任意登录用户可传任意
+  -- p_user_id 给他人累加用量(quota DoS)。函数体强制绑定调用者。
+  if (select auth.uid()) is distinct from p_user_id then
+    raise exception '无权操作其他用户的用量';
+  end if;
+  -- p_units 防御:单次累加上限,防止异常调用把月度额度一次打穿
+  if p_units is null or p_units <= 0 or p_units > 10000 then
+    raise exception '用量累加值不合法(1-10000)';
+  end if;
+
   insert into public.usage_metering (user_id, period_month, category, units)
   values (p_user_id, v_month, p_category, p_units)
   on conflict (user_id, period_month, category)
@@ -69,9 +79,10 @@ stable
 security definer
 set search_path = ''
 as $$
+  -- 【越权修复】同 bump_usage:只查调用者自己的用量
   select u.category, u.units
   from public.usage_metering u
-  where u.user_id = p_user_id
+  where u.user_id = (select auth.uid())
     and u.period_month = to_char(now() at time zone 'UTC', 'YYYY-MM')
     and (p_category is null or u.category = p_category);
 $$;

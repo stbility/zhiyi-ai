@@ -56,9 +56,24 @@ alter table public.platform_models enable row level security;
 -- 读:所有登录用户都能看到目录。
 -- 这张表里没有任何机密 —— 密钥只存了**变量名**,而变量名本身不是秘密
 -- (它就写在部署文档里)。看得到目录,用户才能理解「免费档有哪些模型」。
+-- 【M1 修复】tier 隔离落地 RLS:免费组织(free_only=true)的成员只能看到
+-- tier='free' 的模型;paid 模型仅对至少拥有一个非免费组织(free_only=false)
+-- 的成员可见。此前只靠应用层 loadPlatformCandidates 过滤 —— 若应用层
+-- 漏过滤或未来有代码直接查表,免费组织可消费 paid 模型(成本侧风险)。
+-- 这里在数据库层兜底:免费的永远看不到 paid。
 create policy platform_models_select_authenticated on public.platform_models
   for select to authenticated
-  using (enabled);
+  using (
+    enabled
+    and (
+      tier = 'free'
+      or exists (
+        select 1 from public.organizations o
+        where (o.free_only = false or o.free_only is null)
+          and private.is_org_member(o.id)
+      )
+    )
+  );
 
 -- 写:**没有任何策略**。
 -- 平台目录由迁移维护,不由用户改 —— 少写一条 insert 策略,

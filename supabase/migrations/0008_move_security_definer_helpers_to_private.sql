@@ -29,6 +29,17 @@ create schema if not exists private;
 revoke all on schema private from public, anon, authenticated;
 grant usage on schema private to postgres, service_role;
 
+-- 【HIGH-1 修复】策略表达式以查询用户身份在解析期做 ACL 检查,
+-- 需要 private schema 的 USAGE + 函数 EXECUTE。此前只授了
+-- postgres/service_role,而 0008 之后 20+ 个迁移的策略全部调用
+-- private.is_org_member / private.has_org_role —— 从零重放后
+-- authenticated 查询会报 permission denied for schema private,
+-- 整个 RLS 权限体系瘫痪(生产正常只因生产有未入库的手工 grant)。
+-- 这里把 authenticated 的 USAGE 与两个函数的 EXECUTE 显式授回。
+grant usage on schema private to authenticated;
+grant execute on function private.is_org_member(uuid) to authenticated;
+grant execute on function private.has_org_role(uuid, public.org_role[]) to authenticated;
+
 -- 判断当前用户是不是某组织的在职成员。
 --
 -- 必须是 SECURITY DEFINER:memberships 自己也有 RLS,而那条策略又要调用

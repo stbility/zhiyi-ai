@@ -51,8 +51,11 @@ insert into public.entitlements (plan_id, feature, quota) values
 on conflict (plan_id, feature) do nothing;
 
 -- 查询用户当前权益。无订阅 = free。
--- security definer:函数体内以函数 owner 身份执行,
--- 但 user_id 是参数 —— 调用方只能查自己的权益(由应用层传自己的 id)。
+-- security definer:函数体内以函数 owner 身份执行。
+-- 【越权修复】此前信任调用者传入的 p_user_id —— RPC 是公开 HTTP 面,
+-- 任意登录用户可查任意 user_id 的套餐。函数体改为强制
+-- auth.uid() 作为查询主体:参数保留以兼容应用层调用签名,
+-- 但函数内只认 (select auth.uid())。调用方传别人的 id 也查不到。
 create or replace function public.get_entitlements(p_user_id uuid)
 returns table (
   plan_id       text,
@@ -68,7 +71,7 @@ as $$
   from public.entitlements e
   where e.plan_id = coalesce(
     (select s.plan_id from public.subscriptions s
-     where s.user_id = p_user_id
+     where s.user_id = (select auth.uid())
        and s.status in ('active', 'trialing')
      order by s.created_at desc
      limit 1),

@@ -39,11 +39,20 @@ create policy message_feedback_select_member on public.message_feedback
   using (private.is_org_member(organization_id));
 
 -- 写:只能写自己的。created_by 必须等于当前用户,不能替别人打分
+-- 【M2 修复】补 message_id 归属校验:此前只验 org 成员 + created_by,
+-- 未校验 message_id 属于该组织 —— 用户可对任意 message_id(含别家
+-- 组织的消息)插入反馈行,破坏跨组织引用完整性。这里要求被反馈的
+-- 消息必须与反馈行属于同一组织。
 create policy message_feedback_insert_own on public.message_feedback
   for insert to authenticated
   with check (
     private.is_org_member(organization_id)
     and created_by = (select auth.uid())
+    and exists (
+      select 1 from public.messages m
+      where m.id = message_id
+        and m.organization_id = public.message_feedback.organization_id
+    )
   );
 
 create policy message_feedback_update_own on public.message_feedback

@@ -83,7 +83,10 @@ create policy memories_insert_own on public.memories
 create policy memories_update_own on public.memories
   for update to authenticated
   using (created_by = (select auth.uid()))
-  with check (created_by = (select auth.uid()));
+  with check (
+    created_by = (select auth.uid())
+    and private.is_org_member(organization_id)
+  );
 
 create policy memories_delete_own on public.memories
   for delete to authenticated
@@ -96,6 +99,13 @@ create policy memories_delete_own on public.memories
 -- 用 security invoker + RLS 即可:服务端 client 有自己的角色,
 -- RLS 的 auth.uid() 在服务端为空,所以这里不用 RLS 而是显式过滤。
 -- 因此定义成 security definer 并固定以调用者传入的 org 为准。
+--
+-- 【越权修复】RPC 端点是公开 HTTP 面,"调用方只传自己的组织"不是
+-- 安全边界 —— 任意登录用户可传任意 org_id。函数体必须用
+-- auth.uid() 校验调用者确是该组织在职成员;并过滤 scope='user'
+-- 的私密记忆(组织级召回不该把他人私密记忆带出去)。
+-- 同时补 revoke from public,anon:Postgres 默认 PUBLIC 有 EXECUTE,
+-- 否则未登录用户也能调(0002 修过的坑,这里又犯了一次)。
 create or replace function public.recall_memories(
   p_organization_id uuid,
   p_limit integer default 10
@@ -106,22 +116,44 @@ create or replace function public.recall_memories(
   source_type text,
   confidence numeric,
   last_used_at timestamptz
-) language sql security definer set search_path = public as $$
+) language sql security definer set search_path = '' as $$
   select m.id, m.category, m.content, m.source_type, m.confidence, m.last_used_at
   from public.memories m
   where m.organization_id = p_organization_id
     and m.recall_enabled = true
+    -- 只回组织级记忆:成员私密记忆不随组织召回流出
+    and m.scope = 'organization'
+    -- 调用者必须是该组织在职成员(auth.uid() 绑定,参数改不了)
+    and exists (
+      select 1 from public.memberships ms
+      where ms.organization_id = p_organization_id
+        and ms.user_id = (select auth.uid())
+        and ms.status = 'active'
+    )
   order by m.last_used_at desc nulls last, m.created_at desc
   limit p_limit;
 $$;
 
 -- 召回成功后更新 last_used_at,让召回按使用频率自适应
 create or replace function public.touch_memory(p_memory_id uuid)
-returns void language sql security definer set search_path = public as $$
+returns void language sql security definer set search_path = '' as $$
   update public.memories
   set last_used_at = now()
-  where id = p_memory_id;
+  where id = p_memory_id
+    -- 只能碰自己的记忆(或本组织成员的组织级记忆)
+    and (
+      created_by = (select auth.uid())
+      or exists (
+        select 1 from public.memberships ms
+        where ms.organization_id = memories.organization_id
+          and ms.user_id = (select auth.uid())
+          and ms.status = 'active'
+      )
+    );
 $$;
 
+-- 越权修复:0002 的坑 —— 新建函数默认 PUBLIC 有 EXECUTE,必须显式收回
+revoke all on function public.recall_memories(uuid, integer) from public, anon;
+revoke all on function public.touch_memory(uuid) from public, anon;
 grant execute on function public.recall_memories(uuid, integer) to authenticated;
 grant execute on function public.touch_memory(uuid) to authenticated;

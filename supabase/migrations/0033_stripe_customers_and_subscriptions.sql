@@ -44,7 +44,7 @@ create table if not exists public.subscriptions (
   -- 其余( past_due / canceled / unpaid / incomplete )一律按无权益处理,
   -- 用 check 约束锁死 —— 别让脏数据混进来
   status              text not null
-    check (status in ('active','trialing','past_due','canceled','unpaid','incomplete')),
+    check (status in ('active','trialing','past_due','canceled','unpaid','incomplete','paused','incomplete_expired')),
   -- plan_id 对齐 plans.ts 的 PlanId: free / professional / enterprise。
   -- 由 webhook 从 Stripe Price 的 metadata.plan_id 映射而来,
   -- 不在客户端传 —— 客户端说自己是 enterprise 不算数
