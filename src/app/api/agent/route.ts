@@ -109,7 +109,9 @@ export async function POST(request: NextRequest) {
     // 时间预算由**这条路由的 maxDuration** 推导,不在别处另写一个秒数。
     // 减掉的那点是留给「把记录写进库」的:平台到点直接杀进程,
     // 不留这点时间用户连发生了什么都看不到。
-    budgetMs: maxDuration * 1000 - 15_000,
+    // 0043 起余量加大到 30s:工具执行也被预算约束后,护栏在 270s 附近
+    // 优雅触发,平台 300s 硬杀不会再抢先(硬杀 = 连接断开、只报断网)。
+    budgetMs: maxDuration * 1000 - 30_000,
     supabase,
     userId,
     organizationId,

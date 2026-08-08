@@ -72,6 +72,9 @@ export interface InitialTurn {
   outputTokens: number | null;
   latencyMs: number | null;
   error: string | null;
+  /** 0043:这条消息对应的运行记录。中断且可续时,刷新后按钮仍可恢复 */
+  runId?: string | undefined;
+  resumable?: boolean | undefined;
 }
 
 interface Turn {
@@ -97,6 +100,8 @@ interface Turn {
     latencyMs: number;
   };
   error?: string;
+  /** 0043:消息对应的运行记录 id —— 「继续运行」按钮带着它续跑 */
+  runId?: string;
   /** 主模型排队时自动换了模型的说明。必须显示 —— 悄悄换等于伪造来源 */
   fallback?: string;
   /** 本轮附带的文件数,让回看时知道当时给了模型什么 */
@@ -264,6 +269,8 @@ function toTurn(t: InitialTurn): Turn {
   // 从库里恢复的消息,id 本身就是真实的 message id
   const turn: Turn = { id: t.id, dbId: t.id, role: t.role, content: t.content };
   if (t.error) turn.error = t.error;
+  if (t.runId) turn.runId = t.runId;
+  if (t.resumable) turn.resumable = true;
   if (t.latencyMs !== null) {
     turn.meta = {
       inputTokens: t.inputTokens,
@@ -391,7 +398,11 @@ export function ChatPanel({
 
   // 智能体续跑。上一轮撞上时间上限后,前端记住 runId,
   // 用户点「继续运行」时带着它重发 —— 服务端从检查点续跑。
-  const resumeRef = useRef<string | null>(null);
+  // 0043:初始化直接取历史里最近一条可续的运行 —— 刷新页面后
+  // 「继续运行」按钮依然可用,不用靠手打「继续」触发从头搜索。
+  const resumeRef = useRef<string | null>(
+    [...initialTurns].reverse().find((t) => t.resumable)?.runId ?? null,
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);

@@ -599,28 +599,67 @@ export async function runAgent({
         parsedArgs = undefined;
       }
 
-      const raw = call.name.startsWith("git_")
-        ? gitContext
-          ? await executeGitTool(call, gitContext)
-          : {
-              callId: call.id,
-              name: call.name,
-              ok: false,
-              content:
-                "尚未连接 Git 仓库,无法使用仓库工具。请先到「集成」页连接 GitHub。",
-            }
-        : call.name.startsWith("mcp__") ||
-            call.name === "skill_list" ||
-            call.name === "skill_view"
-          ? externalContext
-            ? await executeExternalTool(call, externalContext)
-            : {
-                callId: call.id,
-                name: call.name,
-                ok: false,
-                content: "外部工具未装配。",
-              }
-          : await executeTool(call, toolContext);
+      // 工具执行同样受预算约束 —— 模型调用已经吃掉大部分时间,
+      // 工具不能在预算外再拖几十秒:那是「300 秒平台硬杀」的窗口。
+      // 剩余 <5s 直接放弃执行;运行中的工具到点也被中止。
+      // 语义与工具失败一致:**返回观察结果而不抛错** —— 模型看得到
+      // 「预算耗尽,没跑成」,整轮随后优雅停在时间护栏上,而不是
+      // 撞平台强杀导致连接直接断开、界面只剩「断网」。
+      const raw = await (async () => {
+        const leftForTool = limits.budgetMs - (Date.now() - startedAt);
+        if (leftForTool <= 5_000) {
+          return {
+            callId: call.id,
+            name: call.name,
+            ok: false,
+            content: "时间预算不足,本轮停止执行该工具。",
+          };
+        }
+        const run = () =>
+          call.name.startsWith("git_")
+            ? gitContext
+              ? executeGitTool(call, gitContext)
+              : Promise.resolve({
+                  callId: call.id,
+                  name: call.name,
+                  ok: false,
+                  content:
+                    "尚未连接 Git 仓库,无法使用仓库工具。请先到「集成」页连接 GitHub。",
+                })
+            : call.name.startsWith("mcp__") ||
+                call.name === "skill_list" ||
+                call.name === "skill_view"
+              ? externalContext
+                ? executeExternalTool(call, externalContext)
+                : Promise.resolve({
+                    callId: call.id,
+                    name: call.name,
+                    ok: false,
+                    content: "外部工具未装配。",
+                  })
+              : executeTool(call, toolContext);
+        return Promise.race([
+          run(),
+          new Promise<{
+            callId: string;
+            name: string;
+            ok: boolean;
+            content: string;
+          }>((resolve) => {
+            const timer = setTimeout(
+              () =>
+                resolve({
+                  callId: call.id,
+                  name: call.name,
+                  ok: false,
+                  content: "工具执行超时(时间预算耗尽),本轮到此为止。",
+                }),
+              leftForTool - 3_000,
+            );
+            (timer as unknown as { unref?: () => void }).unref?.();
+          }),
+        ]);
+      })();
 
       const result: ToolResult = {
         ...raw,

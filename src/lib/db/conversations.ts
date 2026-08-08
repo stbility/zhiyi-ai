@@ -147,20 +147,53 @@ export async function loadTurns(
   const { data } = await supabase
     .from("messages")
     .select(
-      "id, role, content, input_tokens, output_tokens, latency_ms, error_message",
+      "id, role, content, input_tokens, output_tokens, latency_ms, error_message, run_id",
     )
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true });
 
-  return (data ?? []).map((row) => ({
-    id: row.id as string,
-    role: row.role as "user" | "assistant",
-    content: (row.content as string | null) ?? "",
-    inputTokens: (row.input_tokens as number | null) ?? null,
-    outputTokens: (row.output_tokens as number | null) ?? null,
-    latencyMs: (row.latency_ms as number | null) ?? null,
-    error: (row.error_message as string | null) ?? null,
-  }));
+  const rows = (data ?? []) as {
+    id: string;
+    role: string;
+    content: string | null;
+    input_tokens: number | null;
+    output_tokens: number | null;
+    latency_ms: number | null;
+    error_message: string | null;
+    run_id: string | null;
+  }[];
+
+  // 0043:按 run_id 反查运行状态 —— 中断且可续的运行,刷新后
+  // 「继续运行」按钮依然能恢复,不必手打「继续」触发从头搜索。
+  const runIds = [...new Set(rows.map((r) => r.run_id).filter((x): x is string => !!x))];
+  const runStates = new Map<string, { interrupted: boolean; resumable: boolean }>();
+  if (runIds.length > 0) {
+    const { data: runs } = await supabase
+      .from("agent_runs")
+      .select("id, status, resumable")
+      .in("id", runIds);
+    for (const run of runs ?? []) {
+      runStates.set(run.id as string, {
+        interrupted: run.status === "interrupted",
+        resumable: run.resumable === true,
+      });
+    }
+  }
+
+  return rows.map((row) => {
+    const state = row.run_id ? runStates.get(row.run_id) : undefined;
+    return {
+      id: row.id,
+      role: row.role as "user" | "assistant",
+      content: (row.content as string | null) ?? "",
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      latencyMs: row.latency_ms,
+      error: row.error_message,
+      runId: state?.interrupted && state.resumable ? (row.run_id ?? undefined) : undefined,
+      resumable: state?.interrupted && state.resumable ? true : undefined,
+    };
+  });
 }
 
 /**

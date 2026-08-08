@@ -63,6 +63,7 @@
 | `0040_memory_embeddings.sql` | 待应用 | pgvector 扩展 + memories.embedding + search_memories |
 | `0041_eval_cases.sql` | 待应用 | eval_cases(反馈飞轮消费端) |
 | `0042_skills_member_editable.sql` | 待应用 | skills 写策略 admin → 组织成员 |
+| `0043_messages_run_id.sql` | 待应用 | messages.run_id(续跑跨刷新) |
 
 ### 备注 A：0005 在账本里没有记录
 

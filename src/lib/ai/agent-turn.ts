@@ -245,6 +245,18 @@ export async function runAgentTurn({
           run.resumable === true;
 
         if (canResume) {
+          // 0043:续跑开始,旧运行标记为不可再续 —— 只有最新一条运行可续,
+          // 否则刷新后同一个旧 run 会被重复续跑(重放副作用,比如
+          // git_propose_changes 开出第二个分支)。失败不阻断续跑。
+          try {
+            await supabase
+              .from("agent_runs")
+              .update({ resumable: false })
+              .eq("id", resumeRunId);
+          } catch {
+            // 忽略:标记失败只是可能允许重复续跑,不致命
+          }
+
           const { data: prevSteps } = await supabase
             .from("agent_steps")
             .select("step_index, tool_name, result_preview")
@@ -430,6 +442,9 @@ export async function runAgentTurn({
             organization_id: organizationId,
             role: "assistant",
             content: summary,
+            // 0043:把运行记录挂到消息上 —— 页面恢复会话时按 run_id 反查
+            // 状态,「继续运行」按钮才能跨页面刷新存活
+            run_id: journal?.runId ?? null,
             // 记实际跑的那一个。selected 就是本次唯一跑过的模型 ——
             // 从这里取而不是从入参取,是为了让「库里记的」和「真跑的」
             // 在代码上是同一个来源,而不是两个碰巧相等的值。
@@ -473,6 +488,8 @@ export async function runAgentTurn({
             organization_id: organizationId,
             role: "assistant",
             content: "",
+            // 0043:失败消息同样挂运行记录 —— 失败也是发生过的事实
+            run_id: journal?.runId ?? null,
             // 失败留痕同样记**实际跑的**那一个,与成功路径同源。
             // 两条路径取不同的来源,迟早会出现「同一次运行两个模型名」。
             provider_id: selected.providerId,
