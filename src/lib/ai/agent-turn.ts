@@ -521,10 +521,32 @@ async function ensureWorkspace(
   }
 
   const workspaceId = created.id as string;
-  await supabase
+  // 【Bug 1 修复】link 更新可能因函数被强杀而未执行。
+  // 不抛错:workspace 已建,工具正在写入它。下次 ensureWorkspace 被调用时
+  // 会重新读到 conversation.workspace_id(=null),然后走到这里再次尝试 link。
+  // 关键:绝不因为 link 失败就废弃已创建的 workspace —— 里面已有用户文件。
+  const { error: linkError } = await supabase
     .from("conversations")
     .update({ workspace_id: workspaceId })
     .eq("id", conversationId);
+
+  if (linkError) {
+    // link 失败时,查是否已存在属于这个 conversation 的 workspace。
+    // 判断依据:workspace_files 里有没有这次 conversation 写入的文件。
+    // 有则说明上一次请求建了 workspace 并写入了文件,但 link 被强杀;
+    // 续跑时继续用这个 workspace,里面已有本次写入的文件。
+    const { data: prev } = await supabase
+      .from("workspace_files")
+      .select("workspace_id")
+      .eq("written_by_conversation", conversationId)
+      .limit(1)
+      .maybeSingle();
+
+    if (prev) {
+      return prev.workspace_id as string;
+    }
+    // 无已有文件,说明新建的那个 workspace 就是唯一的,返回它
+  }
 
   return workspaceId;
 }
