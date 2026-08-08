@@ -20,6 +20,7 @@ export const dynamic = "force-dynamic";
 
 const checkoutSchema = z.object({
   planId: z.enum(["professional", "enterprise"], "仅支持付费套餐"),
+  interval: z.enum(["month", "year"], "仅支持月付/年付").optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -58,14 +59,18 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
-  const { planId } = parsed.data;
+  const { planId, interval } = parsed.data;
+  const intervalOrMonth = interval ?? "month";
 
-  const priceId = getPriceIdForPlan(planId);
+  const priceId = getPriceIdForPlan(planId, intervalOrMonth);
   if (!priceId) {
     return NextResponse.json(
       {
-        error: `套餐 ${planId} 的价格未配置。`,
-        hint: "需要在 Stripe 创建 Price 并在环境变量配置 STRIPE_PRICE_"+planId.toUpperCase(),
+        error: `套餐 ${planId}(${intervalOrMonth})的价格未配置。`,
+        hint:
+          "需要在 Stripe 创建 Price 并在环境变量配置 STRIPE_PRICE_" +
+          planId.toUpperCase() +
+          (intervalOrMonth === "year" ? "_YEAR" : ""),
       },
       { status: 503 },
     );
@@ -106,8 +111,10 @@ export async function POST(request: NextRequest) {
       customer: customerId,
       line_items: [{ price: priceId, quantity: 1 }],
       allow_promotion_codes: true,
-      metadata: { userId: user.id, planId },
-      subscription_data: { metadata: { userId: user.id, planId } },
+      metadata: { userId: user.id, planId, interval: intervalOrMonth },
+      subscription_data: {
+        metadata: { userId: user.id, planId, interval: intervalOrMonth },
+      },
       success_url: `${getSiteUrl()}/billing?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${getSiteUrl()}/billing`,
     });

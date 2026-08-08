@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { PricingCard } from "@/components/account/PricingCard";
+import { PlansSection } from "@/components/marketing/PlansSection";
 import { ProductShowcase } from "@/components/marketing/ProductShowcase";
 import { ScrollReveal } from "@/components/marketing/ScrollReveal";
 import { Icon, type IconName } from "@/components/icons/Icon";
@@ -170,31 +170,7 @@ export default function HomePage() {
         <h2 className="font-zh text-h2 text-fg mb-8 text-center font-semibold">
           定价
         </h2>
-        <div className="flex flex-wrap justify-center gap-5">
-          {PLANS.map((plan) => (
-            <PricingCard
-              key={plan.id}
-              name={plan.name}
-              price={plan.price ?? "价格待定"}
-              period={plan.period ?? ""}
-              features={plan.features}
-              highlighted={plan.highlighted}
-              annualNote={plan.annualNote}
-              annualHref={plan.annualStripeUrl}
-              ctaLabel={
-                plan.id === "free"
-                  ? "免费开始"
-                  : `立即订阅 ${plan.price ?? ""}`
-              }
-              href={
-                plan.id === "free"
-                  ? "/register"
-                  : (plan.stripeUrl ?? undefined)
-              }
-              external={plan.id !== "free"}
-            />
-          ))}
-        </div>
+        <PlansSection plans={PLANS} />
       </Section>
 
       {/* 安全 */}

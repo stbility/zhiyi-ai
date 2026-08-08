@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { PricingCard } from "@/components/account/PricingCard";
+import { PlansSection } from "@/components/marketing/PlansSection";
 import { Badge } from "@/components/primitives/Badge";
 import { LinkButton } from "@/components/primitives/LinkButton";
 import { Tag } from "@/components/primitives/Tag";
@@ -125,25 +125,7 @@ export default function PricingPage() {
         <p className="text-fg mb-12 text-center text-2xl font-semibold">
           选择适合你的工作流方案
         </p>
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-          {PLANS.map((plan) => (
-            <div key={plan.id} className="flex justify-center">
-              <PricingCard
-                name={plan.name}
-                price={plan.price ?? "价格待定"}
-                period={plan.period ?? ""}
-                features={plan.features}
-                highlighted={plan.highlighted}
-                annualNote={plan.annualNote}
-                annualHref={plan.annualStripeUrl}
-                ctaLabel={`立即订阅 ${plan.price ?? ""}`}
-                href={plan.stripeUrl}
-                external
-                className="w-full"
-              />
-            </div>
-          ))}
-        </div>
+        <PlansSection plans={PLANS} />
       </section>
 
       {/* Footer CTA */}
@@ -156,20 +138,11 @@ export default function PricingPage() {
             从专业版开始,随团队成长无缝升级至企业版。
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3">
-            <LinkButton
-              href={PLANS.find((p) => p.id === "professional")?.stripeUrl ?? "/"}
-              external
-              size="lg"
-            >
-              订阅专业版 {PLANS.find((p) => p.id === "professional")?.price ?? ""} →
+            <LinkButton href="/register" size="lg">
+              订阅专业版 HK49 →
             </LinkButton>
-            <LinkButton
-              href={PLANS.find((p) => p.id === "enterprise")?.stripeUrl ?? "/"}
-              external
-              variant="secondary"
-              size="lg"
-            >
-              企业版 {PLANS.find((p) => p.id === "enterprise")?.price ?? ""}
+            <LinkButton href="/register" variant="secondary" size="lg">
+              企业版 HK229
             </LinkButton>
           </div>
         </div>

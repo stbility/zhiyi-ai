@@ -12,8 +12,10 @@
  *
  * 价格标准格式:HK49 / HK229(不带货币符号 $,2026-08-08 定)。
  *
- * 说明:价格文案为产品决策展示值。支付接入(Stripe 应用层)已移除,
- * 当前无线上收款路径;接入支付时以支付平台真实配置为准。
+ * 说明:价格文案为产品决策展示值。购买走 /api/billing/checkout
+ * (登录后 Stripe Checkout Session,带 userId 归属),本文件的
+ * stripeUrl / annualStripeUrl 为 Payment Link,仅作测试与备选入口
+ * —— Payment Link 无法携带每用户 userId,不能作为正式订阅路径。
  */
 
 export type PlanId = "free" | "professional" | "enterprise";
