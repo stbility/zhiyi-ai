@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { parseSkillMarkdown, SkillParseError } from "@/lib/ai/skills";
+import { parseSkillMarkdown, SkillParseError, isValidSkillName } from "@/lib/ai/skills";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { logger } from "@/lib/log";
 
@@ -79,7 +79,7 @@ export async function importSkill(
   if (error) {
     if (error.code === "42501") {
       return {
-        error: "没有权限导入技能。只有组织的所有者或管理员可以操作。",
+        error: "没有权限导入技能。只有组织的成员可以操作。",
       };
     }
     if (error.code === "23505") {
@@ -131,7 +131,7 @@ export async function toggleSkill(
 
   if (error) {
     if (error.code === "42501") {
-      return { error: "没有权限修改。只有组织的所有者或管理员可以操作。" };
+      return { error: "没有权限修改。只有组织的成员可以操作。" };
     }
     return { error: error.message };
   }
@@ -168,7 +168,7 @@ export async function deleteSkill(
 
   if (error) {
     if (error.code === "42501") {
-      return { error: "没有权限删除。只有组织的所有者或管理员可以操作。" };
+      return { error: "没有权限删除。只有组织的成员可以操作。" };
     }
     return { error: error.message };
   }
@@ -176,4 +176,95 @@ export async function deleteSkill(
 
   revalidatePath("/settings/skills");
   return { ok: "已删除。智能体将不再看到这个技能。" };
+}
+
+const editorSchema = z.object({
+  id: z.string().uuid().optional(), // 有 id = 编辑,无 id = 新建
+  organizationId: z.string().uuid("组织标识无效"),
+  name: z
+    .string()
+    .trim()
+    .min(1, "需要技能名(slug)")
+    .max(64)
+    .refine(isValidSkillName, "技能名必须是合法 slug(小写字母/数字/连字符/下划线)"),
+  title: z.string().trim().min(1, "需要标题").max(100),
+  description: z.string().trim().min(1, "需要触发条件(description)").max(500),
+  version: z.string().trim().min(1).max(20).default("1.0.0"),
+  tags: z.string().trim().max(200).transform((s) =>
+    s.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
+  ),
+  body: z.string().trim().min(1, "正文不能为空").max(100_000),
+});
+
+/** 新建或保存技能(编辑器)。非工程师直接写正文,不用懂 frontmatter。 */
+export async function saveSkill(
+  _prev: SkillState,
+  formData: FormData,
+): Promise<SkillState> {
+  const parsed = editorSchema.safeParse({
+    id: formData.get("id") || undefined,
+    organizationId: formData.get("organizationId"),
+    name: formData.get("name"),
+    title: formData.get("title"),
+    description: formData.get("description"),
+    version: formData.get("version") || undefined,
+    tags: formData.get("tags") || "",
+    body: formData.get("body"),
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "输入不合法" };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { error: "认证服务未配置。" };
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "登录状态已失效,请重新登录。" };
+
+  const draft = {
+    name: parsed.data.name,
+    title: parsed.data.title,
+    description: parsed.data.description,
+    version: parsed.data.version,
+    tags: parsed.data.tags,
+    body: parsed.data.body,
+    updated_at: new Date().toISOString(),
+  };
+
+  let error: { code?: string; message: string } | null = null;
+  let isUpdate = false;
+  if (parsed.data.id) {
+    isUpdate = true;
+    const result = await supabase
+      .from("skills")
+      .update(draft)
+      .eq("id", parsed.data.id)
+      .eq("organization_id", parsed.data.organizationId);
+    error = result.error;
+  } else {
+    const result = await supabase.from("skills").insert({
+      ...draft,
+      organization_id: parsed.data.organizationId,
+      author: user.email ?? user.id,
+      license: "MIT",
+      platforms: ["linux", "macos", "windows"],
+      related_skills: [],
+      created_by: user.id,
+    });
+    error = result.error;
+  }
+
+  if (error) {
+    if (error.code === "42501") {
+      return { error: "没有权限保存。只有组织的成员可以操作。" };
+    }
+    if (error.code === "23505") {
+      return { error: `技能 ${parsed.data.name} 已存在。换个名字,或编辑已有的那个。` };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath("/settings/skills");
+  return { ok: isUpdate ? `已保存 ${parsed.data.name}。` : `已创建 ${parsed.data.name}。` };
 }

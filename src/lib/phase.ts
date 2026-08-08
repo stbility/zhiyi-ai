@@ -85,7 +85,7 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
     label: "全部页面接入真实数据",
     state: "partial",
     missing:
-      "已接的页面全部是真实数据,无假数据;但 workflow/knowledge/reports 页面尚未创建",
+      "已接的页面全部是真实数据,无假数据;workflow/knowledge/memory/billing/skills 均已上线;技能库 0042 起组织成员可页内编辑(非工程师直接写正文,不用懂 frontmatter);reports 页面尚未创建",
   },
   {
     id: "8",
