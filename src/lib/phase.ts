@@ -71,15 +71,21 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
     label: "文件上传、解析、RAG、长期记忆",
     state: "partial",
     missing:
-      "文件夹上传、跨轮保留、上下文预算已完成;记忆沉淀闭环已实现(0028 memories 表 + 确认沉淀 + LLM Wiki 同步,代码已合入 main);解析、RAG、记忆管理页未做",
+      "文件夹上传、跨轮保留、上下文预算已完成;记忆沉淀闭环已实现(0028 memories 表 + 确认沉淀 + LLM Wiki 同步);AI 记忆管理页已上线(/memory,召回开关与删除);解析与 RAG 未做",
   },
-  { id: "6", label: "Entitlement Service、Stripe 订阅", state: "todo" },
+  {
+    id: "6",
+    label: "Entitlement Service、Stripe 订阅",
+    state: "partial",
+    missing:
+      "权益判断(0034 get_entitlements)与用量计量(0035)已就位;Stripe 应用层(checkout/portal/webhook)与订阅页已上线,但需配置 STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / 套餐 Price ID 后才可线上收款",
+  },
   {
     id: "7",
     label: "全部页面接入真实数据",
     state: "partial",
     missing:
-      "已接的页面全部是真实数据,无假数据;但 workflow/knowledge/memory/reports/billing 页面尚未创建",
+      "已接的页面全部是真实数据,无假数据;但 workflow/knowledge/reports 页面尚未创建",
   },
   {
     id: "8",
