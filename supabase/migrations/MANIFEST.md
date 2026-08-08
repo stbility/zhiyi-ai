@@ -56,6 +56,7 @@
 | `0033_stripe_customers_and_subscriptions.sql` | 20260807… | stripe_customers, subscriptions |
 | `0034_entitlements.sql` | 20260807… | entitlements, get_entitlements |
 | `0035_usage_metering.sql` | 20260807… | usage_metering, bump_usage, get_monthly_usage |
+| `0037_entitlements_quota_alignment.sql` | 20260808… | entitlements(配额 500/5000,见备注 C) |
 
 ### 备注 A：0005 在账本里没有记录
 
@@ -73,6 +74,15 @@ CI 的真实重放已经覆盖它。
 
 仓库里的 `0018` 是**补正后的版本**,所以单独重放它就能得到正确结果。
 这也是为什么「语句执行成功」永远不等于「结果正确」——必须查结果。
+
+### 备注 C：0037 权益配额对齐(Pro 500 / Ent 5000)
+
+0034 定义 initial 配额时用的是早期定价草案(pro=2000 / ent 不限),
+而落地页定价区 2026-08-08 已按「每月 500 / 5,000 次 Agent 额度」对外宣传。
+0037 用增量 UPDATE 把判断层收敛到页面承诺值,不改 0034(它已进生产账本)。
+幂等条件 `WHERE quota = 旧值` 保证重放安全。
+
+> 编号说明:0036 已被工作流状态机(0036_workflows.sql)占用,本迁移顺延为 0037。
 
 ## 维护规则
 
