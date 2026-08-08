@@ -65,21 +65,45 @@ export async function POST(request: NextRequest) {
       .eq("organization_id", organizationId)
       .eq("user_id", userId)
       .maybeSingle();
-    const isOrgAdmin =
-      membership?.role === "owner" || membership?.role === "admin";
 
-    if (!isOrgAdmin) {
+    // P0-4:owner/admin 豁免只适用于**多成员组织**(团队管理者)。
+    // 注册自动创建的个人组织只有 1 个成员 —— owner 就是普通用户自己,
+    // 豁免它等于把个人用户全部豁免,套餐额度失去意义。
+    const { count: memberCount } = await supabase
+      .from("memberships")
+      .select("user_id", { count: "exact" })
+      .eq("organization_id", organizationId);
+    const isTeamAdmin =
+      (membership?.role === "owner" || membership?.role === "admin") &&
+      (memberCount ?? 0) > 1;
+
+    if (!isTeamAdmin) {
       const { getMyEntitlements, quotaOf } = await import(
         "@/lib/billing/entitlements"
       );
+      const { agentTurnBlockReason, sumUsageRows } = await import(
+        "@/lib/billing/quota-math"
+      );
       const entitlements = await getMyEntitlements();
-      // quota null = 不限额度(enterprise);0 = 本月额度已耗尽;其余 = 还有余量
+      // quota null = 不限额度(enterprise);0 = 本月额度已耗尽;其余 = 配额值
       // entitlements 为 null = RPC 失败(网络/鉴权),按 free 兜底(不允许把异常当越权处理)
       const turnsQuota = entitlements ? quotaOf(entitlements, "monthly_agent_turns") : 0;
-      const blocked = turnsQuota !== null && turnsQuota <= 0;
-      if (blocked) {
+
+      // P0-3:配额必须减去本月已用量 —— 只查 quota>0 等于没有限制。
+      // usage_metering 由 finish() 的 bump_usage 写入(0035),按月累计。
+      let used = 0;
+      if (turnsQuota !== null) {
+        const { data: usage } = await supabase.rpc("get_monthly_usage", {
+          p_user_id: userId,
+          p_category: "agent_turns",
+        });
+        used = sumUsageRows((usage ?? []) as { units?: number | null }[]);
+      }
+
+      const reason = agentTurnBlockReason({ quota: turnsQuota, used });
+      if (reason) {
         return errorResponse(
-          `本月的智能体运行额度已用完,升级 Professional(月付 HK49)可提升额度。` +
+          `${reason}升级 Professional(月付 HK49)可提升额度。` +
             `升级后即可使用多步工具循环;或改用「AI 助手」对话通道。`,
           402,
         );

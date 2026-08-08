@@ -143,6 +143,24 @@ export function getServiceAvailability(): readonly ServiceAvailability[] {
             env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? env.STRIPE_PUBLISHABLE_KEY,
         },
         { names: ["STRIPE_WEBHOOK_SECRET"], value: env.STRIPE_WEBHOOK_SECRET },
+        // P0-1/能力门:价格未配,checkout 会 503 —— 状态页必须如实暴露,
+        // 不能「密钥齐了就显示已配置」而 checkout 实际不可用
+        {
+          names: ["STRIPE_PRICE_PROFESSIONAL"],
+          value: env.STRIPE_PRICE_PROFESSIONAL,
+        },
+        {
+          names: ["STRIPE_PRICE_PROFESSIONAL_YEAR"],
+          value: env.STRIPE_PRICE_PROFESSIONAL_YEAR,
+        },
+        {
+          names: ["STRIPE_PRICE_ENTERPRISE"],
+          value: env.STRIPE_PRICE_ENTERPRISE,
+        },
+        {
+          names: ["STRIPE_PRICE_ENTERPRISE_YEAR"],
+          value: env.STRIPE_PRICE_ENTERPRISE_YEAR,
+        },
       ],
       ["订阅升级", "账单门户", "套餐权益变更"],
       [

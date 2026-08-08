@@ -13,19 +13,33 @@ import type { OAuthProvider } from "@/lib/supabase/auth-settings";
  * 注册表单。
  *
  * 注册成功后由服务端 action 直接建号、登录并跳转,前端不需要处理「等待验证」
- * 这类中间态 —— 因为流程里已经没有邮件这一环了。原因见 actions.ts。
+ * 这类中间态 —— 因为流程里已经没有邮件这一环了(ALLOW_UNVERIFIED_SIGNUP 语义
+ * 见 actions.ts;设为 false 后流程会要求邮箱验证,表单文案如实跟随)。
  */
 export function RegisterForm({
   siteUrl,
   oauthProviders = [],
+  signupEnabled = true,
 }: {
   siteUrl: string;
   oauthProviders?: readonly OAuthProvider[] | undefined;
+  signupEnabled?: boolean | undefined;
 }) {
   const [state, formAction, pending] = useActionState<RegisterState, FormData>(
     register,
     {},
   );
+
+  // 注册开关(disable_signup):关闭时如实显示,不给假的注册入口。
+  if (!signupEnabled) {
+    return (
+      <div className="border-warning-tint bg-warning-tint rounded-control p-4">
+        <p className="text-warning font-zh text-caption">
+          当前未开放注册。
+        </p>
+      </div>
+    );
+  }
 
   // 邮箱已被注册。Supabase 此时不发任何邮件 —— 必须说清楚,
   // 否则用户会一直等一封永远不来的验证信(生产上就是这么卡住的)。
@@ -58,8 +72,30 @@ export function RegisterForm({
     );
   }
 
+  // 邮箱验证模式(ALLOW_UNVERIFIED_SIGNUP 关闭):账号已建,等确认邮件。
+  if (state.needsEmailConfirmation) {
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="border-border-default bg-surface-2 rounded-control p-4">
+          <p className="text-fg font-zh text-caption font-medium">
+            注册成功,请查收确认邮件。
+          </p>
+          <p className="text-fg-secondary font-zh text-label mt-1.5 leading-[1.7]">
+            我们已向该邮箱发送确认邮件,点击其中的链接完成验证后即可登录。
+          </p>
+        </div>
+        <Link
+          href="/login"
+          className="text-brand hover:text-brand-hover font-zh text-caption text-center"
+        >
+          前往登录
+        </Link>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <form action={formAction} className="flex flex-col gap-3">
         <Input
           name="email"

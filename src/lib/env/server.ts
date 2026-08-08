@@ -63,6 +63,10 @@ const serverEnvSchema = z.object({
   STRIPE_SECRET_KEY: optionalString,
   STRIPE_PUBLISHABLE_KEY: optionalString,
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: optionalString,
+  STRIPE_PRICE_PROFESSIONAL: optionalString,
+  STRIPE_PRICE_PROFESSIONAL_YEAR: optionalString,
+  STRIPE_PRICE_ENTERPRISE: optionalString,
+  STRIPE_PRICE_ENTERPRISE_YEAR: optionalString,
   STRIPE_WEBHOOK_SECRET: optionalString,
 
   // --- GitHub App(仓库集成)---------------------------------------------
