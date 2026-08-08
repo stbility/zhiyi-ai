@@ -10,13 +10,8 @@
  *   三档沿同一能力线递进(超集关系,类比 Sensei AI):每档包含低一档全部权益。
  *   完整策略见 /Users/kuanxu/zhiyi-ai-market-monetization-strategy.md。
  *
- * 关于价格:除 Free 的 HK$0 是确定事实外,其余价格必须来自 Stripe 中真实配置的
- * Price 对象,不得在代码里写死。当前 Stripe 密钥在 Vercel 被标记为 Sensitive、
- * 无法读取,因此价格标记为「待定」并禁用购买入口 —— 在公开页面展示一个
- * 未经核实的价格,属于伪造商业信息。
- *
- * Phase 6 接通 Stripe 后,价格改为从 Stripe API 读取真实 Price,并填入 stripePriceId。
- * 产品决策价(HK$49/HK$229)与展示文案在此定义,最终以 Stripe Price 为准。
+ * 说明:价格文案为产品决策展示值。支付接入(Stripe 应用层)已移除,
+ * 当前无线上收款路径;接入支付时以支付平台真实配置为准。
  */
 
 export type PlanId = "free" | "professional" | "enterprise";
@@ -33,10 +28,6 @@ export interface Plan {
   readonly annualNote: string | undefined;
   readonly features: readonly string[];
   readonly highlighted: boolean;
-  /** Stripe 中对应的月付 Price ID。Phase 6 接通后填入。 */
-  readonly stripePriceId: string | undefined;
-  /** Stripe 中对应的年付 Price ID。Phase 6 接通后填入。 */
-  readonly stripeAnnualPriceId: string | undefined;
 }
 
 export const PLANS: readonly Plan[] = [
@@ -54,8 +45,6 @@ export const PLANS: readonly Plan[] = [
       "使用您自己的模型密钥",
     ],
     highlighted: false,
-    stripePriceId: undefined,
-    stripeAnnualPriceId: undefined,
   },
   {
     id: "professional",
@@ -72,8 +61,6 @@ export const PLANS: readonly Plan[] = [
       "包含 Free 全部权益",
     ],
     highlighted: true,
-    stripePriceId: undefined,
-    stripeAnnualPriceId: undefined,
   },
   {
     id: "enterprise",
@@ -92,7 +79,5 @@ export const PLANS: readonly Plan[] = [
       "包含 Professional 全部权益",
     ],
     highlighted: false,
-    stripePriceId: undefined,
-    stripeAnnualPriceId: undefined,
   },
 ];

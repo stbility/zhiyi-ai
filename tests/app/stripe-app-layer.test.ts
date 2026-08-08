@@ -43,9 +43,9 @@ describe("plans.ts 港币定价(全球华人市场)", () => {
     expect(PLANS).toContain("包含 Professional 全部权益");
   });
 
-  it("stripePriceId 留空待 Stripe 配置(诚实展示)", () => {
-    expect(PLANS).toContain("stripePriceId: undefined");
-    expect(PLANS).toContain("stripeAnnualPriceId: undefined");
+  it("plans.ts 已移除 Stripe 字段(Stripe 应用层已删除)", () => {
+    expect(PLANS).not.toContain("stripePriceId");
+    expect(PLANS).not.toContain("stripeAnnualPriceId");
   });
 });
 
@@ -62,35 +62,7 @@ describe("0033/0034 与 plans.ts 对齐", () => {
   });
 });
 
-describe("checkout/portal/webhook 路由安全姿态", () => {
-  it("webhook 路由必须验签(STRIPE_WEBHOOK_SECRET)", () => {
-    const webhook = readFileSync(
-      resolve(ROOT, "src/app/api/stripe/webhook/route.ts"),
-      "utf8",
-    );
-    expect(webhook).toContain("constructEvent");
-    expect(webhook).toContain("stripe-signature");
-    expect(webhook).toContain("STRIPE_WEBHOOK_SECRET");
-  });
-
-  it("webhook 幂等:按 stripe_subscription_id 去重", () => {
-    const webhook = readFileSync(
-      resolve(ROOT, "src/app/api/stripe/webhook/route.ts"),
-      "utf8",
-    );
-    expect(webhook).toContain("onConflict");
-    expect(webhook).toContain("stripe_subscription_id");
-  });
-
-  it("checkout 路由:未配置 Stripe 时返回 503 而非假成功", () => {
-    const checkout = readFileSync(
-      resolve(ROOT, "src/app/api/stripe/checkout/route.ts"),
-      "utf8",
-    );
-    expect(checkout).toContain("503");
-    expect(checkout).toContain("支付通道尚未接通");
-  });
-
+describe("agent 路由权益守卫", () => {
   it("权益守卫:agent 路由按 monthly_agent_turns 额度判断,不信任客户端 plan", () => {
     const agentRoute = readFileSync(
       resolve(ROOT, "src/app/api/agent/route.ts"),
