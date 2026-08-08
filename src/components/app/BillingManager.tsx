@@ -1,11 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
-import { PricingCard } from "@/components/account/PricingCard";
 import { UsageMeter } from "@/components/account/UsageMeter";
 import { Button, StatusLabel } from "@/components/primitives";
-import type { Plan } from "@/lib/plans";
 import type { SubscriptionRow } from "@/app/(app)/billing/page";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -49,8 +48,11 @@ async function postJson(url: string, body: unknown): Promise<{ url?: string }> {
   return data;
 }
 
+/**
+ * 订阅管理(仪表盘内)。只做「我现在的订阅」:套餐状态、本月用量、
+ * 账单门户入口。套餐介绍与定价是落地页(产品页)的事,这里不重复。
+ */
 export function BillingManager({
-  plans,
   currentPlanId,
   subscription,
   stripeConfigured,
@@ -58,7 +60,6 @@ export function BillingManager({
   usageUsed,
   usageQuota,
 }: {
-  plans: readonly Plan[];
   currentPlanId: string;
   subscription: SubscriptionRow | null;
   stripeConfigured: boolean;
@@ -68,19 +69,6 @@ export function BillingManager({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  async function subscribe(planId: string) {
-    setBusy(`checkout-${planId}`);
-    setError(null);
-    try {
-      const { url } = await postJson("/api/billing/checkout", { planId });
-      if (url) window.location.assign(url);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  }
 
   async function openPortal() {
     setBusy("portal");
@@ -99,7 +87,8 @@ export function BillingManager({
     <div className="flex flex-col gap-4">
       {!stripeConfigured && (
         <div className="border-warning bg-warning-tint text-warning rounded-control font-zh text-caption border border-dashed p-3">
-          Stripe 尚未配置(缺少 STRIPE_SECRET_KEY),订阅暂不可用。配置后刷新本页即可。
+          Stripe 尚未配置(缺少 STRIPE_SECRET_KEY),订阅暂不可用。
+          套餐与定价见落地页。
         </div>
       )}
       {stripeConfigured && !stripeWebhookConfigured && (
@@ -109,7 +98,13 @@ export function BillingManager({
         </div>
       )}
 
-      {subscription && (
+      {error && (
+        <p className="border-error-tint bg-error-tint text-error rounded-control font-zh text-caption p-3">
+          {error}
+        </p>
+      )}
+
+      {subscription ? (
         <section className="bg-surface-2 border-border-default rounded-card font-zh border p-4">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-fg text-body font-medium">当前订阅</h3>
@@ -134,12 +129,17 @@ export function BillingManager({
             </Button>
           </div>
         </section>
-      )}
-
-      {error && (
-        <p className="border-error-tint bg-error-tint text-error rounded-control font-zh text-caption p-3">
-          {error}
-        </p>
+      ) : (
+        <div className="border-border-default rounded-control font-zh border border-dashed p-4">
+          <p className="text-fg-secondary text-caption">
+            当前为免费套餐({currentPlanId === "free" ? "未订阅付费套餐" : currentPlanId})。
+            套餐介绍与定价见落地页
+            <Link href="/#pricing" className="text-brand hover:text-brand-hover mx-1">
+              定价
+            </Link>
+            区块。
+          </p>
+        </div>
       )}
 
       {usageQuota !== null && usageQuota > 0 && (
@@ -153,51 +153,6 @@ export function BillingManager({
           />
         </section>
       )}
-
-      <div className="flex flex-wrap gap-4">
-        {plans.map((plan) => {
-          const isCurrent = plan.id === currentPlanId;
-          const isPaid = plan.id !== "free";
-          const priceReady = plan.price !== undefined;
-
-          return (
-            <PricingCard
-              key={plan.id}
-              name={plan.name}
-              price={priceReady ? (plan.price as string) : "价格待配置"}
-              period={plan.period}
-              features={plan.features}
-              highlighted={plan.highlighted}
-              ctaLabel={
-                isCurrent
-                  ? "当前套餐"
-                  : isPaid
-                    ? priceReady
-                      ? `升级到 ${plan.name}`
-                      : "价格待配置"
-                    : "免费套餐"
-              }
-              onSelect={isCurrent ? undefined : () => void subscribe(plan.id)}
-              ctaDisabled={
-                isCurrent ||
-                !isPaid ||
-                busy !== null ||
-                !priceReady ||
-                !stripeWebhookConfigured
-              }
-              ctaDisabledReason={
-                isCurrent
-                  ? undefined
-                  : !priceReady
-                    ? "Stripe 价格未配置"
-                    : !stripeWebhookConfigured
-                      ? "等待 webhook 密钥配置"
-                      : undefined
-              }
-            />
-          );
-        })}
-      </div>
     </div>
   );
 }

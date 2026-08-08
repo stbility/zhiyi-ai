@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { BillingManager } from "@/components/app/BillingManager";
-import { PLANS } from "@/lib/plans";
 import { getMyEntitlements } from "@/lib/billing/entitlements";
 import { getStripeConfig } from "@/lib/billing/stripe";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-export const metadata: Metadata = { title: "订阅 · 智一 AI" };
+export const metadata: Metadata = { title: "订阅管理 · 智一 AI" };
 export const dynamic = "force-dynamic";
 
 export interface SubscriptionRow {
@@ -78,14 +78,17 @@ export default async function BillingPage() {
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 md:px-8 md:py-10">
       <header>
-        <h2 className="text-fg text-h2 font-zh font-semibold">订阅</h2>
+        <h2 className="text-fg text-h2 font-zh font-semibold">订阅管理</h2>
         <p className="text-fg-secondary font-zh text-caption mt-2">
-          套餐与权益以 Stripe 订阅为唯一事实源,升级/降级/取消都在账单门户完成。
+          当前套餐、本月用量与账单管理。套餐介绍与定价见
+          <Link href="/#pricing" className="text-brand hover:text-brand-hover mx-1">
+            落地页定价
+          </Link>
+          。
         </p>
       </header>
 
       <BillingManager
-        plans={PLANS}
         currentPlanId={entitlements?.planId ?? "free"}
         subscription={subscription}
         stripeConfigured={stripeConfig !== null}
