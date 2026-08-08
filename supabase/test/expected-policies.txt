@@ -16,6 +16,11 @@ audit_logs_select_member
 conversation_attachments_own
 conversations_own
 entitlements_select_all
+eval_run_cases_insert_own
+eval_run_cases_select_own
+eval_runs_insert_own
+eval_runs_select_own
+eval_runs_update_own
 git_installations_delete_admin
 git_installations_insert_admin
 git_installations_select_member
