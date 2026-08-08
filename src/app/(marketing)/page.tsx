@@ -221,23 +221,30 @@ export default function HomePage() {
                 >
                   免费开始
                 </Link>
+              ) : plan.id === "professional" ? (
+                <a
+                  href="https://buy.stripe.com/28E4gB8S35O54ga2JCfbq02"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={buttonClasses({
+                    variant: plan.highlighted ? "primary" : "secondary",
+                    className: "mt-1.5 w-full",
+                  })}
+                >
+                  立即订阅 HK$49
+                </a>
               ) : (
-                <>
-                  <button
-                    type="button"
-                    disabled
-                    className={buttonClasses({
-                      variant: plan.highlighted ? "primary" : "secondary",
-                      disabled: true,
-                      className: "mt-1.5 w-full",
-                    })}
-                  >
-                    暂不可购买
-                  </button>
-                  <p className="text-fg-tertiary text-label text-center">
-                    支付通道尚未接通,价格以 Stripe 配置为准
-                  </p>
-                </>
+                <a
+                  href="https://buy.stripe.com/fZueVffgr2BT5ke1Fyfbq03"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={buttonClasses({
+                    variant: plan.highlighted ? "primary" : "secondary",
+                    className: "mt-1.5 w-full",
+                  })}
+                >
+                  立即订阅 HK$229
+                </a>
               )}
             </div>
           ))}
