@@ -1,4 +1,5 @@
 import { Metadata } from "next";
+import Link from "next/link";
 import { buttonClasses } from "@/components/primitives/Button";
 
 export const metadata: Metadata = {
@@ -78,15 +79,15 @@ export default function PricingPage() {
       {/* Nav */}
       <nav className="sticky top-0 z-50 border-b border-[#242832] bg-[rgba(7,8,11,0.85)] backdrop-blur-md">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-          <a href="/" className="text-lg font-bold text-[#F4F6F8] no-underline">
+          <Link href="/" className="text-lg font-bold text-[#F4F6F8] no-underline">
             智一 <span className="text-[#6977E8]">AI</span>
-          </a>
-          <a
+          </Link>
+          <Link
             href="/"
             className="text-sm font-medium text-[#C6CBD4] no-underline transition-colors hover:text-[#F4F6F8]"
           >
             返回首页
-          </a>
+          </Link>
         </div>
       </nav>
 
@@ -313,9 +314,9 @@ export default function PricingPage() {
 
       <footer className="border-t border-[#242832] py-8 text-center">
         <p className="text-sm text-[#8B929E]">
-          <a href="/" className="text-[#8B929E] no-underline hover:text-[#6977E8]">
+          <Link href="/" className="text-[#8B929E] no-underline hover:text-[#6977E8]">
             智一 AI
-          </a>{" "}
+          </Link>{" "}
           · 香港主體運營 · 支援全球華人社區
         </p>
         <p className="mt-1 text-xs text-[#5F6671]">
