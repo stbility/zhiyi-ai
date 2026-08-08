@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  buildSkillMarkdown,
-  parseSkillMarkdown,
-  isValidSkillName,
-} from "@/lib/ai/skills";
+import { buildSkillMarkdown, parseSkillMarkdown, isValidSkillName } from "@/lib/ai/skill-markdown";
 
 describe("技能编辑器的 SKILL.md 往返", () => {
   const draft = {
