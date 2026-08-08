@@ -1,11 +1,12 @@
-import "server-only";
-
 /**
  * Embedding 服务(OpenAI 兼容 /embeddings 端点)。
  *
  * 未配置时返回 null —— 调用方如实降级(召回回到「最近优先」,
  * 沉淀时不写向量),绝不假装向量可用。失败也是观察结果:
  * 记日志、返回 null,不阻断沉淀与召回主流程。
+ *
+ * 注意:本模块不带 server-only 守卫 —— 纯函数 + fetch,测试可直接导入;
+ * 调用方(memories.ts / agent-turn)都在服务端,env 不会进客户端产物。
  */
 
 export interface EmbeddingsConfig {

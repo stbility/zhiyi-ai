@@ -46,13 +46,13 @@ set search_path = ''
 as $$
   select m.id, m.organization_id, m.category, m.content, m.source_type,
          m.confidence, m.scope, m.recall_enabled, m.last_used_at, m.created_at,
-         1 - (m.embedding <=> p_embedding) as similarity
+         1 - (m.embedding OPERATOR(public.<=>) p_embedding) as similarity
   from public.memories m
   where m.embedding is not null
     and m.recall_enabled
     and private.is_org_member(m.organization_id)
     and (m.scope = 'organization' or m.created_by = (select auth.uid()))
-  order by m.embedding <=> p_embedding
+  order by m.embedding OPERATOR(public.<=>) p_embedding
   limit p_limit;
 $$;
 

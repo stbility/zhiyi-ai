@@ -17,7 +17,7 @@ describe("0040 长期记忆向量层", () => {
 
   it("search_memories 按余弦相似度召回,security definer + 组织过滤", () => {
     expect(M0040).toContain("create or replace function public.search_memories");
-    expect(M0040).toMatch(/1 - \(m\.embedding <=> p_embedding\) as similarity/);
+    expect(M0040).toMatch(/OPERATOR\(public\.<=>\)/);
     expect(M0040).toContain("security definer");
     expect(M0040).toContain("private.is_org_member(m.organization_id)");
     // 作用域纪律:组织级或本人,与 0028 select 策略一致
