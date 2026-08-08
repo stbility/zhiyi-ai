@@ -36,9 +36,8 @@ grant usage on schema private to postgres, service_role;
 -- authenticated 查询会报 permission denied for schema private,
 -- 整个 RLS 权限体系瘫痪(生产正常只因生产有未入库的手工 grant)。
 -- 这里把 authenticated 的 USAGE 与两个函数的 EXECUTE 显式授回。
+-- (grant execute 必须放在函数定义之后 —— 否则报函数不存在)
 grant usage on schema private to authenticated;
-grant execute on function private.is_org_member(uuid) to authenticated;
-grant execute on function private.has_org_role(uuid, public.org_role[]) to authenticated;
 
 -- 判断当前用户是不是某组织的在职成员。
 --
@@ -79,6 +78,11 @@ as $$
       and m.role = any(roles)
   );
 $$;
+
+-- 【HIGH-1 修复】两个 private 函数的 EXECUTE 授回 authenticated
+-- (放在函数定义之后:grant 目标必须已存在)
+grant execute on function private.is_org_member(uuid) to authenticated;
+grant execute on function private.has_org_role(uuid, public.org_role[]) to authenticated;
 
 -- ── 先把依赖旧函数的策略改指到 private,再删旧函数 ──────────────
 --
