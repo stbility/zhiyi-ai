@@ -41,6 +41,7 @@ message_feedback_organization_idx
 messages_conversation_idx
 messages_organization_idx
 messages_provider_idx
+messages_run_id_idx
 organizations_created_by_idx
 platform_models_tier_idx
 rate_limits_window_idx
