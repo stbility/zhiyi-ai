@@ -89,18 +89,30 @@ describe("agent 路由权益守卫", () => {
     expect(agentRoute).toContain("不信任客户端");
   });
 
-  it("权益守卫:组织 owner/admin 豁免套餐限制(项目所有者不受自己产品限制)", () => {
+  it("权益守卫:owner/admin 豁免只适用于多成员组织(P0-4)", () => {
     const agentRoute = readFileSync(
       resolve(ROOT, "src/app/api/agent/route.ts"),
       "utf8",
     );
-    // owner/admin 从 memberships 读角色并豁免
+    // owner/admin 从 memberships 读角色;豁免必须叠加成员数 >1
+    // (注册自动建的个人组织只有 1 个成员,owner 也是普通用户,照常计额度)
     expect(agentRoute).toContain('membership?.role === "owner"');
     expect(agentRoute).toContain('membership?.role === "admin"');
-    expect(agentRoute).toContain("isOrgAdmin");
-    // 豁免逻辑必须在权益判断之前 —— 先查角色,再决定要不要查额度
+    expect(agentRoute).toContain("isTeamAdmin");
+    expect(agentRoute).toContain("memberCount ?? 0) > 1");
+    // 豁免逻辑必须在权益判断之前 —— 先查角色与成员数,再决定要不要查额度
     expect(
-      agentRoute.indexOf("isOrgAdmin"),
+      agentRoute.indexOf("isTeamAdmin"),
     ).toBeLessThan(agentRoute.indexOf("getMyEntitlements"));
+  });
+
+  it("权益守卫:额度必须减去本月已用量(P0-3)", () => {
+    const agentRoute = readFileSync(
+      resolve(ROOT, "src/app/api/agent/route.ts"),
+      "utf8",
+    );
+    expect(agentRoute).toContain("get_monthly_usage");
+    expect(agentRoute).toContain("agent_turns");
+    expect(agentRoute).toContain("agentTurnBlockReason");
   });
 });
