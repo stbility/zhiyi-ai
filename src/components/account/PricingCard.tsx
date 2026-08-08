@@ -9,9 +9,13 @@ export interface PricingCardProps {
   period: string;
   features?: readonly string[] | undefined;
   highlighted?: boolean | undefined;
+  /** 年付优惠说明(如「年付 HK490,约省 2 个月」);undefined 时不显示 */
+  annualNote?: string | undefined;
   ctaLabel?: string | undefined;
-  /** 有 href 时 CTA 渲染为外部链接(Stripe Payment Link 等);无 href 时渲染为按钮 */
+  /** 有 href 时 CTA 渲染为链接:外部地址(external=true)新开标签页,站内地址用 next/link */
   href?: string | undefined;
+  /** href 为外部地址时置 true(渲染原生 <a> + target=_blank + noopener) */
+  external?: boolean | undefined;
   onSelect?: (() => void) | undefined;
   /** 支付未接通时禁用并说明原因,不得渲染成点了没反应的按钮 */
   ctaDisabled?: boolean | undefined;
@@ -35,8 +39,10 @@ export function PricingCard({
   period,
   features = [],
   highlighted = false,
+  annualNote,
   ctaLabel = "升级套餐",
   href,
+  external,
   onSelect,
   ctaDisabled = false,
   ctaDisabledReason,
@@ -59,6 +65,10 @@ export function PricingCard({
         <span className="text-fg-tertiary text-caption">/{period}</span>
       </p>
 
+      {annualNote && (
+        <p className="text-brand text-label -mt-2">{annualNote}</p>
+      )}
+
       <ul className="flex flex-col gap-2">
         {features.map((feature) => (
           <li
@@ -74,7 +84,7 @@ export function PricingCard({
       {href ? (
         <LinkButton
           href={href}
-          external
+          external={external}
           variant={highlighted ? "primary" : "secondary"}
           className="mt-1.5 w-full"
         >

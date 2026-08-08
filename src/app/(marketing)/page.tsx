@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 
+import { PricingCard } from "@/components/account/PricingCard";
 import { ProductShowcase } from "@/components/marketing/ProductShowcase";
 import { ScrollReveal } from "@/components/marketing/ScrollReveal";
 import { Icon, type IconName } from "@/components/icons/Icon";
@@ -172,81 +172,28 @@ export default function HomePage() {
         </h2>
         <div className="flex flex-wrap justify-center gap-5">
           {PLANS.map((plan) => (
-            <div
+            <PricingCard
               key={plan.id}
-              className={`rounded-panel font-zh flex w-65 flex-col gap-3.5 border p-6 ${
-                plan.highlighted
-                  ? "bg-surface-3 border-brand"
-                  : "bg-surface-2 border-border-default"
-              }`}
-            >
-              <h3 className="text-fg text-[16px] font-semibold">{plan.name}</h3>
-
-              {plan.price ? (
-                <p className="flex items-baseline gap-1">
-                  <span className="text-fg text-[32px] font-semibold">
-                    {plan.price}
-                  </span>
-                  <span className="text-fg-tertiary text-caption">
-                    /{plan.period}
-                  </span>
-                </p>
-              ) : (
-                <p className="text-fg-tertiary text-body-lg">价格待定</p>
-              )}
-
-              <ul className="flex flex-col gap-2">
-                {plan.features.map((feature) => (
-                  <li
-                    key={feature}
-                    className="text-fg-secondary flex items-start gap-2 text-[13px]"
-                  >
-                    <Icon
-                      name="check"
-                      size={14}
-                      className="text-success mt-0.5 shrink-0"
-                    />
-                    {feature}
-                  </li>
-                ))}
-              </ul>
-
-              {plan.id === "free" ? (
-                <Link
-                  href="/register"
-                  className={buttonClasses({
-                    variant: plan.highlighted ? "primary" : "secondary",
-                    className: "mt-1.5 w-full",
-                  })}
-                >
-                  免费开始
-                </Link>
-              ) : plan.id === "professional" ? (
-                <a
-                  href="https://buy.stripe.com/28E4gB8S35O54ga2JCfbq02"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={buttonClasses({
-                    variant: plan.highlighted ? "primary" : "secondary",
-                    className: "mt-1.5 w-full",
-                  })}
-                >
-                  立即订阅 HK49
-                </a>
-              ) : (
-                <a
-                  href="https://buy.stripe.com/fZueVffgr2BT5ke1Fyfbq03"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={buttonClasses({
-                    variant: plan.highlighted ? "primary" : "secondary",
-                    className: "mt-1.5 w-full",
-                  })}
-                >
-                  立即订阅 HK229
-                </a>
-              )}
-            </div>
+              name={plan.name}
+              price={plan.price ?? "价格待定"}
+              period={plan.period ?? ""}
+              features={plan.features}
+              highlighted={plan.highlighted}
+              annualNote={plan.annualNote}
+              ctaLabel={
+                plan.id === "free"
+                  ? "免费开始"
+                  : `立即订阅 ${plan.price ?? ""}`
+              }
+              href={
+                plan.id === "professional"
+                  ? "https://buy.stripe.com/28E4gB8S35O54ga2JCfbq02"
+                  : plan.id === "enterprise"
+                    ? "https://buy.stripe.com/fZueVffgr2BT5ke1Fyfbq03"
+                    : "/register"
+              }
+              external={plan.id !== "free"}
+            />
           ))}
         </div>
       </Section>
