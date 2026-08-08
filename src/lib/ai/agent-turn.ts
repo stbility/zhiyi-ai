@@ -327,10 +327,30 @@ export async function runAgentTurn({
           ? `${userMessage}${resumeContext}${memoryBlock}`
           : userMessage;
 
+      // 知识库召回:把组织内最近就绪的文档正文带进任务。
+      // 与记忆同一哲学:召回失败不阻断运行,只是这轮「没查文档」。
+      let knowledgeBlock = "";
+      try {
+        const { recallKnowledge, buildKnowledgeBlock } = await import(
+          "@/lib/db/knowledge"
+        );
+        const hits = await recallKnowledge(supabase, organizationId);
+        knowledgeBlock = buildKnowledgeBlock(hits);
+      } catch (e) {
+        logger.warn(
+          { org: organizationId, err: e instanceof Error ? e.message : String(e) },
+          "知识库召回失败,本轮不带知识库运行",
+        );
+      }
+
+      const messageWithKnowledge = knowledgeBlock
+        ? `${effectiveUserMessage}${knowledgeBlock}`
+        : effectiveUserMessage;
+
       try {
         const outcome = await runAgent({
           model: selected,
-          userMessage: effectiveUserMessage,
+          userMessage: messageWithKnowledge,
           history,
           toolContext,
           gitContext,

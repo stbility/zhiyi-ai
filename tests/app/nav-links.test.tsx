@@ -58,7 +58,9 @@ describe("应用导航", () => {
       const el = screen.getAllByText(item.label)[0]!;
       expect(el.closest("a")).toBeNull();
     }
-    expect(screen.getAllByText("建设中").length).toBe(pending.length);
+    // 全部交付时「建设中」不应出现;有未交付项时数量一一对应。
+    // queryAllByText 在零匹配时返回 [] 而不抛错,兼容「全部解锁」状态。
+    expect(screen.queryAllByText("建设中").length).toBe(pending.length);
   });
 
   it("当前页要标出来,读屏才知道自己在哪", () => {

@@ -58,6 +58,7 @@
 | `0035_usage_metering.sql` | 20260807… | usage_metering, bump_usage, get_monthly_usage |
 | `0036_workflows.sql` | 待应用 | workflows, workflow_runs |
 | `0037_entitlements_quota_alignment.sql` | 待应用 | entitlements(配额 500/5000,见备注 C) |
+| `0038_knowledge_files.sql` | 待应用 | knowledge_files |
 
 ### 备注 A：0005 在账本里没有记录
 
