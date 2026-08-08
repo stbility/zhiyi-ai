@@ -74,15 +74,13 @@ export async function POST(request: NextRequest) {
       );
       const entitlements = await getMyEntitlements();
       // quota null = 不限额度(enterprise);0 = 本月额度已耗尽;其余 = 还有余量
+      // entitlements 为 null = RPC 失败(网络/鉴权),按 free 兜底(不允许把异常当越权处理)
       const turnsQuota = entitlements ? quotaOf(entitlements, "monthly_agent_turns") : 0;
-      const blocked =
-        !entitlements || (turnsQuota !== null && turnsQuota <= 0);
+      const blocked = turnsQuota !== null && turnsQuota <= 0;
       if (blocked) {
         return errorResponse(
-          entitlements
-            ? `本月的智能体运行额度已用完,升级 Professional(月付 HK$49)可提升额度。`
-            : `智能体运行需要 Professional 及以上套餐(月付 HK$49)。` +
-                `升级后即可使用多步工具循环;或改用「AI 助手」对话通道。`,
+          `本月的智能体运行额度已用完,升级 Professional(月付 HK$49)可提升额度。` +
+            `升级后即可使用多步工具循环;或改用「AI 助手」对话通道。`,
           402,
         );
       }
