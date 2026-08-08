@@ -69,10 +69,10 @@ skill_files_delete_admin
 skill_files_insert_admin
 skill_files_select_member
 skill_files_update_admin
-skills_delete_admin
-skills_insert_admin
+skills_delete_member
+skills_insert_member
 skills_select_member
-skills_update_admin
+skills_update_member
 stripe_customers_select_own
 subscriptions_select_own
 usage_metering_select_own
