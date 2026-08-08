@@ -13,6 +13,8 @@ export interface PricingCardProps {
   annualNote?: string | undefined;
   /** 年付购买链接(Stripe Payment Link);有 annualNote + 此链接时,月付按钮下方显示年付按钮 */
   annualHref?: string | undefined;
+  /** 年付购买回调(checkout 路由);与 annualHref 二选一,传了则年付渲染为按钮走回调 */
+  annualOnSelect?: (() => void) | undefined;
   ctaLabel?: string | undefined;
   /** 有 href 时 CTA 渲染为链接:外部地址(external=true)新开标签页,站内地址用 next/link */
   href?: string | undefined;
@@ -47,6 +49,7 @@ export function PricingCard({
   href,
   external,
   onSelect,
+  annualOnSelect,
   ctaDisabled = false,
   ctaDisabledReason,
   className,
@@ -105,8 +108,9 @@ export function PricingCard({
       )}
 
       {/* 年付优惠按钮:月付下方,ghost 变体。文案直接复用 annualNote(如「年付 HK490,约省 2 个月」),
-          一眼看到省多少;无 annualHref 时不渲染 —— 年付购买未开通就不给假的购买入口。 */}
-      {annualHref && annualNote && (
+          一眼看到省多少;有 annualHref 渲染 Payment Link,有 annualOnSelect 渲染回调按钮,
+          都没有时不渲染 —— 年付购买未开通就不给假的购买入口。 */}
+      {annualHref && annualNote ? (
         <LinkButton
           href={annualHref}
           external
@@ -115,7 +119,15 @@ export function PricingCard({
         >
           {annualNote} 立即开通
         </LinkButton>
-      )}
+      ) : annualOnSelect && annualNote ? (
+        <Button
+          variant="ghost"
+          onClick={annualOnSelect}
+          className="mt-1 w-full"
+        >
+          {annualNote} 立即开通
+        </Button>
+      ) : null}
 
       {ctaDisabled && ctaDisabledReason && (
         <p className="text-fg-tertiary text-label text-center">

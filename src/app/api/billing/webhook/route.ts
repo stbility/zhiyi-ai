@@ -4,7 +4,11 @@ import type Stripe from "stripe";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { logger } from "@/lib/log";
-import { getStripe, getStripeConfig } from "@/lib/billing/stripe";
+import {
+  getPlanIdForPrice,
+  getStripe,
+  getStripeConfig,
+} from "@/lib/billing/stripe";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -24,10 +28,13 @@ const PLAN_WHITELIST = new Set(["professional", "enterprise"]);
 
 async function upsertSubscription(
   admin: SupabaseClient,
+  stripe: Stripe,
   subscription: Stripe.Subscription,
 ): Promise<void> {
-  // 归属判定:subscription.metadata.userId 优先(checkout 创建时写入);
-  // 没有则用 customer 映射反查 —— 两条路都拿不到就抛错让 Stripe 重试。
+  // 归属判定:subscription.metadata.userId 优先(checkout 路由创建时写入);
+  // 没有则用 customer 映射反查;再没有则按 Stripe customer 的邮箱
+  // 反查 app 用户(覆盖 Payment Link 购买 —— 静态链接无法携带 userId,
+  // 但结账邮箱通常与注册邮箱一致)。三条路都拿不到就抛错让 Stripe 重试。
   const metadataUserId = subscription.metadata?.userId;
   let userId: string | undefined = metadataUserId;
 
@@ -40,6 +47,38 @@ async function upsertSubscription(
       .maybeSingle();
     userId = data?.user_id as string | undefined;
   }
+
+  if (!userId) {
+    const customerId = subscription.customer as string;
+    try {
+      const customer = await stripe.customers.retrieve(customerId);
+      const email = !customer.deleted
+        ? (customer as Stripe.Customer).email
+        : undefined;
+      if (email) {
+        const { data: page } = await admin.auth.admin.listUsers({
+          page: 1,
+          perPage: 1000,
+        });
+        const match = (page?.users ?? []).find(
+          (u) => u.email?.toLowerCase() === email.toLowerCase(),
+        );
+        if (match) {
+          userId = match.id;
+          await admin.from("stripe_customers").upsert(
+            { user_id: match.id, customer_id: customerId },
+            { onConflict: "user_id" },
+          );
+        }
+      }
+    } catch (e) {
+      logger.warn(
+        { customerId, error: e instanceof Error ? e.message : String(e) },
+        "webhook email 归属兜底失败(不影响后续,订阅将重试)",
+      );
+    }
+  }
+
   if (!userId) {
     throw new Error(`无法确定订阅 ${subscription.id} 所属用户`);
   }
@@ -47,11 +86,13 @@ async function upsertSubscription(
   // v22:current_period_end 不在 Subscription 顶层,在 items.data[0] 上。
   const item = subscription.items.data[0];
   const periodEnd = item?.current_period_end ?? null;
+  // 套餐判定:price.metadata.plan_id 优先(白名单);生产实测 4 条 HKD 价格
+  // metadata 全空 —— 此时用环境变量里的 Price ID 反查,绝不静默降级成 free。
   const pricePlan = item?.price.metadata?.plan_id;
   const planId =
     typeof pricePlan === "string" && PLAN_WHITELIST.has(pricePlan)
       ? pricePlan
-      : "free";
+      : (getPlanIdForPrice(item?.price.id ?? "") ?? "free");
 
   const { error } = await admin.from("subscriptions").upsert(
     {
@@ -138,13 +179,17 @@ export async function POST(request: NextRequest) {
           const subscription = await stripe.subscriptions.retrieve(
             subscriptionId,
           );
-          await upsertSubscription(admin, subscription);
+          await upsertSubscription(admin, stripe, subscription);
         }
         break;
       }
 
       case "customer.subscription.updated": {
-        await upsertSubscription(admin, event.data.object as Stripe.Subscription);
+        await upsertSubscription(
+          admin,
+          stripe,
+          event.data.object as Stripe.Subscription,
+        );
         break;
       }
 
