@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildWorkflowMemoryContent } from "@/lib/db/memories";
+import { buildWorkflowMemoryContent } from "@/lib/workflow/memory-content";
 
 describe("工作流产物沉淀为记忆", () => {
   it("短输出原样入库", () => {

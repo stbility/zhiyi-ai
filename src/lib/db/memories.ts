@@ -232,14 +232,9 @@ ${input.content}
  * 归组织级、可召回。沉淀失败只记日志,不阻断工作流本身 ——
  * 运行已经完成,记忆是增强不是承诺(与 wiki 同步同一哲学)。
  */
-export const WORKFLOW_MEMORY_MAX_CHARS = 2000;
+import { buildWorkflowMemoryContent } from "@/lib/workflow/memory-content";
 
-/** 纯函数:把工作流步骤输出截成可入库的记忆正文(可单测) */
-export function buildWorkflowMemoryContent(output: string): string {
-  const trimmed = output.trim();
-  if (trimmed.length <= WORKFLOW_MEMORY_MAX_CHARS) return trimmed;
-  return `${trimmed.slice(0, WORKFLOW_MEMORY_MAX_CHARS)}…(截断)`;
-}
+export { buildWorkflowMemoryContent, WORKFLOW_MEMORY_MAX_CHARS } from "@/lib/workflow/memory-content";
 
 export async function saveWorkflowMemory(
   supabase: SupabaseClient,
