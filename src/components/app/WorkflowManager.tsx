@@ -27,6 +27,8 @@ export interface WorkflowRow {
   readonly status: WorkflowStatus;
   readonly createdBy: string;
   readonly updatedAt: string;
+  readonly agents?: readonly string[] | undefined;
+  readonly currentStep?: string | undefined;
 }
 
 export interface RunRow {
@@ -93,6 +95,8 @@ export function WorkflowManager({
             name={w.name}
             goal={w.goal || undefined}
             status={w.status}
+            currentStep={w.currentStep}
+            agents={w.agents ?? []}
             lastRun={formatTime(w.updatedAt)}
             onOpen={() => {
               void router.replace(`/workflow?id=${w.id}`);
@@ -261,7 +265,11 @@ function WorkflowDetailPanel({
           </>
         ) : (
           <WorkflowTimeline
-            steps={detail.steps.map((s) => ({ id: s.id, title: s.title }))}
+            steps={detail.steps.map((s) => ({
+              id: s.id,
+              title: s.title,
+              agent: s.agent,
+            }))}
           />
         )}
       </section>

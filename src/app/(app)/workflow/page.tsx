@@ -32,6 +32,15 @@ function parseSteps(raw: unknown): WorkflowStep[] {
   }
 }
 
+/** 列表场景的容错解析:定义坏就当作空步骤,不把整页打挂 */
+function parseDefinitionSafe(raw: unknown): { steps: readonly WorkflowStep[] } {
+  try {
+    return parseDefinition(raw);
+  } catch {
+    return { steps: [] };
+  }
+}
+
 function parseRunOutput(raw: unknown): RunRow["steps"] {
   if (typeof raw !== "object" || raw === null) return [];
   const steps = (raw as { steps?: unknown }).steps;
@@ -59,19 +68,74 @@ export default async function WorkflowPage({
   if (supabase && organization) {
     const { data } = await supabase
       .from("workflows")
-      .select("id, name, goal, status, created_by, updated_at")
+      .select("id, name, goal, status, definition, created_by, updated_at")
       .eq("organization_id", organization.id)
       .order("updated_at", { ascending: false })
       .limit(100);
 
-    workflows = (data ?? []).map((row) => ({
-      id: row.id as string,
-      name: row.name as string,
-      goal: (row.goal as string) ?? "",
-      status: (row.status as WorkflowStatus) ?? "DRAFT",
-      createdBy: row.created_by as string,
-      updatedAt: row.updated_at as string,
-    }));
+    const rows = (data ?? []) as {
+      id: string;
+      name: string;
+      goal: string | null;
+      status: string;
+      definition: unknown;
+      created_by: string;
+      updated_at: string;
+    }[];
+
+    // 每张卡片的「当前步骤」:取每个工作流最近一次运行的输出进度
+    let latestRuns: { workflow_id: string; output: unknown; status: string }[] = [];
+    if (rows.length > 0) {
+      const { data: runs } = await supabase
+        .from("workflow_runs")
+        .select("workflow_id, status, output")
+        .in(
+          "workflow_id",
+          rows.map((r) => r.id),
+        )
+        .order("created_at", { ascending: false })
+        .limit(500);
+      const seen = new Set<string>();
+      latestRuns = ((runs ?? []) as { workflow_id: string; status: string; output: unknown }[])
+        .filter((r) => {
+          if (seen.has(r.workflow_id)) return false;
+          seen.add(r.workflow_id);
+          return true;
+        })
+        .map((r) => ({ workflow_id: r.workflow_id, output: r.output, status: r.status }));
+    }
+
+    workflows = rows.map((row) => {
+      const definition = parseDefinitionSafe(row.definition);
+      const agents = [
+        ...new Set(
+          definition.steps
+            .map((s: WorkflowStep) => s.agent)
+            .filter((a: string | undefined): a is string => Boolean(a)),
+        ),
+      ];
+      const latestRun = latestRuns.find((r) => r.workflow_id === row.id);
+      let currentStep: string | undefined;
+      if (row.status === "WAITING_FOR_APPROVAL") {
+        const paused = latestRun?.output as { paused_step_index?: number } | null;
+        const idx = typeof paused?.paused_step_index === "number" ? paused.paused_step_index : -1;
+        currentStep = definition.steps[idx]?.title;
+      } else if (row.status === "RUNNING") {
+        const steps = (latestRun?.output as { steps?: { title?: string; status?: string }[] } | null)
+          ?.steps;
+        currentStep = steps?.find((s) => s.status === "RUNNING")?.title ?? "执行中";
+      }
+      return {
+        id: row.id,
+        name: row.name,
+        goal: row.goal ?? "",
+        status: (row.status as WorkflowStatus) ?? "DRAFT",
+        createdBy: row.created_by,
+        updatedAt: row.updated_at,
+        agents,
+        currentStep,
+      };
+    });
 
     const target = workflows.find((w) => w.id === selectedId) ?? workflows[0] ?? null;
     if (target) {

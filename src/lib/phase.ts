@@ -71,7 +71,7 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
     label: "文件上传、解析、RAG、长期记忆",
     state: "partial",
     missing:
-      "文件夹上传、跨轮保留、上下文预算已完成;记忆沉淀闭环已实现(0028 memories 表 + 确认沉淀 + LLM Wiki 同步);AI 记忆管理页已上线(/memory,召回开关与删除);解析与 RAG 未做",
+      "文件夹上传、跨轮保留、上下文预算已完成;记忆沉淀闭环已实现(0028 memories 表 + 对话确认沉淀 + 工作流产物沉淀 + LLM Wiki 同步);AI 记忆管理页已上线(/memory,召回开关与删除);解析与 RAG 未做",
   },
   {
     id: "6",

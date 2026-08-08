@@ -396,7 +396,26 @@ async function executeSteps(
     output: { steps: stepResults },
   });
   await setWorkflow("READY");
-  return { ok: `已完成 ${definition.steps.length} 个步骤。` };
+
+  // 闭环最后一环:最终产物沉淀为记忆(from_workflow)。失败不阻断运行。
+  const lastStep = stepResults[stepResults.length - 1];
+  if (lastStep?.output && lastStep.output.trim() !== "") {
+    const { saveWorkflowMemory } = await import("@/lib/db/memories");
+    const result = await saveWorkflowMemory(ctx.supabase, {
+      organizationId: ctx.organization.id,
+      createdBy: ctx.user.id,
+      content: lastStep.output,
+    });
+    if (!result.ok) {
+      ctx.supabase.from("workflow_runs").update({
+        output: { steps: stepResults, memory_note: result.error },
+      }).eq("id", runId);
+    }
+  }
+
+  return {
+    ok: `已完成 ${definition.steps.length} 个步骤,最终产物已沉淀为 AI 记忆。`,
+  };
 }
 
 export async function runWorkflow(id: string): Promise<WorkflowActionResult> {
