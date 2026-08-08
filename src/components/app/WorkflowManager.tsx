@@ -6,8 +6,9 @@ import { useRouter } from "next/navigation";
 import { WorkflowCard } from "@/components/workflow/WorkflowCard";
 import { WorkflowStatusBadge, type WorkflowStatus } from "@/components/workflow/WorkflowStatusBadge";
 import { WorkflowTimeline } from "@/components/workflow/WorkflowTimeline";
-import { Button, Input } from "@/components/primitives";
+import { Button, Checkbox, Input } from "@/components/primitives";
 import {
+  approveWorkflowStep,
   cancelWorkflow,
   createWorkflow,
   deleteWorkflow,
@@ -34,7 +35,14 @@ export interface RunRow {
   readonly startedAt: string | null;
   readonly finishedAt: string | null;
   readonly error: string | null;
-  readonly steps: { stepId: string; title: string; output?: string; error?: string }[];
+  readonly steps: {
+    stepId: string;
+    title: string;
+    output?: string;
+    error?: string;
+    agent?: string;
+    status?: WorkflowStatus;
+  }[];
 }
 
 export interface WorkflowDetail extends WorkflowRow {
@@ -286,11 +294,8 @@ function WorkflowDetailPanel({
                 steps={selectedRun.steps.map((s, i) => ({
                   id: s.stepId,
                   title: s.title,
-                  status: s.error
-                    ? "FAILED"
-                    : i === selectedRun.steps.length - 1
-                      ? selectedRun.status
-                      : "COMPLETED",
+                  agent: s.agent,
+                  status: s.status ?? (s.error ? "FAILED" : i === selectedRun.steps.length - 1 ? selectedRun.status : "COMPLETED"),
                 }))}
               />
               {selectedRun.error && (
@@ -298,13 +303,42 @@ function WorkflowDetailPanel({
                   {selectedRun.error}
                 </p>
               )}
+
+              {selectedRun.status === "WAITING_FOR_APPROVAL" && (
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    disabled={pending !== null}
+                    onClick={() =>
+                      void act("approve", () =>
+                        approveWorkflowStep(detail.id, selectedRun.id, true),
+                      )
+                    }
+                  >
+                    {pending === "approve" ? "处理中…" : "批准,继续执行"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={pending !== null}
+                    onClick={() =>
+                      void act("reject", () =>
+                        approveWorkflowStep(detail.id, selectedRun.id, false),
+                      )
+                    }
+                  >
+                    {pending === "reject" ? "处理中…" : "拒绝,取消本次运行"}
+                  </Button>
+                </div>
+              )}
+
               {selectedRun.steps.map((s) => (
                 <details key={s.stepId} className="text-caption">
                   <summary className="text-fg-secondary cursor-pointer">
                     {s.title} 的输出
                   </summary>
                   <pre className="text-fg-secondary bg-surface-3 mt-1 max-h-60 overflow-auto whitespace-pre-wrap rounded-control p-3 text-[12px]">
-                    {s.error ?? s.output ?? "无输出"}
+                    {s.error ?? s.output ?? (s.status === "WAITING_FOR_APPROVAL" ? "等待确认,尚未执行" : "无输出")}
                   </pre>
                 </details>
               ))}
@@ -439,6 +473,17 @@ function WorkflowEditor({
                 }}
                 placeholder="标题,如:整理本周会议纪要"
               />
+              <Input
+                aria-label={`步骤 ${index + 1} Agent`}
+                value={step.agent ?? ""}
+                onChange={(agent) => {
+                  const next = [...steps];
+                  next[index] = { ...step, agent: agent || undefined };
+                  onSteps(next);
+                }}
+                placeholder="Agent 名(可选)"
+                className="w-32"
+              />
               <Button
                 size="sm"
                 variant="secondary"
@@ -447,6 +492,17 @@ function WorkflowEditor({
               >
                 删除
               </Button>
+            </div>
+            <div className="flex items-center gap-4">
+              <Checkbox
+                checked={step.needsApproval === true}
+                onChange={(checked) => {
+                  const next = [...steps];
+                  next[index] = { ...step, needsApproval: checked || undefined };
+                  onSteps(next);
+                }}
+                label="需要人工确认(执行到此处停下等待批准)"
+              />
             </div>
             <textarea
               value={step.prompt}

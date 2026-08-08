@@ -40,6 +40,10 @@ export interface WorkflowStep {
   readonly id: string;
   readonly title: string;
   readonly prompt: string;
+  /** 执行该步骤的 Agent 名(研研究/写写作 等);可选,不填为默认智能体 */
+  readonly agent?: string | undefined;
+  /** 需要人工确认闸门:执行到该步骤前停下,等用户批准后才继续 */
+  readonly needsApproval?: boolean | undefined;
 }
 
 export interface WorkflowDefinition {
@@ -62,7 +66,13 @@ export function parseDefinition(raw: unknown): WorkflowDefinition {
     if (typeof item !== "object" || item === null) {
       throw new Error("步骤格式无效。");
     }
-    const step = item as { id?: unknown; title?: unknown; prompt?: unknown };
+    const step = item as {
+      id?: unknown;
+      title?: unknown;
+      prompt?: unknown;
+      agent?: unknown;
+      needsApproval?: unknown;
+    };
     if (typeof step.id !== "string" || step.id.length === 0 || step.id.length > 40) {
       throw new Error("步骤 id 无效。");
     }
@@ -74,7 +84,17 @@ export function parseDefinition(raw: unknown): WorkflowDefinition {
     if (prompt.length === 0 || prompt.length > 4000) {
       throw new Error("步骤指令需为 1-4000 字。");
     }
-    steps.push({ id: step.id, title, prompt });
+    const agent = typeof step.agent === "string" ? step.agent.trim() : "";
+    if (agent.length > 30) {
+      throw new Error("Agent 名最多 30 字。");
+    }
+    steps.push({
+      id: step.id,
+      title,
+      prompt,
+      ...(agent ? { agent } : {}),
+      ...(step.needsApproval === true ? { needsApproval: true } : {}),
+    });
   }
   if (steps.length === 0) {
     throw new Error("至少需要一个步骤。");
