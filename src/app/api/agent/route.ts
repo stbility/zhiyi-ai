@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
       const blocked = turnsQuota !== null && turnsQuota <= 0;
       if (blocked) {
         return errorResponse(
-          `本月的智能体运行额度已用完,升级 Professional(月付 HK$49)可提升额度。` +
+          `本月的智能体运行额度已用完,升级 Professional(月付 HK49)可提升额度。` +
             `升级后即可使用多步工具循环;或改用「AI 助手」对话通道。`,
           402,
         );

@@ -231,7 +231,7 @@ export default function HomePage() {
                     className: "mt-1.5 w-full",
                   })}
                 >
-                  立即订阅 HK$49
+                  立即订阅 HK49
                 </a>
               ) : (
                 <a
@@ -243,7 +243,7 @@ export default function HomePage() {
                     className: "mt-1.5 w-full",
                   })}
                 >
-                  立即订阅 HK$229
+                  立即订阅 HK229
                 </a>
               )}
             </div>
