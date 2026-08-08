@@ -4,6 +4,8 @@ agent_runs_provider_idx
 agent_runs_resumable_idx
 agent_steps_run_idx
 ai_model_exclusions_org_idx
+eval_run_cases_run_idx
+eval_runs_created_by_idx
 ai_models_org_idx
 ai_models_provider_idx
 ai_providers_created_by_idx

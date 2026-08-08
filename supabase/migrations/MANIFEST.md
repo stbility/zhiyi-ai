@@ -59,6 +59,7 @@
 | `0036_workflows.sql` | 待应用 | workflows, workflow_runs |
 | `0037_entitlements_quota_alignment.sql` | 待应用 | entitlements(配额 500/5000,见备注 C) |
 | `0038_knowledge_files.sql` | 待应用 | knowledge_files |
+| `0039_eval_runs.sql` | 待应用 | eval_runs, eval_run_cases |
 
 ### 备注 A：0005 在账本里没有记录
 
