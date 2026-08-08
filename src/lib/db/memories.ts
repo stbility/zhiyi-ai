@@ -124,6 +124,20 @@ export async function saveMemory(
     });
   });
 
+  // 异步写向量(长期记忆的检索端)。失败不阻断 —— 记忆本体已入库,
+  // 向量缺失时召回自动降级为最近优先。
+  void (async () => {
+    try {
+      const { embedText } = await import("@/lib/ai/embeddings");
+      const embedding = await embedText(content);
+      if (embedding) {
+        await supabase.from("memories").update({ embedding }).eq("id", created.id);
+      }
+    } catch {
+      // 忽略:向量是增强
+    }
+  })();
+
   return { ok: true, id: created.id as string };
 }
 
@@ -285,6 +299,19 @@ export async function saveWorkflowMemory(
     logDbFailure("memories.workflow_wiki_sync", e instanceof Error ? e : undefined);
   });
 
+  // 异步写向量(长期记忆的检索端)。失败不阻断 —— 与对话记忆同一哲学。
+  void (async () => {
+    try {
+      const { embedText } = await import("@/lib/ai/embeddings");
+      const embedding = await embedText(content);
+      if (embedding) {
+        await supabase.from("memories").update({ embedding }).eq("id", created.id);
+      }
+    } catch {
+      // 忽略:向量是增强
+    }
+  })();
+
   return { ok: true, id: created.id as string };
 }
 
@@ -292,7 +319,29 @@ export async function recallMemories(
   supabase: SupabaseClient,
   organizationId: string,
   limit = 10,
+  query?: string | undefined,
 ): Promise<MemoryRow[]> {
+  // 向量召回:配置了 embedding 且有查询文本时,按语义相似度取最相关的记忆。
+  // 未配置/失败 → 降级到「最近优先」召回 —— 长期记忆是增强,不是阻断。
+  if (query && query.trim().length > 0) {
+    try {
+      const { embedText } = await import("@/lib/ai/embeddings");
+      const embedding = await embedText(query);
+      if (embedding) {
+        const { data, error } = await supabase.rpc("search_memories", {
+          p_embedding: embedding,
+          p_limit: limit,
+        });
+        if (!error && Array.isArray(data)) {
+          return data as unknown as MemoryRow[];
+        }
+        logDbFailure("memories.vector_recall", error, { organizationId });
+      }
+    } catch (e) {
+      logDbFailure("memories.vector_recall", e instanceof Error ? e : undefined);
+    }
+  }
+
   const { data, error } = await supabase.rpc("recall_memories", {
     p_organization_id: organizationId,
     p_limit: limit,

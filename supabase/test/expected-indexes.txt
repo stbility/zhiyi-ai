@@ -31,6 +31,7 @@ memberships_org_idx
 memberships_user_idx
 memories_conversation_idx
 memories_created_by_idx
+memories_embedding_idx
 memories_organization_idx
 memories_recall_idx
 message_feedback_created_by_idx
