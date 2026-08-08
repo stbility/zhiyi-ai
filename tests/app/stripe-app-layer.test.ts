@@ -100,4 +100,19 @@ describe("checkout/portal/webhook 路由安全姿态", () => {
     expect(agentRoute).toContain("monthly_agent_turns");
     expect(agentRoute).toContain("不信任客户端");
   });
+
+  it("权益守卫:组织 owner/admin 豁免套餐限制(项目所有者不受自己产品限制)", () => {
+    const agentRoute = readFileSync(
+      resolve(ROOT, "src/app/api/agent/route.ts"),
+      "utf8",
+    );
+    // owner/admin 从 memberships 读角色并豁免
+    expect(agentRoute).toContain('membership?.role === "owner"');
+    expect(agentRoute).toContain('membership?.role === "admin"');
+    expect(agentRoute).toContain("isOrgAdmin");
+    // 豁免逻辑必须在权益判断之前 —— 先查角色,再决定要不要查额度
+    expect(
+      agentRoute.indexOf("isOrgAdmin"),
+    ).toBeLessThan(agentRoute.indexOf("getMyEntitlements"));
+  });
 });

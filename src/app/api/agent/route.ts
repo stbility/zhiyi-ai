@@ -55,23 +55,37 @@ export async function POST(request: NextRequest) {
   // 免费用户跑智能体会先撞这里:明确告诉他这是套餐边界,
   // 而不是让他在「正在思考」的界面里等一个注定失败的运行。
   // 判断走数据库(get_entitlements),不信任客户端传的 plan。
+  //
+  // 组织 owner/admin 豁免:管理者是产品的主人,不该被自己的产品挡在门外。
+  // 角色从 memberships 读(RLS 策略 memberships_select_member 允许成员读)。
   if (!resumeRunId) {
-    const { getMyEntitlements, quotaOf } = await import(
-      "@/lib/billing/entitlements"
-    );
-    const entitlements = await getMyEntitlements();
-    // quota null = 不限额度(enterprise);0 = 本月额度已耗尽;其余 = 还有余量
-    const turnsQuota = entitlements ? quotaOf(entitlements, "monthly_agent_turns") : 0;
-    const blocked =
-      !entitlements || (turnsQuota !== null && turnsQuota <= 0);
-    if (blocked) {
-      return errorResponse(
-        entitlements
-          ? `本月的智能体运行额度已用完,升级 Professional(月付 HK$49)可提升额度。`
-          : `智能体运行需要 Professional 及以上套餐(月付 HK$49)。` +
-              `升级后即可使用多步工具循环;或改用「AI 助手」对话通道。`,
-        402,
+    const { data: membership } = await supabase
+      .from("memberships")
+      .select("role")
+      .eq("organization_id", organizationId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    const isOrgAdmin =
+      membership?.role === "owner" || membership?.role === "admin";
+
+    if (!isOrgAdmin) {
+      const { getMyEntitlements, quotaOf } = await import(
+        "@/lib/billing/entitlements"
       );
+      const entitlements = await getMyEntitlements();
+      // quota null = 不限额度(enterprise);0 = 本月额度已耗尽;其余 = 还有余量
+      const turnsQuota = entitlements ? quotaOf(entitlements, "monthly_agent_turns") : 0;
+      const blocked =
+        !entitlements || (turnsQuota !== null && turnsQuota <= 0);
+      if (blocked) {
+        return errorResponse(
+          entitlements
+            ? `本月的智能体运行额度已用完,升级 Professional(月付 HK$49)可提升额度。`
+            : `智能体运行需要 Professional 及以上套餐(月付 HK$49)。` +
+                `升级后即可使用多步工具循环;或改用「AI 助手」对话通道。`,
+          402,
+        );
+      }
     }
   }
   // resumeRunId 存在时跳过权益检查 —— 续跑的是用户已经付过费的运行,
