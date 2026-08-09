@@ -1,63 +1,37 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { PricingCard } from "@/components/account/PricingCard";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { Plan } from "@/lib/plans";
 
 /**
- * 定价网格(落地页 #pricing 与 /pricing 共用)。
+ * 定价区(落地页/定价页共用)。
  *
- * 付费套餐的月付/年付 CTA 都走 /api/billing/checkout(带 userId 归属),
- * 不再直连 Payment Link —— Payment Link 无法携带 userId,买了也解锁不了权益。
- * Free 档 CTA 是 /register 站内链接,不是支付按钮。
- *
- * 组件是唯一的渲染来源,页面只传数据(PLANS);样式全走设计系统 token。
+ * 支付路径 = Stripe Payment Link(主):登录态下自动拼 `?prefilled_email=` ——
+ * Stripe 收款时用该邮箱建 customer,webhook 按 customer.email 反查 app 用户,
+ * 订阅落到正确账户。未登录则原样打开链接(webhook 的 email 兜底仍可归属)。
+ * /api/billing/checkout 路由保留作后备(直接绑定 userId),此处不调用。
  */
-
-function startCheckout(
-  planId: "professional" | "enterprise",
-  interval: "month" | "year",
-  setBusy: (v: boolean) => void,
-  setError: (v: string | null) => void,
-) {
-  setBusy(true);
-  setError(null);
-  void (async () => {
-    try {
-      const res = await fetch("/api/billing/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planId, interval }),
-      });
-      if (res.status === 401) {
-        const next = encodeURIComponent(window.location.pathname);
-        window.location.assign(`/login?next=${next}`);
-        return;
-      }
-      const data = (await res.json().catch(() => ({}))) as {
-        url?: string;
-        error?: string;
-        hint?: string;
-      };
-      if (!res.ok) {
-        setError(data.error ?? `请求失败(HTTP ${res.status})`);
-        return;
-      }
-      if (data.url) window.location.assign(data.url);
-      else setError("服务未返回结账地址,请稍后重试。");
-    } catch {
-      setError("网络异常,请稍后重试。");
-    } finally {
-      setBusy(false);
-    }
-  })();
+function withPrefilledEmail(base: string | undefined, email: string | null): string | undefined {
+  if (!base) return undefined;
+  if (!email) return base;
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}prefilled_email=${encodeURIComponent(email)}`;
 }
 
 function PlanCard({ plan }: { plan: Plan }) {
   const isFree = plan.id === "free";
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [email, setEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    const supabase = createSupabaseBrowserClient();
+    if (!supabase) return;
+    void supabase.auth.getUser().then(({ data }) => {
+      setEmail(data.user?.email ?? null);
+    });
+  }, []);
 
   return (
     <div className="flex w-65 flex-col">
@@ -68,29 +42,18 @@ function PlanCard({ plan }: { plan: Plan }) {
         features={plan.features}
         highlighted={plan.highlighted}
         annualNote={plan.annualNote}
-        annualPrice={plan.annualPrice}
-        ctaLabel={
-          isFree ? "免费开始" : `立即订阅 ${plan.price ?? ""}${busy ? "…" : ""}`
-        }
-        href={isFree ? "/register" : undefined}
-        onSelect={
-          isFree
-            ? undefined
-            : (interval) => startCheckout(plan.id as "professional" | "enterprise", interval, setBusy, setError)
-        }
+        annualHref={withPrefilledEmail(plan.annualStripeUrl, email)}
+        ctaLabel={isFree ? "免费开始" : `立即订阅 ${plan.price ?? ""}`}
+        href={isFree ? "/register" : withPrefilledEmail(plan.stripeUrl, email)}
+        external={!isFree}
       />
-      {error && (
-        <span className="text-error text-label mt-1.5 text-center">
-          {error}
-        </span>
-      )}
     </div>
   );
 }
 
 export function PlansSection({ plans }: { plans: readonly Plan[] }) {
   return (
-    <div className="flex flex-wrap justify-center gap-5">
+    <div className="flex flex-wrap items-stretch justify-center gap-4">
       {plans.map((plan) => (
         <PlanCard key={plan.id} plan={plan} />
       ))}
