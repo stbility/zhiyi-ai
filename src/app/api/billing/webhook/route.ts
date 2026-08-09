@@ -15,16 +15,47 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
  * Stripe Webhook —— subscriptions 表唯一的写入方(0033 的写者纪律)。
  *
  * 客户端、checkout 路由都不得直接写 subscriptions;订阅状态的任何变化
- * 都以 Stripe 发来的事件为准,幂等 upsert(onConflict stripe_subscription_id)
+ * 都以 Stripe 为准,幂等 upsert(onConflict stripe_subscription_id)
  * 让重放安全。
  *
  * 套餐判定只认 Price 上的 metadata.plan_id(白名单),
  * 绝不信任客户端传来的 plan 字段。
+ *
+ * 【事件乱序 —— 曾经会漏钱的地方,别退回去】
+ * 官方文档 /webhooks「Event ordering」明说:
+ *   "Stripe doesn't guarantee the delivery of events in the order that
+ *    they're generated. ... You can also use the API to retrieve any
+ *    missing objects."
+ * 此前 created/updated 分支直接把 event.data.object 的状态写库。后果:
+ *   1. 用户取消 → deleted 先到 → 库里 canceled
+ *   2. 一条**更早生成、延迟送达**的 updated(载荷里 status=active)后到
+ *   3. 无条件 upsert → 库里被改回 active,且再无事件来纠正
+ *   → 该用户不再付费却永久保留付费权益。
+ * 现在所有订阅分支一律 fetchAuthoritative() 去 API 拉当前真实状态,
+ * 载荷只用于取 id。拉取失败就抛错吃 5xx 让 Stripe 重试,
+ * 绝不退回去写可能过期的载荷状态。
+ *
+ * 残留窗口(已知,可接受):两条事件并发处理时,各自拉到的快照仍可能
+ * 后写覆盖先写。窗口从「投递延迟(可达数小时)」缩到「并发处理(毫秒级)」。
+ * 要彻底消除需要在 subscriptions 上加事件时间戳列做单调守卫(需迁移)。
  */
 
 export const dynamic = "force-dynamic";
 
 const PLAN_WHITELIST = new Set(["professional", "enterprise"]);
+
+/**
+ * 拿订阅的**权威状态** —— 以 Stripe API 当前返回为准,不信事件载荷。
+ *
+ * 已取消的订阅 Stripe 依然可 retrieve(返回 status=canceled),
+ * 所以 deleted 分支同样走这里,不需要特殊处理。
+ */
+async function fetchAuthoritative(
+  stripe: Stripe,
+  subscriptionId: string,
+): Promise<Stripe.Subscription> {
+  return await stripe.subscriptions.retrieve(subscriptionId);
+}
 
 async function upsertSubscription(
   admin: SupabaseClient,
@@ -88,6 +119,21 @@ async function upsertSubscription(
   }
 
   if (!userId) {
+    // 归属认不出时,若该订阅**已在库**,仍必须把状态落下去 ——
+    // 否则「取消」这类事件会因为归属查不到而整条丢失,用户已退订却仍有权益。
+    // 行不存在才是真的无从下手,抛错吃 5xx 让 Stripe 重试。
+    const affected = await setSubscriptionStatus(
+      admin,
+      subscription.id,
+      subscription.status,
+    );
+    if (affected > 0) {
+      logger.warn(
+        { subscriptionId: subscription.id, status: subscription.status },
+        "订阅归属未能确定,已按 id 更新状态(未改归属)",
+      );
+      return;
+    }
     throw new Error(`无法确定订阅 ${subscription.id} 所属用户`);
   }
 
@@ -130,18 +176,26 @@ async function upsertSubscription(
   }
 }
 
+/**
+ * 只改状态,不碰归属。返回**实际命中的行数** ——
+ * 调用方据此区分「更新成功」与「这条订阅根本不在库里」。
+ * 从前这里是 update-only 且不看命中数:deleted 若比 created 先到
+ * (事件不保证顺序),update 匹配 0 行、不报错、不重试,取消就永久丢了。
+ */
 async function setSubscriptionStatus(
   admin: SupabaseClient,
   stripeSubscriptionId: string,
   status: string,
-): Promise<void> {
-  const { error } = await admin
+): Promise<number> {
+  const { data, error } = await admin
     .from("subscriptions")
     .update({ status, updated_at: new Date().toISOString() })
-    .eq("stripe_subscription_id", stripeSubscriptionId);
+    .eq("stripe_subscription_id", stripeSubscriptionId)
+    .select("stripe_subscription_id");
   if (error) {
     throw new Error(`订阅状态更新失败:${error.message}`);
   }
+  return data?.length ?? 0;
 }
 
 export async function POST(request: NextRequest) {
@@ -193,30 +247,33 @@ export async function POST(request: NextRequest) {
               { onConflict: "user_id" },
             );
           }
-          const subscription = await stripe.subscriptions.retrieve(
-            subscriptionId,
-          );
+          const subscription = await fetchAuthoritative(stripe, subscriptionId);
           await upsertSubscription(admin, stripe, subscription);
         }
         break;
       }
 
       case "customer.subscription.updated":
-      case "customer.subscription.created": {
+      case "customer.subscription.created":
+      case "customer.subscription.paused":
+      case "customer.subscription.resumed":
+      case "customer.subscription.deleted": {
         // 【链路修复】created 与 updated 同处理:Payment Link 新订阅
         // 触发的是 created —— 端点若配了 created 而非 completed,
         // 没有这个分支订阅同样永不落库。
-        await upsertSubscription(
-          admin,
-          stripe,
-          event.data.object as Stripe.Subscription,
-        );
-        break;
-      }
-
-      case "customer.subscription.deleted": {
-        const subscription = event.data.object as Stripe.Subscription;
-        await setSubscriptionStatus(admin, subscription.id, "canceled");
+        //
+        // paused/resumed 也走这里:0033 的状态白名单含 paused,
+        // 官方文档把它们列为**独立事件**(试用期结束无支付方式时触发),
+        // 不处理的话被暂停的订阅在库里仍是 active,权益不该留却留着。
+        //
+        // deleted 同样走这里:已取消的订阅 retrieve 回来就是 canceled,
+        // 走同一条 upsert 路径,顺带修掉「行不存在时静默丢失取消」。
+        //
+        // 五种事件统一取 id 后拉权威状态,**绝不写载荷里的 status** ——
+        // 理由见文件顶部「事件乱序」。
+        const payload = event.data.object as Stripe.Subscription;
+        const subscription = await fetchAuthoritative(stripe, payload.id);
+        await upsertSubscription(admin, stripe, subscription);
         break;
       }
 

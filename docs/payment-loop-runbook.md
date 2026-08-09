@@ -16,16 +16,18 @@
   幂等 upsert(重放安全)。
 - 4 笔支付修复提交已推送,`main` 与 `origin/main` 一致。
 
-**尚未证实、且容易被绿色测试掩盖的事**:
+- webhook 路由已有**真实执行**的测试:`tests/app/billing-webhook-handler.test.ts`
+  (19 例,替身 Stripe + 内存版 Supabase,真正调用 `POST()`)。含病根 5 的回归测试 ——
+  已验证:把修复回退后这些用例会变红(`expected 'active' to be 'canceled'`)。
 
-- 支付相关测试**全部是静态源码断言** —— `readFileSync` 读迁移 SQL 与 `plans.ts`,
-  再 `expect(...).toContain(...)`。全仓库搜索 `vi.mock stripe` / `new Stripe` /
-  `stripe.checkout` / `constructEvent` **零命中**;搜索测试是否 import 过
-  `src/app/api/*` 的路由处理函数**零命中**。
-  → 即 checkout / webhook / portal 三个路由的实际代码,**从未被任何测试执行过一行**。
+**尚未证实的事**:
+
+- checkout / portal 两个路由仍**没有执行级测试**(只有静态源码断言)。
 - 生产库 `subscriptions=0` / `stripe_customers=0`。
-- 因此:**既没有真实支付,也没有 test mode 模拟支付**。935 绿灯证明的是
-  「源码里写了这些字符串」,不是「钱能变成权益」。
+- **既没有真实支付,也没有 test mode 模拟支付**。绿灯证明的是
+  「这些分支的逻辑对」,不是「钱在生产环境里真的变成了权益」。
+- 提醒:此前 935 个绿灯里,支付部分**全部是静态源码断言** —— `readFileSync`
+  读 SQL 再 `toContain`。那种绿灯连病根 5 这种会漏钱的缺陷都发现不了。
 
 **当前卡点**:`scripts/stripe-audit.sh` 尚未运行,Stripe 侧四件事全部未知 ——
 密钥是 live 还是 test、四条 HKD 价格在不在、webhook 端点订阅了哪些事件、
@@ -91,6 +93,29 @@
   每次交付运行日志里看得到。
 - **注意**:anon key 读不了 entitlements(策略只对 authenticated)——
   用 anon 探测看到 [] 不代表真空,以自动化日志为准。
+
+### 病根 5:信任事件载荷 —— 乱序事件让已取消的订阅复活(2026-08-09 修复)
+
+- **症状**:用户退订后**永久保留付费权益**,库里状态是 `active`,且再无事件纠正。
+  最隐蔽的一种:不报错、不告警、测试全绿,只有对账时才发现少收钱。
+- **病根**:官方文档 `/webhooks`「Event ordering」明说
+  **"Stripe doesn't guarantee the delivery of events in the order that they're
+  generated."** 而 `created/updated` 分支此前直接把 `event.data.object`
+  的 status 写库。一条**更早生成、延迟送达**的 `updated`(载荷 `active`)
+  到达时,会覆盖掉 `deleted` 已经写好的 `canceled`。
+- **同源的第二个洞**:`deleted` 分支用的是 update-only 且不看命中行数 ——
+  若 `deleted` 比 `created` 先到,update 匹配 0 行、不报错、不重试,取消永久丢失。
+- **修复**:所有订阅事件分支(created/updated/paused/resumed/deleted)统一
+  `stripe.subscriptions.retrieve()` **拉权威状态**,载荷只用于取 id;
+  拉取失败抛错吃 5xx 让 Stripe 重试,绝不退回去写可能过期的载荷。
+  `deleted` 改走同一条 upsert 路径,行不存在时建行而非静默丢弃。
+  顺带补上 `paused` / `resumed` 两个此前缺失的分支(0033 白名单里有 `paused`)。
+- **守卫**:`tests/app/billing-webhook-handler.test.ts` 的「【P0 回归】事件乱序」
+  一组。**这些用例只在乱序时才红 —— 真实支付测试大概率碰不到这个 bug**,
+  这正是它必须有执行级测试的理由。
+- **残留窗口(已知)**:两条事件并发处理时,各自拉到的快照仍可能后写覆盖先写。
+  窗口从「投递延迟(可达数小时)」缩到「并发处理(毫秒级)」。
+  要彻底消除需在 `subscriptions` 加事件时间戳列做单调守卫(需迁移)。
 
 ## 三、验收清单(改动支付代码后逐条跑)
 
