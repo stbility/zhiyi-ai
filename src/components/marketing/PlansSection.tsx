@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { PricingCard } from "@/components/account/PricingCard";
-import { Button } from "@/components/primitives/Button";
+import { SegmentedControl } from "@/components/primitives/SegmentedControl";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { Plan } from "@/lib/plans";
 
@@ -79,30 +79,17 @@ export function PlansSection({ plans }: { plans: readonly Plan[] }) {
 
   return (
     <div className="flex flex-col items-center gap-6">
-      {/* Linear 官方月付/年付滑动切换:原生 Button 分段控件。
+      {/* Linear 官方月付/年付滑动切换:设计系统原生 SegmentedControl。
           年付一侧直接标注「省 2 个月」,一眼看到优惠。 */}
-      <div
-        role="group"
-        aria-label="计费周期"
-        className="border-border-default bg-surface-2 rounded-control inline-flex items-center gap-0.5 border p-1"
-      >
-        <Button
-          size="sm"
-          variant={interval === "month" ? "secondary" : "ghost"}
-          onClick={() => setInterval("month")}
-          aria-pressed={interval === "month"}
-        >
-          月付
-        </Button>
-        <Button
-          size="sm"
-          variant={interval === "year" ? "secondary" : "ghost"}
-          onClick={() => setInterval("year")}
-          aria-pressed={interval === "year"}
-        >
-          年付 · 省 2 个月
-        </Button>
-      </div>
+      <SegmentedControl<"month" | "year">
+        ariaLabel="计费周期"
+        options={[
+          { value: "month", label: "月付" },
+          { value: "year", label: "年付 · 省 2 个月" },
+        ]}
+        value={interval}
+        onChange={setInterval}
+      />
 
       <div className="flex flex-wrap items-stretch justify-center gap-4">
         {plans.map((plan) => (
