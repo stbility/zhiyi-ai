@@ -89,22 +89,15 @@ describe("智能体页面是整幅单栏 —— 右边不许挂东西", () => {
     expect(AGENT_PAGE, "右边又挂上东西了").not.toMatch(/<aside/);
   });
 
-  it("ChatPanel 拿到整幅宽度,不被侧栏挤窄", () => {
+  it("ChatPanel 是外壳里唯一的子元素,拿到整幅宽度", () => {
     // 不许再套一层 flex-1 的包装 —— 那正是给同级侧栏腾地方的写法
     expect(AGENT_PAGE).not.toMatch(/flex min-w-0 flex-1 overflow-hidden/);
   });
 
-  it("和 AI 助手页面用同一种外壳 —— 都是整幅", () => {
+  it("和 AI 助手页面用同一种外壳 —— 两边都是整幅", () => {
     const 壳 = /<div className="flex h-full w-full overflow-hidden">/;
+    expect(AGENT_PAGE).toMatch(壳);
     expect(ASSISTANT_PAGE).toMatch(壳);
-    // 智能体页外壳升级为纵向布局:底部是外部执行记录面板(内滚),
-    // 聊天区仍是整幅单栏 —— 不引入右侧栏(见 224px 教训)
-    expect(AGENT_PAGE).toMatch(/flex h-full w-full flex-col overflow-hidden/);
-    expect(AGENT_PAGE).toMatch(/外部执行记录/);
-    expect(AGENT_PAGE).toMatch(/ExecutionFeed/);
-    // 底部面板用 border-t 横向分隔,不是 w-[NNNpx] 侧栏
-    expect(AGENT_PAGE).toMatch(/border-t/);
-    expect(AGENT_PAGE).not.toMatch(/border-l/);
   });
 
   it("对话区宽度的算术留在代码里,不是只写在提交信息里", () => {

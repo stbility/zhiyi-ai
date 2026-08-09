@@ -78,8 +78,6 @@ export interface TokenIdentity {
   readonly tokenId: string;
   readonly organizationId: string;
   readonly name: string;
-  /** 令牌创建者(可空:老令牌或系统签发) —— 执行记录的用户归属用 */
-  readonly userId: string | null;
 }
 
 /**
@@ -104,7 +102,7 @@ export async function verifyToken(
   const hash = hashToken(token);
   const { data, error } = await admin
     .from("mcp_access_tokens")
-    .select("id, organization_id, name, token_hash, revoked_at, created_by")
+    .select("id, organization_id, name, token_hash, revoked_at")
     .eq("token_hash", hash)
     .maybeSingle();
 
@@ -133,6 +131,5 @@ export async function verifyToken(
     tokenId: data.id as string,
     organizationId: data.organization_id as string,
     name: data.name as string,
-    userId: (data.created_by as string | null) ?? null,
   };
 }

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { ExecutionFeed } from "@/components/agent/ExecutionFeed";
 import { ChatPanel } from "@/components/app/ChatPanel";
 import {
   loadConversations,
@@ -9,7 +8,6 @@ import {
   loadTurns,
   loadWorkspaceForConversation,
 } from "@/lib/db/conversations";
-import { loadRecentExecutions } from "@/lib/db/executions";
 import { getMyOrganizations } from "@/lib/db/queries";
 
 /**
@@ -79,13 +77,11 @@ export default async function AgentPage({
     );
   }
 
-  const [models, conversations, executions] = await Promise.all([
+  const [models, conversations] = await Promise.all([
     loadModels(org.id),
     // 只列智能体这条通道的会话。用户来这个页面是想接着昨天那个没跑完的
     // 任务,不是想翻昨天问过的概念题。见迁移 0023。
     loadConversations(org.id, "agent"),
-    // 外部智能体(Hermes 等)执行记录 —— 评审建议第 1 项
-    loadRecentExecutions(org.id),
   ]);
 
   const requested = (await searchParams).c;
@@ -109,30 +105,16 @@ export default async function AgentPage({
   return (
     // 和 AI 助手页面同一种外壳:整幅、不滚动,只有消息区滚动。
     // 右边不挂任何东西 —— 见文件头那段关于 224px 的教训。
-    // 底部是外部智能体(Hermes 等)的执行记录面板:独立内滚,
-    // 不挤占聊天区 —— 评审建议第 1 项「执行状态回传」的展示层。
-    <div className="flex h-full w-full flex-col overflow-hidden">
-      <div className="min-h-0 flex-1">
-        <ChatPanel
-          key={active?.id ?? "new"}
-          channel="agent"
-          {...(workspace ? { workspace } : {})}
-          models={models}
-          conversations={conversations}
-          activeConversationId={active?.id ?? null}
-          initialTurns={initialTurns}
-        />
-      </div>
-      <div className="border-border-default bg-surface-1 border-t">
-        <div className="mx-auto w-full max-w-4xl px-4 py-3 md:px-8">
-          <h2 className="text-fg font-zh text-caption mb-2 font-semibold">
-            外部执行记录
-          </h2>
-          <div className="max-h-56 overflow-y-auto pr-1">
-            <ExecutionFeed executions={executions} />
-          </div>
-        </div>
-      </div>
+    <div className="flex h-full w-full overflow-hidden">
+      <ChatPanel
+        key={active?.id ?? "new"}
+        channel="agent"
+        {...(workspace ? { workspace } : {})}
+        models={models}
+        conversations={conversations}
+        activeConversationId={active?.id ?? null}
+        initialTurns={initialTurns}
+      />
     </div>
   );
 }
