@@ -18,12 +18,19 @@ import { Button, type ButtonVariant } from "@/components/primitives/Button";
  *
  * 降级(不是「主路径」,是「主路径确实用不了时的最后一步」):
  * 后端 503 通常意味着 Price ID 没配 / Stripe 目录里找不到价格 ——
- * 这时挡住用户等于把能收的钱推走。有 fallbackUrl 就转 Payment Link,
- * 并如实告诉用户这条路要靠付款邮箱对账。没有 fallbackUrl 就照实报错,
- * 绝不假装跳转成功。
+ * 这时挡住用户等于把能收的钱推走,所以转 Payment Link 继续收款。
  *
  * 未登录(401)跳登录页,登录后回到当前页继续 —— 不在未登录状态下
  * 把人推去 Payment Link,那正是归属不了的那种付款。
+ *
+ * 按钮下方不留任何文字。
+ *
+ * 此前失败时会在按钮下面挂一行红字/灰字,而点击的下一刻页面就在跳转 ——
+ * 那行字要么一闪而过,要么在慢跳转时糊在卡片上不走,两种都是脏的。
+ * 现在每一条分支的终点都是一次**真实跳转**,不存在「点了之后留在原地
+ * 看一行说明」的状态:Checkout → Payment Link → 登录页 → /billing,
+ * 四个终点都是真页面。最后那个 /billing 上有「Stripe 尚未配置」的
+ * 如实横幅 —— 所以「不留文字」不等于把失败藏起来,只是把话说在该说的地方。
  */
 
 export interface SubscribeButtonProps {
@@ -48,13 +55,9 @@ export function SubscribeButton({
   fallbackUrl,
 }: SubscribeButtonProps) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
 
   async function subscribe() {
     setBusy(true);
-    setError(null);
-    setNote(null);
     try {
       const res = await fetch("/api/billing/checkout", {
         method: "POST",
@@ -86,45 +89,33 @@ export function SubscribeButton({
         return;
       }
 
-      // 到这里说明服务端 Checkout 这条路当前走不通。
-      if (fallbackUrl) {
-        setNote(
-          "正在改用备用支付链接。请使用与本站**同一个邮箱**付款,否则订阅无法自动归属到你的账号。",
-        );
-        window.location.assign(fallbackUrl);
-        return;
-      }
-
-      setError(data.error ?? `请求失败(HTTP ${res.status})`);
-    } catch {
-      if (fallbackUrl) {
-        setNote("网络异常,正在改用备用支付链接。");
-        window.location.assign(fallbackUrl);
-        return;
-      }
-      setError("网络异常,请稍后重试。");
+      // 到这里说明服务端 Checkout 这条路当前走不通(多半是 503:
+      // Price ID 未配 / Stripe 目录里没有对应价格)。
+      // 原因写进控制台留给排查,界面上不挂字 —— 用户要的是继续付款。
+      console.warn("[subscribe] checkout 不可用,降级 Payment Link", {
+        status: res.status,
+        error: data.error,
+        hint: data.hint,
+      });
+      window.location.assign(fallbackUrl ?? "/billing");
+    } catch (e) {
+      console.warn("[subscribe] 请求失败,降级", e);
+      window.location.assign(fallbackUrl ?? "/billing");
     } finally {
       setBusy(false);
     }
   }
 
+  // 按钮就是按钮:一个元素,下面不挂任何说明性文字。
   return (
-    <span className="flex w-full flex-col gap-1.5">
-      <Button
-        variant={variant}
-        size={size}
-        disabled={busy}
-        onClick={() => void subscribe()}
-        className={className}
-      >
-        {busy ? "跳转中…" : label}
-      </Button>
-      {note && (
-        <span className="text-fg-tertiary text-label text-center">{note}</span>
-      )}
-      {error && (
-        <span className="text-error text-label text-center">{error}</span>
-      )}
-    </span>
+    <Button
+      variant={variant}
+      size={size}
+      disabled={busy}
+      onClick={() => void subscribe()}
+      className={className}
+    >
+      {busy ? "跳转中…" : label}
+    </Button>
   );
 }

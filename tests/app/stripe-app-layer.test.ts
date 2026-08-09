@@ -204,9 +204,24 @@ describe("支付主路径:服务端 Checkout Session", () => {
     // 未登录付的款只能靠付款邮箱反查,归不了户 = 收了钱没交付。
     expect(SUBSCRIBE_BUTTON).toContain("fallbackUrl");
     const 未登录处理 = SUBSCRIBE_BUTTON.indexOf("res.status === 401");
-    const 降级处理 = SUBSCRIBE_BUTTON.indexOf("if (fallbackUrl)");
+    const 降级处理 = SUBSCRIBE_BUTTON.indexOf('fallbackUrl ?? "/billing"');
     expect(未登录处理).toBeGreaterThan(-1);
+    expect(降级处理).toBeGreaterThan(-1);
     expect(未登录处理).toBeLessThan(降级处理);
+  });
+
+  it("订阅按钮下方不挂任何说明性文字", () => {
+    // 用户要求:按钮就是按钮,下面不留残留文字。
+    // 每条分支的终点都是一次真实跳转(Checkout / Payment Link / 登录页 /
+    // /billing),所以没有「点了之后留在原地看一行字」的状态。
+    expect(SUBSCRIBE_BUTTON).not.toContain("setNote");
+    expect(SUBSCRIBE_BUTTON).not.toContain("setError");
+    expect(SUBSCRIBE_BUTTON).not.toContain("同一个邮箱");
+    // 组件返回值里不得再出现文字容器
+    const 返回值 = SUBSCRIBE_BUTTON.slice(SUBSCRIBE_BUTTON.indexOf("return ("));
+    expect(返回值).not.toContain("<span");
+    // 失败原因仍要留下,只是留在控制台而不是界面上
+    expect(SUBSCRIBE_BUTTON).toContain("console.warn");
   });
 
   it("客户端只传 planId/interval,金额与权益不经客户端", () => {

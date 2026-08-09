@@ -13,9 +13,15 @@
        ├─ 200 {url} → Stripe Checkout Session(metadata.userId)
        │     └─ 付款 → webhook(checkout.session.completed / subscription.*)
        │           └─ subscriptions 落库 → get_entitlements → 权益/配额生效
-       └─ 5xx(Price ID 未配/目录找不到)→ 降级 Payment Link(带 prefilled_email,
-             如实提示「必须用与本站同一邮箱付款,否则无法自动归属」)
+       └─ 5xx(Price ID 未配/目录找不到)→ 降级 Payment Link(带 prefilled_email)
+             无 fallbackUrl 时兜到 /billing(页面上有「Stripe 尚未配置」如实横幅)
 ```
+
+> **按钮下方不挂任何文字**(2026-08-09)。此前降级时会在按钮下面显示一行
+> 「正在改用备用支付链接…请使用同一邮箱付款」——点击的下一刻页面就在跳转,
+> 那行字要么一闪而过,要么在慢跳转时糊在卡片上。用户是成熟用户,不需要这种
+> 中间态解说。现在四条分支的终点都是**真实跳转**,失败原因写进 `console.warn`
+> 供排查,界面保持干净。守卫测试:「订阅按钮下方不挂任何说明性文字」。
 
 - **主路径**:服务端 Checkout Session(metadata.userId 精确归属)—— 2026-08-09 ba422de 恢复
 - **备用路径**:Payment Link + prefilled_email(仅主路径确实不可用时)
