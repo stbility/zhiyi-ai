@@ -45,11 +45,33 @@ async function loadSubscription(): Promise<SubscriptionRow | null> {
   };
 }
 
-export default async function BillingPage() {
+export default async function BillingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ session_id?: string }>;
+}) {
   // 权益判定走数据库(0034 get_entitlements),不信任任何客户端字段。
   const entitlements = await getMyEntitlements();
   const subscription = await loadSubscription();
   const stripeConfig = getStripeConfig();
+
+  // 付款回跳:Stripe 把浏览器送回来通常快过它把 webhook 送到我们这里。
+  // 订阅还没落库时,页面不能对刚付完钱的人说「当前为免费套餐」。
+  // 只影响文案 —— 不写库、不解锁,权益仍只来自 get_entitlements。
+  let activationPending = false;
+  if (!subscription) {
+    const sessionId = (await searchParams).session_id;
+    if (sessionId) {
+      const supa = await createSupabaseServerClient();
+      const uid = supa ? (await supa.auth.getUser()).data.user?.id : undefined;
+      if (uid) {
+        const { isActivationPending } = await import(
+          "@/lib/billing/checkout-session"
+        );
+        activationPending = await isActivationPending(sessionId, uid);
+      }
+    }
+  }
 
   // 本月用量(get_monthly_usage 0035,security definer 只返回调用者自己的)。
   // 拿不到就不展示用量条 —— 如实降级,不显示假数字。
@@ -95,6 +117,7 @@ export default async function BillingPage() {
         stripeWebhookConfigured={Boolean(stripeConfig?.webhookSecret)}
         usageUsed={usageUsed}
         usageQuota={usageQuota}
+        activationPending={activationPending}
       />
     </div>
   );

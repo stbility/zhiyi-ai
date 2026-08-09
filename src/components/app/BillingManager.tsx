@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { UsageMeter } from "@/components/account/UsageMeter";
 import { Button, StatusLabel } from "@/components/primitives";
@@ -59,6 +60,7 @@ export function BillingManager({
   stripeWebhookConfigured,
   usageUsed,
   usageQuota,
+  activationPending = false,
 }: {
   currentPlanId: string;
   subscription: SubscriptionRow | null;
@@ -66,9 +68,28 @@ export function BillingManager({
   stripeWebhookConfigured: boolean;
   usageUsed: number;
   usageQuota: number | null;
+  /** 付款已确认、订阅尚未落库(webhook 还在路上) */
+  activationPending?: boolean | undefined;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+
+  // 等 webhook 落库。
+  //
+  // 服务端已经向 Stripe 确认这笔钱付掉了,缺的只是订阅行 —— 通常一两秒就到。
+  // 这里每 3 秒重取一次服务端数据,最多 20 次(1 分钟)后停手:
+  // 无限轮询会把一个「webhook 没配对」的故障伪装成「还在处理中」,
+  // 让用户一直等一个永远不会来的东西。到点就把话说清楚(见下方文案)。
+  const [waited, setWaited] = useState(0);
+  useEffect(() => {
+    if (!activationPending || subscription || waited >= 20) return;
+    const t = setTimeout(() => {
+      setWaited((n) => n + 1);
+      router.refresh();
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [activationPending, subscription, waited, router]);
 
   async function openPortal() {
     setBusy("portal");
@@ -128,6 +149,20 @@ export function BillingManager({
               {busy === "portal" ? "跳转中…" : "管理账单(改卡 / 改套餐 / 取消)"}
             </Button>
           </div>
+        </section>
+      ) : activationPending ? (
+        // 钱已经付了,订阅行还没到。绝不能在这一刻说「未订阅付费套餐」——
+        // 那是整条闭环里最伤的一句话。
+        <section className="bg-surface-2 border-brand rounded-card font-zh border p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-fg text-body font-medium">支付已收到</h3>
+            <StatusLabel tone="warning">正在开通</StatusLabel>
+          </div>
+          <p className="text-fg-secondary text-caption mt-2">
+            {waited < 20
+              ? "Stripe 已确认这笔付款,正在等待订阅信息同步(通常几秒)。本页会自动刷新。"
+              : "付款已确认,但订阅信息超过一分钟仍未同步。你的钱没有问题,权益会在同步完成后自动生效;若长时间未恢复请联系我们并提供付款邮箱。"}
+          </p>
         </section>
       ) : (
         <div className="border-border-default rounded-control font-zh border border-dashed p-4">

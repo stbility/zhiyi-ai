@@ -224,6 +224,32 @@ describe("支付主路径:服务端 Checkout Session", () => {
     expect(SUBSCRIBE_BUTTON).toContain("console.warn");
   });
 
+  it("付款回跳:不得对刚付完钱的人显示「未订阅」", () => {
+    const SESSION = readFileSync(
+      resolve(ROOT, "src/lib/billing/checkout-session.ts"),
+      "utf8",
+    );
+    const MANAGER = readFileSync(
+      resolve(ROOT, "src/components/app/BillingManager.tsx"),
+      "utf8",
+    );
+
+    // 归属校验:别人的 session_id 一律不认
+    expect(SESSION).toContain('session.metadata?.["userId"] !== userId');
+    // 只读:回跳这条路绝不写库、不解锁(subscriptions 唯一写者仍是 webhook)
+    expect(SESSION).not.toMatch(/\.from\(["']subscriptions["']\)/);
+    expect(SESSION).not.toContain("upsert");
+    expect(SESSION).not.toContain("insert");
+
+    // 待开通分支必须排在「当前为免费套餐」之前
+    const 待开通 = MANAGER.indexOf("activationPending ?");
+    const 免费文案 = MANAGER.indexOf("当前为免费套餐");
+    expect(待开通).toBeGreaterThan(-1);
+    expect(待开通).toBeLessThan(免费文案);
+    // 轮询必须有上限,否则「webhook 没配对」会被伪装成「还在处理中」
+    expect(MANAGER).toContain("waited >= 20");
+  });
+
   it("客户端只传 planId/interval,金额与权益不经客户端", () => {
     expect(SUBSCRIBE_BUTTON).toContain("JSON.stringify({ planId, interval })");
     expect(SUBSCRIBE_BUTTON).not.toMatch(/amount|price_|unit_amount/);

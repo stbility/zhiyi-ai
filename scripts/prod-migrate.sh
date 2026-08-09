@@ -105,6 +105,31 @@ run_sql() {
   fi
 }
 
+# 断言查询至少返回 N 行,不够就让交付失败。
+#
+# 与 run_sql 的区别是**它会红**。此前权益种子只是被 select 出来打印,
+# 表如果是空的,脚本照样 exit 0 —— 那是用肉眼核对冒充自动化:
+# 权益表空 = 所有人拿不到任何配额,整条解锁链是断的,这种事必须挡在交付里,
+# 而不是等谁去翻日志。
+assert_min_rows() {
+  local desc="$1" sql="$2" want="$3" got
+  echo "--- $desc(至少 $want 行)"
+  got=$(api_raw "$sql" | python3 -c "
+import json,sys
+try:
+    d = json.load(sys.stdin)
+    print(len(d) if isinstance(d, list) else -1)
+except Exception:
+    print(-1)
+")
+  if [ "$got" -lt "$want" ] 2>/dev/null; then
+    echo "    ✗ 实际 $got 行 —— 低于预期"
+    echo "!! 交付中止:$desc 实际 $got 行,应至少 $want 行。" >&2
+    exit 1
+  fi
+  echo "    ✅ $got 行"
+}
+
 # 本地迁移版本列表(文件名自然序;兼容 bash 3.2)
 LOCAL_VERSIONS=($(ls "$MIG_DIR" | grep -E '^[0-9]{4}_.*\.sql$' | sed 's/_.*\.sql$//'))
 
@@ -191,6 +216,7 @@ if [ "${#TO_APPLY[@]}" -eq 0 ]; then
   # 无缺失迁移时同样输出,交付日志里每次都看得见。
   run_sql "权益表种子数据(0034 应 6 行)" \
     "select plan_id, feature, quota from public.entitlements order by plan_id, feature;"
+  assert_min_rows "权益种子行数" "select plan_id, feature, quota from public.entitlements order by plan_id, feature;" 6
   exit 0
 fi
 
@@ -241,4 +267,5 @@ run_sql "0028-0035 函数存在性" \
 # 共 6 行。这里如实列出 —— 空表 = 解锁链断(所有人都拿不到配额),必须在交付日志里看得见。
 run_sql "权益表种子数据(0034 应 6 行)" \
   "select plan_id, feature, quota from public.entitlements order by plan_id, feature;"
+assert_min_rows "权益种子行数" "select plan_id, feature, quota from public.entitlements order by plan_id, feature;" 6
 echo "=============================================================="
