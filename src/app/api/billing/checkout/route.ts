@@ -64,11 +64,16 @@ export async function POST(request: NextRequest) {
 
   const priceId = await resolvePriceIdForPlan(stripe, planId, intervalOrMonth);
   if (!priceId) {
+    // 自诊断:目录找不到价格时,把密钥类型前缀写进提示 ——
+    // 生产实测教训:sk_test_(测试)密钥查的是空测试目录,会报同样的错,
+    // 运维第一眼就该看出「当前密钥是 TEST 模式/不是本账号」。
+    const keyPrefix = process.env["STRIPE_SECRET_KEY"]?.slice(0, 8) ?? "?";
+    const diag = `当前 STRIPE_SECRET_KEY 前缀 ${keyPrefix}(期望 sk_live_;sk_test_ 测试密钥查的是空测试目录)。`;
     return NextResponse.json(
       {
         error: `套餐 ${planId}(${intervalOrMonth})的价格未配置。`,
         hint:
-          "Stripe 目录里找不到对应价格(或价格已停用)。可配置 STRIPE_PRICE_" +
+          `${diag}Stripe 目录里找不到对应价格(或价格已停用)。可配置 STRIPE_PRICE_` +
           planId.toUpperCase() +
           (intervalOrMonth === "year" ? "_YEAR" : "") +
           " 显式指定,或检查 Stripe 中的价格是否 active。",

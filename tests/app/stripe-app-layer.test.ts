@@ -38,13 +38,20 @@ describe("plans.ts 港币定价(全球华人市场)", () => {
     expect(PLANS).toContain("年付 HK2,290");
   });
 
-  it("正式订阅路径是 checkout,plans.ts 不再暴露 Payment Link(P0-1)", () => {
-    // 2026-08-08 移除:静态 Payment Link 无法携带 userId,付款后 webhook
-    // 定位不到用户,权益无法解锁 —— 是 P0 断链根源。任何组件都不该再拿到它。
-    expect(PLANS).not.toContain("buy.stripe.com");
-    expect(PLANS).not.toContain("readonly stripeUrl");
-    expect(PLANS).not.toContain("readonly annualStripeUrl");
-    // CTA 走 checkout(绑定 userId)的契约由 PlansSection/SubscribeButton 断言
+  it("支付路径 = Payment Link 为主,链接存在且带 prefilled_email 绑定契约", () => {
+    // 2026-08-08 终态:用户偏好 Payment Link(Stripe 原生可用)。
+    // 归属靠 prefilled_email(登录态由 PlansSection 拼接)+ webhook email 反查。
+    expect(PLANS).toContain("https://buy.stripe.com/28E4gB8S35O54ga2JCfbq02");
+    expect(PLANS).toContain("https://buy.stripe.com/fZueVffgr2BT5ke1Fyfbq03");
+    expect(PLANS).toContain("https://buy.stripe.com/7sYbJ30lx0tL3c6ckcfbq04");
+    expect(PLANS).toContain("https://buy.stripe.com/9B68wR5FR5O59Au4RKfbq05");
+    // 年付链接必须与年付文案同档配对(Pro 年付链接配 Pro 年付文案)
+    const pro = PLANS.split("id: \"professional\"")[1]?.split("id: \"enterprise\"")[0] ?? "";
+    expect(pro).toContain("年付 HK490");
+    expect(pro).toContain("7sYbJ30lx0tL3c6ckcfbq04");
+    const ent = PLANS.split("id: \"enterprise\"")[1] ?? "";
+    expect(ent).toContain("年付 HK2,290");
+    expect(ent).toContain("9B68wR5FR5O59Au4RKfbq05");
   });
 
   it("三档沿能力线递进(超集关系标注)", () => {
