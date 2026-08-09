@@ -68,6 +68,7 @@ function PlanCard({ plan }: { plan: Plan }) {
         features={plan.features}
         highlighted={plan.highlighted}
         annualNote={plan.annualNote}
+        annualPrice={plan.annualPrice}
         ctaLabel={
           isFree ? "免费开始" : `立即订阅 ${plan.price ?? ""}${busy ? "…" : ""}`
         }
@@ -75,12 +76,7 @@ function PlanCard({ plan }: { plan: Plan }) {
         onSelect={
           isFree
             ? undefined
-            : () => startCheckout(plan.id as "professional" | "enterprise", "month", setBusy, setError)
-        }
-        annualOnSelect={
-          isFree
-            ? undefined
-            : () => startCheckout(plan.id as "professional" | "enterprise", "year", setBusy, setError)
+            : (interval) => startCheckout(plan.id as "professional" | "enterprise", interval, setBusy, setError)
         }
       />
       {error && (
