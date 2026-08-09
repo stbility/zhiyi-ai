@@ -187,6 +187,10 @@ fi
 
 if [ "${#TO_APPLY[@]}" -eq 0 ]; then
   echo "✅ 无缺失迁移,生产库已是最新。"
+  # 权益种子数据:0034 应产出 6 行 —— 空表 = 解锁链断。
+  # 无缺失迁移时同样输出,交付日志里每次都看得见。
+  run_sql "权益表种子数据(0034 应 6 行)" \
+    "select plan_id, feature, quota from public.entitlements order by plan_id, feature;"
   exit 0
 fi
 
