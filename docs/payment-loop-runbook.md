@@ -4,6 +4,36 @@
 > 每次动支付代码前先读它 —— 这个闭环已经修过很多次,病根都是同一个模式:
 > **代码认为「配置好了」,生产实际没有;或者路由活着,却没有任何调用方。**
 
+## 〇、当前验证状态(2026-08-09 05:00 核验,只读)
+
+**一句话:代码与契约对齐,但闭环从未被端到端走通过一次。**
+
+已证实为真:
+
+- `pnpm typecheck` 零错误;`pnpm test` 98 个测试文件 / 935 个用例全绿。
+- webhook 安全姿态成立:subscriptions 表只由 webhook 写、套餐只认 Price 上的
+  `metadata.plan_id` 白名单、不信客户端传的 plan、按 `stripe_subscription_id`
+  幂等 upsert(重放安全)。
+- 4 笔支付修复提交已推送,`main` 与 `origin/main` 一致。
+
+**尚未证实、且容易被绿色测试掩盖的事**:
+
+- 支付相关测试**全部是静态源码断言** —— `readFileSync` 读迁移 SQL 与 `plans.ts`,
+  再 `expect(...).toContain(...)`。全仓库搜索 `vi.mock stripe` / `new Stripe` /
+  `stripe.checkout` / `constructEvent` **零命中**;搜索测试是否 import 过
+  `src/app/api/*` 的路由处理函数**零命中**。
+  → 即 checkout / webhook / portal 三个路由的实际代码,**从未被任何测试执行过一行**。
+- 生产库 `subscriptions=0` / `stripe_customers=0`。
+- 因此:**既没有真实支付,也没有 test mode 模拟支付**。935 绿灯证明的是
+  「源码里写了这些字符串」,不是「钱能变成权益」。
+
+**当前卡点**:`scripts/stripe-audit.sh` 尚未运行,Stripe 侧四件事全部未知 ——
+密钥是 live 还是 test、四条 HKD 价格在不在、webhook 端点订阅了哪些事件、
+历史上有没有过结账事件。这四件应用侧一律看不见(见第五节)。
+
+> **写给下一个改这里的人**:不要把「测试全绿」当成「闭环跑通」。
+> 这份文件第二节的四个病根,没有一个能被现有的静态测试发现。
+
 ## 一、链路图(2026-08-09 现状)
 
 ```
@@ -64,6 +94,9 @@
 
 ## 三、验收清单(改动支付代码后逐条跑)
 
+0. **先跑只读体检**:`bash scripts/stripe-audit.sh` —— 一次看全 Stripe 侧四项
+   (密钥模式 / 价格目录 / webhook 事件订阅 / 历史订阅与结账事件)。
+   下面 1、2 两条应用侧自证只能说明「守卫在岗」,**说明不了钱能不能变成权益**。
 1. `curl -X POST -d '{}' /api/billing/webhook` → 400(缺签名)= secret 已配
 2. `curl -X POST -d '{}' /api/billing/checkout` → 401(未登录)= 路由活着且认证在岗
 3. `stripe webhook_endpoints list --live` → 端点订阅含 billing 事件
@@ -79,3 +112,24 @@
 - 价格自解析:`src/lib/billing/{stripe,price-catalog}.ts`
 - 配额守卫:`src/lib/billing/{turn-quota,quota-math,entitlements}.ts`
 - 数据层:0033(订阅表)/ 0034(权益种子)/ 0035(用量计量)
+- **只读体检**:`scripts/stripe-audit.sh`(2026-08-09 ce111ea 新增)——
+  全部是 GET,不创建 / 不修改 / 不删除任何 Stripe 对象,不打印密钥
+  (只打印前 8 位模式前缀)。改支付代码前后都应跑一次。
+
+## 五、为什么应用侧自证不够(体检脚本存在的理由)
+
+应用侧能自证的只有两件事:「webhook 端点会拒绝无签名请求」「checkout 未登录会 401」。
+真正决定钱能不能变成权益的四件事全在 Stripe 那边,**应用侧一律看不见**:
+
+1. **密钥是 live 还是 test** —— test 密钥查的是空目录,价格永远解析不出来。
+2. **四条价格在不在、金额对不对、有没有 `metadata.plan_id`** —— 缺 metadata 会让
+   webhook 认不出套餐。
+3. **webhook 端点登记了没有、订阅了哪些事件** —— 这条最阴:端点只订阅默认的
+   `account.*` 事件时,付款会成功而权益永不解锁,**而且从应用侧完全看不出来**——
+   签名守卫照常返回 400,一切看起来正常。
+4. **Stripe 那边到底有没有过订阅 / 结账事件** —— 有记录而库里没有 =
+   收了钱没交付,最坏的一种。
+
+对照基准:生产库当前 `subscriptions=0` / `stripe_customers=0`。
+体检第 5 节若有订阅或事件 → 钱收到了但没落库(投递或归属问题);
+若是 0 → 从来没人付过款,闭环还没被走过一次。
