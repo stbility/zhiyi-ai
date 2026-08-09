@@ -56,13 +56,21 @@ async function upsertSubscription(
         ? (customer as Stripe.Customer).email
         : undefined;
       if (email) {
-        const { data: page } = await admin.auth.admin.listUsers({
-          page: 1,
-          perPage: 1000,
-        });
-        const match = (page?.users ?? []).find(
-          (u) => u.email?.toLowerCase() === email.toLowerCase(),
-        );
+        // 【审计修复】不能只扫第一页(1000 人):用户规模一大,第二页起
+        // 的订阅就无人认领。分页循环直到命中或取尽(上限 50 页防失控)。
+        let match: { id: string } | null = null;
+        for (let page = 1; page <= 50; page++) {
+          const { data } = await admin.auth.admin.listUsers({
+            page,
+            perPage: 1000,
+          });
+          const users = data?.users ?? [];
+          match =
+            users.find(
+              (u) => u.email?.toLowerCase() === email.toLowerCase(),
+            ) ?? null;
+          if (match || users.length < 1000) break;
+        }
         if (match) {
           userId = match.id;
           await admin.from("stripe_customers").upsert(

@@ -143,25 +143,11 @@ export function getServiceAvailability(): readonly ServiceAvailability[] {
             env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? env.STRIPE_PUBLISHABLE_KEY,
         },
         { names: ["STRIPE_WEBHOOK_SECRET"], value: env.STRIPE_WEBHOOK_SECRET },
-        // P0-1/能力门:价格未配,checkout 会 503 —— 状态页必须如实暴露,
-        // 不能「密钥齐了就显示已配置」而 checkout 实际不可用
-        {
-          names: ["STRIPE_PRICE_PROFESSIONAL"],
-          value: env.STRIPE_PRICE_PROFESSIONAL,
-        },
-        {
-          names: ["STRIPE_PRICE_PROFESSIONAL_YEAR"],
-          value: env.STRIPE_PRICE_PROFESSIONAL_YEAR,
-        },
-        {
-          names: ["STRIPE_PRICE_ENTERPRISE"],
-          value: env.STRIPE_PRICE_ENTERPRISE,
-        },
-        {
-          names: ["STRIPE_PRICE_ENTERPRISE_YEAR"],
-          value: env.STRIPE_PRICE_ENTERPRISE_YEAR,
-        },
       ],
+      // Price ID 不再判为必需:主支付路径是 Payment Link(不依赖 env),
+      // checkout 后备路由有 Stripe 目录自解析(price-catalog)。配了只是
+      // 显式加速/确定性,缺了不影响任何一条支付路径。状态页口径必须
+      // 与支付路径一致 —— 否则「配置不完整」与「支付可用」自相矛盾。
       ["订阅升级", "账单门户", "套餐权益变更"],
       [
         validateStripeSecretKey(env.STRIPE_SECRET_KEY),
