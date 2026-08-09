@@ -92,3 +92,56 @@ export function getPlanIdForPrice(priceId: string): string | null {
   }
   return null;
 }
+
+/**
+ * plan + interval → Price ID 的完整解析(2026-08-08 起):
+ *   1. 环境变量快速通道(配了就用,零开销)
+ *   2. 未配 → 从 Stripe 目录自解析(产品名/金额+周期),不再被 env 卡死
+ * 两路都失败返回 null,调用方如实 503。
+ */
+export async function resolvePriceIdForPlan(
+  stripe: Stripe,
+  planId: string,
+  interval: "month" | "year",
+): Promise<string | null> {
+  const fromEnv = getPriceIdForPlan(planId, interval);
+  if (fromEnv) return fromEnv;
+
+  const { matchPriceByPlan } = await import("@/lib/billing/price-catalog");
+  const { data } = await stripe.prices.list({
+    active: true,
+    limit: 100,
+    expand: ["data.product"],
+  });
+  return matchPriceByPlan(
+    planId,
+    interval,
+    data as unknown as Parameters<typeof matchPriceByPlan>[2],
+  );
+}
+
+/**
+ * Price ID → plan 的完整解析(webhook 用):
+ *   1. metadata.plan_id 白名单(调用方已优先处理)
+ *   2. 环境变量映射(STRIPE_PRICE_*)
+ *   3. Stripe 目录自解析(产品名/金额)
+ */
+export async function resolvePlanIdForPrice(
+  stripe: Stripe,
+  priceId: string,
+): Promise<string | null> {
+  const fromEnv = getPlanIdForPrice(priceId);
+  if (fromEnv) return fromEnv;
+
+  const { matchPlanByPrice } = await import("@/lib/billing/price-catalog");
+  try {
+    const price = await stripe.prices.retrieve(priceId, {
+      expand: ["product"],
+    });
+    return matchPlanByPrice(
+      price as unknown as Parameters<typeof matchPlanByPrice>[0],
+    );
+  } catch {
+    return null; // 目录查不到按 free 降级,webhook 不因未知价格抛错
+  }
+}

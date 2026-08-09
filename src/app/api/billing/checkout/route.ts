@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { getSiteUrl } from "@/lib/env/server";
 import { logger } from "@/lib/log";
-import { getPriceIdForPlan, getStripe } from "@/lib/billing/stripe";
+import { resolvePriceIdForPlan, getStripe } from "@/lib/billing/stripe";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
@@ -62,15 +62,16 @@ export async function POST(request: NextRequest) {
   const { planId, interval } = parsed.data;
   const intervalOrMonth = interval ?? "month";
 
-  const priceId = getPriceIdForPlan(planId, intervalOrMonth);
+  const priceId = await resolvePriceIdForPlan(stripe, planId, intervalOrMonth);
   if (!priceId) {
     return NextResponse.json(
       {
         error: `套餐 ${planId}(${intervalOrMonth})的价格未配置。`,
         hint:
-          "需要在 Stripe 创建 Price 并在环境变量配置 STRIPE_PRICE_" +
+          "Stripe 目录里找不到对应价格(或价格已停用)。可配置 STRIPE_PRICE_" +
           planId.toUpperCase() +
-          (intervalOrMonth === "year" ? "_YEAR" : ""),
+          (intervalOrMonth === "year" ? "_YEAR" : "") +
+          " 显式指定,或检查 Stripe 中的价格是否 active。",
       },
       { status: 503 },
     );

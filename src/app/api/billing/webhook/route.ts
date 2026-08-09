@@ -5,7 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { logger } from "@/lib/log";
 import {
-  getPlanIdForPrice,
+  resolvePlanIdForPrice,
   getStripe,
   getStripeConfig,
 } from "@/lib/billing/stripe";
@@ -92,7 +92,7 @@ async function upsertSubscription(
   const planId =
     typeof pricePlan === "string" && PLAN_WHITELIST.has(pricePlan)
       ? pricePlan
-      : (getPlanIdForPrice(item?.price.id ?? "") ?? "free");
+      : ((await resolvePlanIdForPrice(stripe, item?.price.id ?? "")) ?? "free");
 
   const { error } = await admin.from("subscriptions").upsert(
     {
