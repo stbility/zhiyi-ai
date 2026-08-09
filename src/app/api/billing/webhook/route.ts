@@ -192,7 +192,11 @@ export async function POST(request: NextRequest) {
         break;
       }
 
-      case "customer.subscription.updated": {
+      case "customer.subscription.updated":
+      case "customer.subscription.created": {
+        // 【链路修复】created 与 updated 同处理:Payment Link 新订阅
+        // 触发的是 created —— 端点若配了 created 而非 completed,
+        // 没有这个分支订阅同样永不落库。
         await upsertSubscription(
           admin,
           stripe,
