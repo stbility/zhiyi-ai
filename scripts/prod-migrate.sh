@@ -233,4 +233,8 @@ run_sql "0028-0035 函数存在性" \
    where pronamespace = 'public'::regnamespace
      and proname in ('recall_memories','touch_memory','get_entitlements','bump_usage','get_monthly_usage')
    order by proname;"
+# 权益种子数据:0034 应产出 free/professional/enterprise × workflows/monthly_agent_turns
+# 共 6 行。这里如实列出 —— 空表 = 解锁链断(所有人都拿不到配额),必须在交付日志里看得见。
+run_sql "权益表种子数据(0034 应 6 行)" \
+  "select plan_id, feature, quota from public.entitlements order by plan_id, feature;"
 echo "=============================================================="
