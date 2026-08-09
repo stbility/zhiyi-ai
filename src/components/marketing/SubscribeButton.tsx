@@ -9,8 +9,8 @@ import { Button, type ButtonVariant } from "@/components/primitives/Button";
  *
  * 走 /api/billing/checkout 创建 Stripe Checkout Session —— 这是正式订阅路径:
  * 登录态下服务端写入 metadata.userId,webhook 才能把订阅归属到 app 用户,
- * 权益(0034)才会真正解锁。Payment Link(plans.ts 里的 stripeUrl)只作测试,
- * 静态链接无法携带 userId,不能作为正式入口。
+ * 权益(0034)才会真正解锁。曾有的 Payment Link(plans.ts 里的 stripeUrl)
+ * 已移除 —— 静态链接无法携带 userId,付款后定位不到用户,不能作为正式入口。
  *
  * 诚实降级:未配置 Stripe/价格时后端返回 503,这里如实显示错误文案,
  * 绝不假装跳转成功。未登录(401)跳登录页,登录后回到当前页继续。
