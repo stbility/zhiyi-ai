@@ -18,5 +18,10 @@ export {
 } from "./StatusLabel";
 export { SubmitButton } from "./SubmitButton";
 export { Switch, type SwitchProps } from "./Switch";
+export {
+  SegmentedControl,
+  type SegmentedControlProps,
+  type SegmentedOption,
+} from "./SegmentedControl";
 export { Tabs, type TabItem, type TabsProps } from "./Tabs";
 export { Tag, type TagProps } from "./Tag";
