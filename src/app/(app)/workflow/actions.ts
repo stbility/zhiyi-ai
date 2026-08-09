@@ -52,7 +52,16 @@ async function enforceWorkflowQuota(
   organizationId: string,
 ): Promise<string | null> {
   const entitlements = await getMyEntitlements();
-  const quota = entitlements ? quotaOf(entitlements, "workflows") : null;
+  // 【P0 fail-open 修复】此前这里写的是 `: null`。null 在 quota-math 里的
+  // 语义是「不限额度」—— 于是 get_entitlements 一失败(RPC、网络、鉴权),
+  // 工作流数量上限直接失效,谁都能无限建。智能体通道同一位置用的是 `: 0`
+  // (拦截),两条线必须同一套纪律:**异常不等于放行**。
+  const quota = entitlements ? quotaOf(entitlements, "workflows") : 0;
+  if (!entitlements) {
+    // 说实话:这是「查不到权益」,不是「你的套餐只有 0 个」——
+    // 后者会让付费用户以为自己买的东西没了。
+    return "暂时无法确认当前套餐权益,请稍后重试。";
+  }
   if (quota === null) return null; // 不限(Enterprise)
   const { count } = await supabase
     .from("workflows")

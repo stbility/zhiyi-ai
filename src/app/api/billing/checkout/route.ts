@@ -127,7 +127,11 @@ export async function POST(request: NextRequest) {
     if (!session.url) {
       return NextResponse.json({ error: "Stripe 未返回结账地址。" }, { status: 502 });
     }
-    return NextResponse.json({ url: session.url });
+    // sessionId 一并回给客户端便于排查(付款后 Stripe 会带着同一个 id
+    // 回跳 success_url = /billing?session_id={CHECKOUT_SESSION_ID})。
+    // 它只是个查询凭据 —— 金额与权益不经 URL 传递,一律以 webhook
+    // 收到的 Stripe 事件为准。
+    return NextResponse.json({ url: session.url, sessionId: session.id });
   } catch (e) {
     logger.error(
       { userId: user.id, planId, error: e instanceof Error ? e.message : String(e) },

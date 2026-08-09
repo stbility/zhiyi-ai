@@ -508,8 +508,21 @@ export function ChatPanel({
       if (!response.ok || !response.body) {
         const payload = (await response
           .json()
-          .catch(() => ({ error: "请求失败" }))) as { error?: string };
-        patchAssistant({ error: payload.error ?? "请求失败" });
+          .catch(() => ({ error: "请求失败" }))) as {
+          error?: string;
+          message?: string;
+          upgrade_url?: string;
+        };
+        // 额度用尽时 error 是机器代号(quota_exceeded),给人看的那句在
+        // message 里 —— 直接把代号渲染给用户等于什么都没说。
+        // 顺带把升级入口拼进去:告诉他撞到了边界,却不告诉他门在哪,
+        // 是把问题留给他自己找。
+        const 文案 = payload.message ?? payload.error ?? "请求失败";
+        patchAssistant({
+          error: payload.upgrade_url
+            ? `${文案}(前往 ${payload.upgrade_url} 查看套餐)`
+            : 文案,
+        });
         return;
       }
 

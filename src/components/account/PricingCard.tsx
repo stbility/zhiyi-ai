@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import { Icon } from "@/components/icons/Icon";
 import { Button } from "@/components/primitives/Button";
 import { LinkButton } from "@/components/primitives/LinkButton";
@@ -12,6 +14,14 @@ export interface PricingCardProps {
   features?: readonly string[] | undefined;
   highlighted?: boolean | undefined;
   ctaLabel?: string | undefined;
+  /**
+   * 自定义 CTA(优先于 href / ctaLabel)。
+   *
+   * 付费档要走的是 SubscribeButton —— 它得先向 /api/billing/checkout
+   * 换一个带 metadata.userId 的 Checkout Session,不是一个静态链接。
+   * 卡片不认识订阅逻辑,只留一个位置给它。
+   */
+  cta?: ReactNode | undefined;
   /** 有 href 时 CTA 渲染为链接:外部地址(external=true)新开标签页,站内地址用 next/link */
   href?: string | undefined;
   /** href 为外部地址时置 true(渲染原生 <a> + target=_blank + noopener) */
@@ -25,10 +35,11 @@ export interface PricingCardProps {
 /**
  * 定价卡片。
  *
- * CTA 两种形态:
- *   · 有 href —— Payment Link(主支付路径),渲染为 LinkButton external,
- *     新开标签页并带 noopener;登录态由调用方拼 prefilled_email 绑定用户
- *   · 无 href —— 站内动作(如打开升级抽屉),渲染为 Button
+ * CTA 三种形态,按优先级:
+ *   · cta —— 调用方给的动作组件(付费档走 SubscribeButton → 服务端
+ *     Checkout Session,登录用户的订阅才能精确落到自己账上)
+ *   · href —— 站内/外部链接(免费档指向 /register)
+ *   · 都没有 —— 禁用态 Button,并说明原因
  *
  * 月付/年付切换由 PlansSection 顶部的原生 Button 分段控件统一管理
  * (Linear 官方滑动切换样式),卡片只负责按传入的金额/链接渲染。
@@ -42,6 +53,7 @@ export function PricingCard({
   features = [],
   highlighted = false,
   ctaLabel = "升级套餐",
+  cta,
   href,
   external,
   ctaDisabled = false,
@@ -77,7 +89,9 @@ export function PricingCard({
         ))}
       </ul>
 
-      {href ? (
+      {cta ? (
+        <span className="mt-1.5 w-full">{cta}</span>
+      ) : href ? (
         <LinkButton
           href={href}
           external={external}

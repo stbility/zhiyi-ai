@@ -1,6 +1,10 @@
 import type { NextRequest } from "next/server";
 
-import { errorResponse, preflightTurn } from "@/lib/ai/turn-preflight";
+import {
+  errorResponse,
+  preflightTurn,
+  quotaExceededResponse,
+} from "@/lib/ai/turn-preflight";
 import type { ProviderKind } from "@/lib/providers/registry";
 
 /**
@@ -56,58 +60,20 @@ export async function POST(request: NextRequest) {
   // 而不是让他在「正在思考」的界面里等一个注定失败的运行。
   // 判断走数据库(get_entitlements),不信任客户端传的 plan。
   //
-  // 组织 owner/admin 豁免:管理者是产品的主人,不该被自己的产品挡在门外。
-  // 角色从 memberships 读(RLS 策略 memberships_select_member 允许成员读)。
+  // 组织 owner/admin 豁免、配额减去本月已用量、异常 fail-closed ——
+  // 这三件事两条通道一字不差地都要做,所以只有一处实现:
+  // lib/billing/turn-quota.ts。此前它只写在这条路由里,
+  // /api/chat 一行都没有,免费用户走助手通道可以无限调用。
   if (!resumeRunId) {
-    const { data: membership } = await supabase
-      .from("memberships")
-      .select("role")
-      .eq("organization_id", organizationId)
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    // P0-4:owner/admin 豁免只适用于**多成员组织**(团队管理者)。
-    // 注册自动创建的个人组织只有 1 个成员 —— owner 就是普通用户自己,
-    // 豁免它等于把个人用户全部豁免,套餐额度失去意义。
-    const { count: memberCount } = await supabase
-      .from("memberships")
-      .select("user_id", { count: "exact" })
-      .eq("organization_id", organizationId);
-    const isTeamAdmin =
-      (membership?.role === "owner" || membership?.role === "admin") &&
-      (memberCount ?? 0) > 1;
-
-    if (!isTeamAdmin) {
-      const { getMyEntitlements, quotaOf } = await import(
-        "@/lib/billing/entitlements"
-      );
-      const { agentTurnBlockReason, sumUsageRows } = await import(
-        "@/lib/billing/quota-math"
-      );
-      const entitlements = await getMyEntitlements();
-      // quota null = 不限额度(enterprise);0 = 本月额度已耗尽;其余 = 配额值
-      // entitlements 为 null = RPC 失败(网络/鉴权),按 free 兜底(不允许把异常当越权处理)
-      const turnsQuota = entitlements ? quotaOf(entitlements, "monthly_agent_turns") : 0;
-
-      // P0-3:配额必须减去本月已用量 —— 只查 quota>0 等于没有限制。
-      // usage_metering 由 finish() 的 bump_usage 写入(0035),按月累计。
-      let used = 0;
-      if (turnsQuota !== null) {
-        const { data: usage } = await supabase.rpc("get_monthly_usage", {
-          p_user_id: userId,
-          p_category: "agent_turns",
-        });
-        used = sumUsageRows((usage ?? []) as { units?: number | null }[]);
-      }
-
-      const reason = agentTurnBlockReason({ quota: turnsQuota, used });
-      if (reason) {
-        return errorResponse(
-          `${reason}升级 Professional(月付 HK49)可提升额度。` +
-            `升级后即可使用多步工具循环;或改用「AI 助手」对话通道。`,
-          402,
-        );
-      }
+    const { checkTurnQuota } = await import("@/lib/billing/turn-quota");
+    const blocked = await checkTurnQuota({
+      supabase,
+      userId,
+      organizationId,
+      channel: "agent",
+    });
+    if (blocked) {
+      return quotaExceededResponse(blocked.reason);
     }
   }
   // resumeRunId 存在时跳过权益检查 —— 续跑的是用户已经付过费的运行,
