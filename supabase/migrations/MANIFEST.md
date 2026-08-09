@@ -65,6 +65,7 @@
 | `0042_skills_member_editable.sql` | 待应用 | skills 写策略 admin → 组织成员 |
 | `0043_messages_run_id.sql` | 待应用 | messages.run_id(续跑跨刷新) |
 | `0044_ledger_baseline_rows.sql` | 待应用 | 账本基线补记:0001-0027 以 4 位前缀行入账(详见备注 C) |
+| `0045_mcp_execution_log.sql` | 待应用 | MCP 执行日志:Hermes 执行状态回传(评审建议第 1 项) |
 
 ### 备注 A：0005 在账本里没有记录(已由 0044 补记)
 

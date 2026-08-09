@@ -44,6 +44,7 @@ mcp_servers_delete_admin
 mcp_servers_insert_admin
 mcp_servers_select_member
 mcp_servers_update_admin
+mcp_execution_log_select_member
 memberships_delete_admin
 memberships_insert_allowed
 memberships_select_member
