@@ -159,12 +159,17 @@ else
     echo "    账本前缀行: $(echo "$local_applied" | wc -w | tr -d ' ' | sed 's/^0$/无/') 条"
   fi
 
-  # 清理误写的前缀行(<= BASELINE 的 0001-0027 前缀行只可能来自版本体系误判事故)
+  # 清理误写的前缀行:只删「<= BASELINE 且仓库里没有对应迁移文件」的行。
+  # 0001-0027 的基线行已由 0044 正确补记入账本(文件都存在),必须保留 ——
+  # 以前无条件删除 <= BASELINE 的行,会把 0044 的补记在每次交付时冲掉,
+  # 审计按前缀行口径永远误报「0001-0027 丢失未回补」。
   bogus=""
   for v in "${LOCAL_VERSIONS[@]}"; do
     if [[ "$v" < "$BASELINE" || "$v" == "$BASELINE" ]]; then
-      [ -n "$bogus" ] && bogus="$bogus,"
-      bogus="$bogus'$v'"
+      if ! ls "$MIG_DIR" | grep -qE "^${v}_"; then
+        [ -n "$bogus" ] && bogus="$bogus,"
+        bogus="$bogus'$v'"
+      fi
     fi
   done
   if $ledger_exists && [ -n "$bogus" ]; then
