@@ -11,10 +11,6 @@ export interface PricingCardProps {
   period: string;
   features?: readonly string[] | undefined;
   highlighted?: boolean | undefined;
-  /** 年付优惠说明(如「年付 HK490,约省 2 个月」);有 annualHref 时渲染年付按钮 */
-  annualNote?: string | undefined;
-  /** 年付 Payment Link(带 prefilled_email);有 annualNote + 此链接时渲染年付按钮 */
-  annualHref?: string | undefined;
   ctaLabel?: string | undefined;
   /** 有 href 时 CTA 渲染为链接:外部地址(external=true)新开标签页,站内地址用 next/link */
   href?: string | undefined;
@@ -34,8 +30,8 @@ export interface PricingCardProps {
  *     新开标签页并带 noopener;登录态由调用方拼 prefilled_email 绑定用户
  *   · 无 href —— 站内动作(如打开升级抽屉),渲染为 Button
  *
- * 年付入口:金额下方原生组件按钮(Linear 官方价格优惠按钮款式 —— 优惠文案
- * 「省 2 个月」直接进按钮),有 annualHref 渲染 LinkButton,没有则不渲染。
+ * 月付/年付切换由 PlansSection 顶部的原生 Button 分段控件统一管理
+ * (Linear 官方滑动切换样式),卡片只负责按传入的金额/链接渲染。
  *
  * 唯一来源:卡片样式全部走设计系统 token,不拼接、不手抄类名。
  */
@@ -45,8 +41,6 @@ export function PricingCard({
   period,
   features = [],
   highlighted = false,
-  annualNote,
-  annualHref,
   ctaLabel = "升级套餐",
   href,
   external,
@@ -70,20 +64,6 @@ export function PricingCard({
         <span className="text-fg text-[32px] font-semibold">{price}</span>
         <span className="text-fg-tertiary text-caption">/{period}</span>
       </p>
-
-      {/* 年付优惠按钮:金额下方,原生组件按钮,Linear 官方价格优惠按钮款式。
-          文案直接复用 annualNote(如「年付 HK490,约省 2 个月」),一眼看到省多少;
-          有 annualHref 渲染 LinkButton(external),没有时不渲染 —— 不给假的入口。 */}
-      {annualHref && annualNote ? (
-        <LinkButton
-          href={annualHref}
-          external
-          variant="ghost"
-          className="mt-1.5 w-full"
-        >
-          {annualNote} 立即开通
-        </LinkButton>
-      ) : null}
 
       <ul className="flex flex-col gap-2">
         {features.map((feature) => (
