@@ -4,18 +4,7 @@ import { describe, expect, it } from "vitest";
 
 /**
  * 外部字体不得出现在阻塞渲染的路径上。
- *
- * 起因是真实故障。tokens/fonts.css 里曾有一行:
- *   @import url('https://fonts.googleapis.com/css2?...')
- * 三件事叠在一起就成了灾难:
- *   1. CSS 的 @import 阻塞渲染,浏览器必须先拿到它才继续
- *   2. fonts.googleapis.com 在中国大陆不通,请求要等到 TCP 超时
- *   3. 首屏渲染与脚本执行因此一起卡住,水合迟迟完不成
- * 用户看到的是「网页很慢、按钮点很多下才生效」—— 而按钮本身没有任何问题,
- * 只是水合前事件还没挂上。
- *
- * 这条测试守住两点:CSS 里不许再出现外部 @import;layout 里引外部字体
- * 必须是非阻塞形式。
+ * (README 进度守卫已迁移至 tests/app/readme-phase-sync.test.ts)
  */
 
 const STYLES = resolve(__dirname, "../../src/styles");
@@ -62,26 +51,5 @@ describe("外部字体不得阻塞首屏", () => {
     expect(zh.indexOf("PingFang SC")).toBeGreaterThan(-1);
     expect(zh.indexOf("PingFang SC")).toBeLessThan(zh.indexOf("Noto Sans SC"));
     expect(zh).toContain("Microsoft YaHei");
-  });
-});
-
-/**
- * README 与代码里的阶段声明不得脱节。
- *
- * 真实问题:phase.ts 已经改成 Phase 4 并逐条写清缺什么,而 README 一字未动,
- * 首页仍写着「Phase 1 已完成…模型网关均未交付」—— 同时与代码和 phase.ts 矛盾。
- *
- * 这个项目把「如实呈现状态」写进红线,自述文件失真是最不该发生的一类问题。
- */
-describe("进度自述一致性", () => {
-  it("README 的阶段与 phase.ts 声明的一致", async () => {
-    const { CURRENT_PHASE } = await import("@/lib/phase");
-    const readme = readFileSync(
-      resolve(__dirname, "../../README.md"),
-      "utf8",
-    );
-    expect(readme).toContain(`Phase ${CURRENT_PHASE.id}`);
-    // 早年那句「模型网关均未交付」现在与事实相反
-    expect(readme).not.toContain("模型网关均未交付");
   });
 });
