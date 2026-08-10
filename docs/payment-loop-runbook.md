@@ -31,9 +31,9 @@
 - **webhook 读取的 9 项字段假设,对着真实订阅对象逐条核对,9/9 通过**。
   其中两条是 v22 破坏性变更的要害,现在有真实证据:
   `current_period_end` **在** `items.data[0]` 上,订阅顶层**没有**这个字段。
-- 病根 1 的目录自解析第一次对着**真实目录**验证:四条 HKD 价格都解析得出、
-  反向映射(Price → plan)也对、四条互不重复 ——
-  `tests/live/stripe-catalog-resolve.test.ts`(`pnpm test:live`)。
+- 病根 1 的目录自解析曾在真实目录验证过(四条 HKD 价格都解析得出、反向映射对、
+  互不重复)——**该机制已于 2026-08-10 删除(#54):「不配 id 也能跑」是错误做法,
+  官方做法 = STRIPE_PRICE_* 显式配置,未配如实 503 降级。** 相关 live 测试随删。
 - Golden fixture `tests/fixtures/stripe-subscription.test-mode.json` 来自真实对象,
   不是手造的。Stripe 再做一次 v22 式的字段搬迁,它就会红。
 
@@ -85,12 +85,13 @@
 ### 病根 1:STRIPE_PRICE_* 环境变量反复漏配
 - **症状**:checkout 报「套餐 X 的价格未配置」,503。
 - **历史**:secret 配了、4 个 Price ID 没配 —— 反复发生(用户侧漏配)。
-- **根治(PR #37)**:`src/lib/billing/price-catalog.ts` 目录自解析 —— env 有则优先,
-  没有就按「产品名 + 金额 + 周期」从 Stripe 目录实时匹配。旧价 USD 39/19 正确返回
-  NULL(按 free 降级,不误判)。checkout/webhook 不再被 env 卡死。
-- **前提**:Vercel 的 `STRIPE_SECRET_KEY` 必须是 **sk_live_** 且属于
-  `acct_1TxmnPPw7bzqE3HK`。sk_test_ 密钥会让目录解析查空测试目录,
-  也打断 webhook 的 customer/subscription retrieve。
+- **根治(2026-08-10 终版)**:`STRIPE_PRICE_*` 显式配置(官方做法),缺失时
+  checkout 如实 503 → 前端降级 Payment Link;webhook 判不出套餐如实 500 重试,
+  绝不静默降级 free(付钱权益不升 = 断链病根)。曾用「目录自解析」(PR #37,
+  price-catalog)容忍漏配 —— 被判定错误做法,随 #54 删除。
+- **前提**:Vercel 的 `STRIPE_SECRET_KEY` 必须是 **sk_live_** 且属于当前 Stripe 账号
+  (旧账号 acct_1TxmnPPw7bzqE3HK 已于 2026-08-10 删除,新账号重建中)。
+  sk_test_ 密钥会查空测试目录,也打断 webhook 的 customer/subscription retrieve。
 - **自诊断**:checkout 503 的 hint 里带密钥前缀(sk_live_/sk_test_/rk_live_),一眼看出模式。
 
 ### 病根 2:死路由 —— 路由活着,没有任何调用方
@@ -155,7 +156,7 @@
 
 - 路由:`src/app/api/billing/{checkout,webhook,portal}/route.ts`
 - 支付路径:`src/components/marketing/{PlansSection,SubscribeButton}.tsx`
-- 价格自解析:`src/lib/billing/{stripe,price-catalog}.ts`
+- 价格解析:`src/lib/billing/stripe.ts`(env-only,STRIPE_PRICE_*)
 - 配额守卫:`src/lib/billing/{turn-quota,quota-math,entitlements}.ts`
 - 数据层:0033(订阅表)/ 0034(权益种子)/ 0035(用量计量)
 - **只读体检**:`scripts/stripe-audit.sh`(2026-08-09 ce111ea 新增)——

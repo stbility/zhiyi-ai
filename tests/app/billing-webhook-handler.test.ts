@@ -312,15 +312,18 @@ describe("套餐判定 —— 绝不信客户端,只认 Price", () => {
     expect(db.subscriptions[0]?.["plan_id"]).toBe("professional");
   });
 
-  it("目录也认不出 → free,但不抛错(未知价格不该卡死 webhook)", async () => {
+  it("目录也认不出 → 如实 500 重试,绝不静默降级 free(2026-08-10 #54 语义)", async () => {
+    // 代理原断言「→ free,不抛错」—— 静默降级 free = 付了钱权益不升,
+    // 正是断链病根(用户多轮投诉)。#54 起:metadata 与 env 都判不出套餐 →
+    // 如实 500(Stripe 重试),不落库,配置好 STRIPE_PRICE_* 后自动恢复。
     const unknown = subscription({}, "price_unknown");
     (unknown["items"] as { data: { price: { metadata: Row } }[] }).data[0]!.price.metadata = {};
     stripeState.subscriptions.set(SUB, unknown);
 
     const POST = await handler();
     const res = await POST(post(event("customer.subscription.created", unknown)));
-    expect(res.status).toBe(200);
-    expect(db.subscriptions[0]?.["plan_id"]).toBe("free");
+    expect(res.status).toBe(500);
+    expect(db.subscriptions[0]).toBeUndefined();
   });
 });
 
