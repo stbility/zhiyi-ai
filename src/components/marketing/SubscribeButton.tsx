@@ -71,6 +71,13 @@ export function SubscribeButton({
       // 未登录:后端返回 401「请先登录」—— 跳到登录页,回来接着买。
       // 这一步不降级到 Payment Link:未登录状态下付的款正是归不了户的那种。
       if (res.status === 401) {
+        // 未登录:有备用支付链接就直接打开 —— 用户点订阅要看到**支付页**,
+        // 不是登录页。登录态下 checkout 才带 userId 精确归属;未登录走
+        // 链接靠付款邮箱反查,能收款的优先级高于归属精确度。
+        if (fallbackUrl) {
+          window.location.assign(fallbackUrl);
+          return;
+        }
         const next = encodeURIComponent(window.location.pathname);
         window.location.assign(`/login?next=${next}`);
         return;
