@@ -38,20 +38,20 @@ describe("plans.ts 港币定价(全球华人市场)", () => {
     expect(PLANS).toContain("年付 HK2,290");
   });
 
-  it("支付路径 = Payment Link 为主,链接存在且带 prefilled_email 绑定契约", () => {
+  it("支付路径 = checkout 为主,Payment Link 链接已清空(旧账号删除,重建后填新)", () => {
     // 2026-08-08 终态:用户偏好 Payment Link(Stripe 原生可用)。
-    // 归属靠 prefilled_email(登录态由 PlansSection 拼接)+ webhook email 反查。
-    expect(PLANS).toContain("https://buy.stripe.com/28E4gB8S35O54ga2JCfbq02");
-    expect(PLANS).toContain("https://buy.stripe.com/fZueVffgr2BT5ke1Fyfbq03");
-    expect(PLANS).toContain("https://buy.stripe.com/7sYbJ30lx0tL3c6ckcfbq04");
-    expect(PLANS).toContain("https://buy.stripe.com/9B68wR5FR5O59Au4RKfbq05");
-    // 年付链接必须与年付文案同档配对(Pro 年付链接配 Pro 年付文案)
+    // 2026-08-10:旧 Stripe 账号已删,旧 buy.stripe.com 链接失效 —— plans.ts
+    // 清空防死链;新账号重建后填入新链接(checkout 503 时降级用)。
+    expect(PLANS).not.toContain("buy.stripe.com");
+    expect(PLANS).toContain('stripeUrl: ""');
+    expect(PLANS).toContain('annualStripeUrl: ""');
+    // 年付文案必须与月付文案同档配对(Pro 年付配 Pro 月付);链接已清空待重建
     const pro = PLANS.split("id: \"professional\"")[1]?.split("id: \"enterprise\"")[0] ?? "";
     expect(pro).toContain("年付 HK490");
-    expect(pro).toContain("7sYbJ30lx0tL3c6ckcfbq04");
+    expect(pro).toContain('annualStripeUrl: ""');
     const ent = PLANS.split("id: \"enterprise\"")[1] ?? "";
     expect(ent).toContain("年付 HK2,290");
-    expect(ent).toContain("9B68wR5FR5O59Au4RKfbq05");
+    expect(ent).toContain('annualStripeUrl: ""');
   });
 
   it("三档沿能力线递进(超集关系标注)", () => {
@@ -200,14 +200,18 @@ describe("支付主路径:服务端 Checkout Session", () => {
     expect(SUBSCRIBE_BUTTON).toContain("/api/billing/checkout");
   });
 
-  it("Payment Link 只作为备用,且未登录时不降级过去", () => {
-    // 未登录付的款只能靠付款邮箱反查,归不了户 = 收了钱没交付。
+  it("Payment Link 只作为备用;未登录且有备用链接时直接打开(收款优先)", () => {
+    // 未登录付的款只能靠付款邮箱反查;但「能收到钱」优先于「归属精确」——
+    // 401 时若有 fallbackUrl 直接打开支付页(2026-08-10),无链接才跳登录页。
     expect(SUBSCRIBE_BUTTON).toContain("fallbackUrl");
     const 未登录处理 = SUBSCRIBE_BUTTON.indexOf("res.status === 401");
-    const 降级处理 = SUBSCRIBE_BUTTON.indexOf('fallbackUrl ?? "/billing"');
+    const 链接降级 = SUBSCRIBE_BUTTON.indexOf("assign(fallbackUrl)");
+    const 登录兜底 = SUBSCRIBE_BUTTON.indexOf("/login?next=");
     expect(未登录处理).toBeGreaterThan(-1);
-    expect(降级处理).toBeGreaterThan(-1);
-    expect(未登录处理).toBeLessThan(降级处理);
+    expect(链接降级).toBeGreaterThan(-1);
+    expect(登录兜底).toBeGreaterThan(-1);
+    expect(未登录处理).toBeLessThan(链接降级);
+    expect(链接降级).toBeLessThan(登录兜底);
   });
 
   it("订阅按钮下方不挂任何说明性文字", () => {
