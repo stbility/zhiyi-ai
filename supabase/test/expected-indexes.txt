@@ -57,3 +57,5 @@ workspace_files_organization_idx
 workspace_files_workspace_idx
 workspaces_created_by_idx
 workspaces_organization_idx
+usage_metering_user_category_idx
+stripe_customers_user_idx

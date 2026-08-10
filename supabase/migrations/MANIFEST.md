@@ -81,6 +81,7 @@
 | `0046_supabase_advisors_security.sql` | 待应用 | Security Advisor 8 条修复:vector → extensions schema;6 个 SECURITY DEFINER → INVOKER;usage_metering 写策略(详见备注 D) |
 | `0047_rate_limits_explicit_lockdown.sql` | 待应用 | rate_limits 显式封锁策略(RLS 无策略 INFO 修复,详见备注 E) |
 | `0048_rls_auth_initplan.sql` | 待应用 | Performance Advisor:10 条策略 auth.uid() → (select auth.uid()) InitPlan 化(详见备注 F) |
+| `0049_missing_fk_indexes.sql` | 待应用 | Performance 主动审计:usage_metering(user_id,category) 与 stripe_customers(user_id) 补索引(两表原零索引,全表扫描) |
 
 ### 备注 D：Security Advisor 修复(2026-08-10)
 
