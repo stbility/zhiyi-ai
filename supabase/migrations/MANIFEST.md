@@ -83,6 +83,7 @@
 | `0048_rls_auth_initplan.sql` | 待应用 | Performance Advisor:10 条策略 auth.uid() → (select auth.uid()) InitPlan 化(详见备注 F) |
 | `0049_clear_overlapping_policies.sql` | 待应用 | Performance「多项宽松政策」11 条告警根治:清除 0012 生产漂移残留的 8 条旧策略(有效权限不变,详见备注 G) |
 | `0050_index_hygiene.sql` | 待应用 | Performance 信息建议前 10 条:补 6 条真缺外键索引(feedback_id/created_by/token_id/user_id/message_id)+ 删 4 条零查询路径的防御性索引(详见备注 H) |
+| `0051_restore_fk_column_indexes.sql` | 待应用 | 恢复 0050 误删的 4 条 **FK 列**索引(0001 未索引外键 vs 0005 未使用索引冲突,FK 列必须保索引,详见备注 I) |
 
 ### 备注 D：Security Advisor 修复(2026-08-10)
 
@@ -163,7 +164,21 @@ select_visible OR 覆盖;memberships insert_admin/bootstrap → insert_allowed
   organizations 小表恒 seq scan)。非唯一约束(唯一索引删除会破坏约束,已核对),
   0050 删。**教训:预建索引要配查询路径,否则 Advisor 会因 idx_scan=0 报未使用。**
 
+### 备注 I：0001 vs 0005 检查冲突,FK 列索引必须保留(2026-08-10)
+
+0050 把 4 条「未使用」索引(ai_providers_created_by_idx /
+organizations_created_by_idx / conversation_attachments_organization_idx /
+audit_logs_actor_idx)当零查询路径删除 —— 但 4 列全部是外键
+(created_by/created_by/organization_id/actor_id,references auth.users /
+organizations)。生产实测:0050 交付后 Advisor 立刻新增 4 条「未索引外键」
+(0001)告警(如 ai_providers_created_by_fkey)。根因:0001 强制 FK 列必须建
+索引,0005 的「未使用」对 FK 列是伪建议 —— 两检查在零查询流量的 FK 列上
+冲突,0001 是硬规则(join/cascade/RI 性能),0005 只应作用于非 FK 列索引。
+0051 恢复 4 条。**规则:删索引前先查该列是否 FK(表定义 references 子句 /
+pg_constraint);FK 列索引永不删。**
+
 ### 备注 A：0005 在账本里没有记录(已由 0044 补记)
+
 `0005_restore_auth_service_grants.sql` 恢复的是 `supabase_auth_admin` 对
 `public` schema 的授权。生产账本里没有同名条目 —— 最可能的解释是当初
 直接执行、没走迁移通道。它是幂等的(纯 GRANT),重放不会出问题;
