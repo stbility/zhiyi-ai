@@ -66,6 +66,29 @@
 | `0043_messages_run_id.sql` | 待应用 | messages.run_id(续跑跨刷新) |
 | `0044_ledger_baseline_rows.sql` | 待应用 | 账本基线补记:0001-0027 以 4 位前缀行入账(详见备注 C) |
 | `0045_mcp_execution_log.sql` | 待应用 | MCP 执行日志:Hermes 执行状态回传(评审建议第 1 项) |
+| `0046_supabase_advisors_security.sql` | 待应用 | Security Advisor 8 条修复:vector → extensions schema;6 个 SECURITY DEFINER → INVOKER;usage_metering 写策略(详见备注 D) |
+
+### 备注 D：Security Advisor 修复(2026-08-10)
+
+8 条告警逐条对应:
+- **[1] extension_in_public_vector** —— 0040 建 vector 扩展未限定 schema,落在 public。
+  0046 执行 `alter extension vector set schema extensions`(Supabase 官方约定:
+  扩展装 extensions schema,不污染 public;官方文档
+  https://supabase.com/docs/guides/database/extensions)。
+  连带:search_memories 函数体显式 `OPERATOR(public.<=>)` 随扩展移动失效,
+  0046 重建为 `OPERATOR(extensions.<=>)` + `extensions.vector(1536)` 类型限定。
+- **[2-7] 6 个 SECURITY DEFINER 可被 authenticated 执行**(bump_usage /
+  get_entitlements / get_monthly_usage / recall_memories / search_memories /
+  touch_memory)——函数体全部自限定 auth.uid()(bump_usage 抛「无权操作其他用户
+  的用量」、recall 成员绑定、touch 所有权、get_entitlements 只认调用者订阅),
+  无跨用户漏洞;但按官方建议(撤销 EXECUTE 或改 SECURITY INVOKER),这些函数
+  由服务端以用户会话调用(createSupabaseServerClient),撤销会破坏功能 →
+  改为 SECURITY INVOKER + 依赖表 RLS(等价的行级约束)。
+  bump_usage 是唯一写函数(upsert usage_metering),INVOKER 后补
+  usage_metering_insert_own / usage_metering_update_own 行级策略(仅自己)。
+- **[8] auth_leaked_password_protection** —— Dashboard 开关,非迁移:
+  Supabase Dashboard → 项目 → Authentication → Security →
+  「Leaked password protection」打开(密码过 HIBP 泄露库检查)。
 
 ### 备注 A：0005 在账本里没有记录(已由 0044 补记)
 

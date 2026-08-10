@@ -92,3 +92,5 @@ workspaces_delete_admin
 workspaces_insert_member
 workspaces_select_member
 workspaces_update_member
+usage_metering_insert_own
+usage_metering_update_own
