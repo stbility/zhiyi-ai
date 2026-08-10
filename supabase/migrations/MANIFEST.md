@@ -81,6 +81,7 @@
 | `0046_supabase_advisors_security.sql` | 待应用 | Security Advisor 8 条修复:vector → extensions schema;6 个 SECURITY DEFINER → INVOKER;usage_metering 写策略(详见备注 D) |
 | `0047_rate_limits_explicit_lockdown.sql` | 待应用 | rate_limits 显式封锁策略(RLS 无策略 INFO 修复,详见备注 E) |
 | `0048_rls_auth_initplan.sql` | 待应用 | Performance Advisor:10 条策略 auth.uid() → (select auth.uid()) InitPlan 化(详见备注 F) |
+| `0049_clear_overlapping_policies.sql` | 待应用 | Performance「多项宽松政策」11 条告警根治:清除 0012 生产漂移残留的 8 条旧策略(有效权限不变,详见备注 G) |
 
 ### 备注 D：Security Advisor 修复(2026-08-10)
 
@@ -135,6 +136,17 @@ pg_policies 存在性检查**:策略存在才改写,全新重放库跳过,生产
 两种状态幂等安全。教训:SQL 迁移的唯一真实门禁是 CI 的
 「真实 PostgreSQL 迁移重放」(本地 migration-final-state 只对快照列名,
 不执行 SQL,曾漏放 ALTER POLICY 指向不存在策略的错误)。
+
+### 备注 G：Performance「多项宽松政策」11 条告警(2026-08-10)
+
+Advisor 报 ai_models/ai_providers × 4 动作 + memberships INSERT + organizations
+SELECT + profiles SELECT 共 11 条「同一 role+action 多条宽松策略」。根因 =
+0012 生产漂移(0012 的 8 条 drop 在生产未生效,旧策略与合并后策略并存;
+0048 头注释已实证)。修复 = 0049 补删 8 条旧策略(drop if exists,重放库无
+副作用),有效权限与 0012 合并后完全一致:ai_*_write_admin(FOR ALL)→
+select_member 覆盖 admin(admin 是成员);profiles/organizations 旧 SELECT →
+select_visible OR 覆盖;memberships insert_admin/bootstrap → insert_allowed
+覆盖。删除后每动作仅剩 1 条 permissive 策略,Advisor 11 条清零。
 
 ### 备注 A：0005 在账本里没有记录(已由 0044 补记)
 
