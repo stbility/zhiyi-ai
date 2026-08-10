@@ -68,6 +68,7 @@
 | `0045_mcp_execution_log.sql` | 待应用 | MCP 执行日志:Hermes 执行状态回传(评审建议第 1 项) |
 | `0046_supabase_advisors_security.sql` | 待应用 | Security Advisor 8 条修复:vector → extensions schema;6 个 SECURITY DEFINER → INVOKER;usage_metering 写策略(详见备注 D) |
 | `0047_rate_limits_explicit_lockdown.sql` | 待应用 | rate_limits 显式封锁策略(RLS 无策略 INFO 修复,详见备注 E) |
+| `0048_rls_auth_initplan.sql` | 待应用 | Performance Advisor:10 条策略 auth.uid() → (select auth.uid()) InitPlan 化(详见备注 F) |
 
 ### 备注 D：Security Advisor 修复(2026-08-10)
 
@@ -101,6 +102,19 @@ RLS 开启 + 零策略 = 全角色被 RLS 挡死(最严姿态),Advisor 要求确
 `rate_limits_no_direct_access`(for all to anon, authenticated using(false)),
 意图自文档化(server-only)且清掉「无策略」发现。DEFINER 函数以
 owner(postgres)身份执行,不受 RLS 影响,bump_rate_limit 读写照常。
+
+### 备注 F：RLS InitPlan 优化(2026-08-10)
+
+Performance Advisor「Auth RLS 初始化计划」——策略表达式直接调 `auth.uid()` 时
+PostgreSQL 对**每一行**求值一次;包成 `(select auth.uid())` 后变成 InitPlan,
+整条查询只算一次(官方推荐写法,数据量越大差距越大)。
+0011 当年只补了缺失外键索引,策略重写留成注释未做;0012 之后的新策略全部
+已是 (select auth.uid()) 写法,早期 0001/0003/0006/0008 的 10 条裸调用:
+profiles_select_self / profiles_select_org_peers / profiles_insert_self /
+profiles_update_self / organizations_insert_self / organizations_select_creator /
+memberships_insert_creator_bootstrap / conversations_own(0008 private 版)/
+messages_own。0048 全部改为等价 (select auth.uid()) 写法(策略名/角色/语义不变,
+契约快照仅列名,无需变更)。
 
 ### 备注 A：0005 在账本里没有记录(已由 0044 补记)
 
