@@ -1,0 +1,17 @@
+{
+  "version": "2026-08-10",
+  "description": "Supabase Advisor 已判定 false positive 条目归档。判定依据: 官方规则原文 → 迁移 SQL → 代码路径 → 真实数据量 四层映射(0032 迁移注释)。idx_scan 只统计显式查询，不统计 FK 维护内部使用，删除会导致级联删除退化为全表扫。",
+  "rules": {
+    "unused_index": {
+      "advisor_check": "unused_index",
+      "reason": "FK维护索引，idx_scan不统计FK内部使用，删除导致级联删除退化为全表扫。判定依据: 0032 迁移注释 + 代码映射(代码中0处按该列过滤，索引仅服务于 ON DELETE CASCADE/RESTRICT 定位)",
+      "indexes": [
+        "messages_organization_idx",
+        "conversation_attachments_organization_idx",
+        "ai_providers_created_by_idx",
+        "audit_logs_actor_idx",
+        "organizations_created_by_idx"
+      ]
+    }
+  }
+}
