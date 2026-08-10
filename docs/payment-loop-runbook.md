@@ -19,13 +19,34 @@
 - webhook 路由已有**真实执行**的测试:`tests/app/billing-webhook-handler.test.ts`
   (19 例,替身 Stripe + 内存版 Supabase,真正调用 `POST()`)。含病根 5 的回归测试 ——
   已验证:把修复回退后这些用例会变红(`expected 'active' to be 'canceled'`)。
+- **真实 HMAC 签名校验**已被执行:`tests/app/billing-webhook-signature.test.ts`
+  (8 例)。用官方 `webhooks.generateTestHeaderString()` 造真签名,
+  路由里的 `constructEvent()` 做真校验。覆盖:正确签名放行、请求体被篡改拒绝、
+  错误 secret 拒绝、时间戳过期拒绝。**签名校验是这个端点唯一的身份守卫** ——
+  它若失效,任何人都能 POST 一个 `subscription.updated` 把自己升成 enterprise。
+
+**已在真实 Stripe(test 账本)上验证过的事(2026-08-09)**:
+
+- 走通了一笔**真实测试卡付款**:HKD 4900 / 月,发票 `paid`,订阅 `active`。
+- **webhook 读取的 9 项字段假设,对着真实订阅对象逐条核对,9/9 通过**。
+  其中两条是 v22 破坏性变更的要害,现在有真实证据:
+  `current_period_end` **在** `items.data[0]` 上,订阅顶层**没有**这个字段。
+- 病根 1 的目录自解析第一次对着**真实目录**验证:四条 HKD 价格都解析得出、
+  反向映射(Price → plan)也对、四条互不重复 ——
+  `tests/live/stripe-catalog-resolve.test.ts`(`pnpm test:live`)。
+- Golden fixture `tests/fixtures/stripe-subscription.test-mode.json` 来自真实对象,
+  不是手造的。Stripe 再做一次 v22 式的字段搬迁,它就会红。
 
 **尚未证实的事**:
 
-- checkout / portal 两个路由仍**没有执行级测试**(只有静态源码断言)。
-- 生产库 `subscriptions=0` / `stripe_customers=0`。
-- **既没有真实支付,也没有 test mode 模拟支付**。绿灯证明的是
-  「这些分支的逻辑对」,不是「钱在生产环境里真的变成了权益」。
+- **webhook → 数据库这一段仍未在真实链路上跑过**。本机没装 docker,也没装
+  supabase CLI,起不了本地 Supabase;而拿生产库跑测试支付会把测试订阅写进
+  生产数据、给真实用户发放权益,不能做。DB 段目前靠内存版 Supabase 的
+  执行级测试覆盖(27 例),逻辑可信,但不等于生产环境跑过。
+- checkout / portal 两个路由仍**没有执行级测试**。
+- checkout 创建 Stripe 客户**没有 Idempotency-Key**,且是「先查后建」竞态。
+- 生产(live)库 `subscriptions=0` / `stripe_customers=0`,且 **live 侧体检尚未跑**
+  —— 生产为什么没跑通,这一步才是答案。
 - 提醒:此前 935 个绿灯里,支付部分**全部是静态源码断言** —— `readFileSync`
   读 SQL 再 `toContain`。那种绿灯连病根 5 这种会漏钱的缺陷都发现不了。
 
@@ -140,6 +161,17 @@
 - **只读体检**:`scripts/stripe-audit.sh`(2026-08-09 ce111ea 新增)——
   全部是 GET,不创建 / 不修改 / 不删除任何 Stripe 对象,不打印密钥
   (只打印前 8 位模式前缀)。改支付代码前后都应跑一次。
+- **test 模式目录种子**:`scripts/stripe-test-seed.sh` —— 幂等地建出 4 条
+  HKD 价格(带 `metadata.plan_id`)。**检测到 live 密钥直接拒绝退出**。
+  为什么需要它:Stripe 的 test mode 是**完全独立的命名空间**,live 已有的
+  产品和价格在 test 里一条都不存在(2026-08-09 实测:test 侧 active 价格 0 条)。
+  模拟支付跑不起来的第一个原因通常就是这个,而且很容易误判成「代码有问题」。
+- **执行级测试**:`tests/app/billing-webhook-handler.test.ts`(业务分支)、
+  `tests/app/billing-webhook-signature.test.ts`(真实 HMAC)、
+  `tests/helpers/supabase-memory.ts`(内存版 Supabase,两者共用)、
+  `tests/fixtures/stripe-subscription.test-mode.json`(真实对象 golden fixture)。
+- **真实目录冒烟**:`tests/live/stripe-catalog-resolve.test.ts`
+  (`pnpm test:live`;无 test 密钥时跳过而非红)。
 
 ## 五、为什么应用侧自证不够(体检脚本存在的理由)
 

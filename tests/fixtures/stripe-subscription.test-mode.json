@@ -1,0 +1,39 @@
+{
+  "id": "sub_1U2gdKPw7bzqE3HKDYNMJVav",
+  "object": "subscription",
+  "status": "active",
+  "customer": "cus_V2mB95W3nqIJTM",
+  "cancel_at_period_end": false,
+  "created": 1786320002,
+  "currency": "hkd",
+  "metadata": {
+    "planId": "professional",
+    "userId": "69ddc370-9d76-4db7-917f-ba14e443fe7e"
+  },
+  "items": {
+    "object": "list",
+    "data": [
+      {
+        "id": "si_V2mBiZfO7PgB48",
+        "object": "subscription_item",
+        "current_period_start": 1786320002,
+        "current_period_end": 1788998402,
+        "quantity": 1,
+        "price": {
+          "id": "price_1U2gbEPw7bzqE3HKAJuPQDpj",
+          "object": "price",
+          "active": true,
+          "currency": "hkd",
+          "unit_amount": 4900,
+          "recurring": {
+            "interval": "month"
+          },
+          "product": "prod_V2m9JCHrs1lKv4",
+          "metadata": {
+            "plan_id": "professional"
+          }
+        }
+      }
+    ]
+  }
+}

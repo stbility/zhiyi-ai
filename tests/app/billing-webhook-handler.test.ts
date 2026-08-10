@@ -21,16 +21,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * 却永久保留付费权益,且再也不会有事件来纠正。
  */
 
+import {
+  createMemoryAdminClient,
+  createMemoryDb,
+  type MemoryDb,
+  type Row,
+} from "../helpers/supabase-memory";
+
 vi.mock("server-only", () => ({}));
 
-type Row = Record<string, unknown>;
-
-/** 内存版 Supabase —— 只实现路由真正用到的那几种调用形态 */
-const db = {
-  subscriptions: [] as Row[],
-  stripe_customers: [] as Row[],
-  users: [] as { id: string; email: string }[],
-};
+/** 内存版 Supabase —— 见 tests/helpers/supabase-memory.ts */
+let db: MemoryDb = createMemoryDb();
 
 const stripeState = {
   configured: true,
@@ -46,75 +47,8 @@ const stripeState = {
   retrieveCalls: 0,
 };
 
-function tableOf(name: string): Row[] {
-  const t = (db as unknown as Record<string, Row[]>)[name];
-  if (!t) throw new Error(`测试替身未实现表 ${name}`);
-  return t;
-}
-
-function makeBuilder(table: string) {
-  let op: "select" | "update" | "upsert" = "select";
-  let values: Row = {};
-  let conflictKey = "id";
-  const filters: [string, unknown][] = [];
-
-  const matches = (r: Row) => filters.every(([c, v]) => r[c] === v);
-
-  const exec = (): { data: Row[] | null; error: null } => {
-    const rows = tableOf(table);
-    if (op === "upsert") {
-      const key = values[conflictKey];
-      const existing = rows.find((r) => r[conflictKey] === key);
-      if (existing) Object.assign(existing, values);
-      else rows.push({ ...values });
-      return { data: null, error: null };
-    }
-    const hit = rows.filter(matches);
-    if (op === "update") {
-      hit.forEach((r) => Object.assign(r, values));
-    }
-    return { data: hit.map((r) => ({ ...r })), error: null };
-  };
-
-  const b = {
-    select: () => b,
-    eq: (c: string, v: unknown) => {
-      filters.push([c, v]);
-      return b;
-    },
-    update: (v: Row) => {
-      op = "update";
-      values = v;
-      return b;
-    },
-    upsert: (v: Row, opts?: { onConflict?: string }) => {
-      op = "upsert";
-      values = v;
-      conflictKey = opts?.onConflict ?? "id";
-      return b;
-    },
-    maybeSingle: async () => {
-      const r = exec();
-      return { data: r.data?.[0] ?? null, error: null };
-    },
-    // thenable:让 `await from(...).upsert(...)` 这种不带终结符的链能直接 await
-    then: (resolve: (v: { data: Row[] | null; error: null }) => unknown) =>
-      resolve(exec()),
-  };
-  return b;
-}
-
 vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdminClient: () => ({
-    from: (table: string) => makeBuilder(table),
-    auth: {
-      admin: {
-        listUsers: async ({ page }: { page: number; perPage: number }) => ({
-          data: { users: page === 1 ? db.users : [] },
-        }),
-      },
-    },
-  }),
+  createSupabaseAdminClient: () => createMemoryAdminClient(db),
 }));
 
 const fakeStripe = {
@@ -205,9 +139,7 @@ async function handler() {
 
 beforeEach(() => {
   vi.resetModules();
-  db.subscriptions = [];
-  db.stripe_customers = [];
-  db.users = [];
+  db = createMemoryDb();
   stripeState.configured = true;
   stripeState.signatureValid = true;
   stripeState.subscriptions = new Map();
