@@ -115,6 +115,14 @@ profiles_update_self / organizations_insert_self / organizations_select_creator 
 memberships_insert_creator_bootstrap / conversations_own(0008 private 版)/
 messages_own。0048 全部改为等价 (select auth.uid()) 写法(策略名/角色/语义不变,
 契约快照仅列名,无需变更)。
+**生产漂移实证**:0012 已 drop 旧策略(profiles_select_self / org_peers /
+organizations_select_creator / memberships_insert_creator_bootstrap)并合并为
+profiles_select_visible 等,但生产库仍存在这些旧策略(Performance Advisor 在
+production 实测可见)——仓库重放 ≠ 生产实况。因此 0048 用 **DO 块 +
+pg_policies 存在性检查**:策略存在才改写,全新重放库跳过,生产库修复,
+两种状态幂等安全。教训:SQL 迁移的唯一真实门禁是 CI 的
+「真实 PostgreSQL 迁移重放」(本地 migration-final-state 只对快照列名,
+不执行 SQL,曾漏放 ALTER POLICY 指向不存在策略的错误)。
 
 ### 备注 A：0005 在账本里没有记录(已由 0044 补记)
 
