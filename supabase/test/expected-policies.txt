@@ -94,3 +94,4 @@ workspaces_select_member
 workspaces_update_member
 usage_metering_insert_own
 usage_metering_update_own
+rate_limits_no_direct_access

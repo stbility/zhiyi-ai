@@ -67,6 +67,7 @@
 | `0044_ledger_baseline_rows.sql` | 待应用 | 账本基线补记:0001-0027 以 4 位前缀行入账(详见备注 C) |
 | `0045_mcp_execution_log.sql` | 待应用 | MCP 执行日志:Hermes 执行状态回传(评审建议第 1 项) |
 | `0046_supabase_advisors_security.sql` | 待应用 | Security Advisor 8 条修复:vector → extensions schema;6 个 SECURITY DEFINER → INVOKER;usage_metering 写策略(详见备注 D) |
+| `0047_rate_limits_explicit_lockdown.sql` | 待应用 | rate_limits 显式封锁策略(RLS 无策略 INFO 修复,详见备注 E) |
 
 ### 备注 D：Security Advisor 修复(2026-08-10)
 
@@ -89,6 +90,17 @@
 - **[8] auth_leaked_password_protection** —— Dashboard 开关,非迁移:
   Supabase Dashboard → 项目 → Authentication → Security →
   「Leaked password protection」打开(密码过 HIBP 泄露库检查)。
+
+### 备注 E：rate_limits 显式封锁(2026-08-10)
+
+Security Advisor(INFO)「RLS 未启用政策:public.rate_limits」——
+rate_limits 是**服务端专用表**:唯一访问路径是 security definer 的
+`public.bump_rate_limit`(0013),客户端(anon/authenticated)从不直接读写;
+RLS 开启 + 零策略 = 全角色被 RLS 挡死(最严姿态),Advisor 要求确认意图。
+0047 按官方 RLS restrictive policy 做法,加显式拒绝策略
+`rate_limits_no_direct_access`(for all to anon, authenticated using(false)),
+意图自文档化(server-only)且清掉「无策略」发现。DEFINER 函数以
+owner(postgres)身份执行,不受 RLS 影响,bump_rate_limit 读写照常。
 
 ### 备注 A：0005 在账本里没有记录(已由 0044 补记)
 
