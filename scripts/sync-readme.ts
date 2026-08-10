@@ -41,6 +41,9 @@ function main(): void {
   }
 
   // 上次同步行:日期 + main SHA + 生成器说明
+  // ⚠️ 必须整块替换:连续「> 」开头的行都是同步块(旧格式第二行是
+  // 「> 线上以」,新格式是「> 改动」)——只删第一行会把第二行复制一份,
+  // 生成器从此不幂等(2026-08-10 实锤:重复运行后同步块变 3 行)。
   const sha = execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim();
   const today = new Date().toISOString().slice(0, 10);
   const syncBlock = [
@@ -49,9 +52,10 @@ function main(): void {
   ];
   const syncStart = lines.findIndex((l) => l.startsWith("> 上次同步:"));
   if (syncStart >= 0) {
-    const syncEnd = syncStart + 1 < lines.length && lines[syncStart + 1]?.startsWith("> 线上以")
-      ? syncStart + 2
-      : syncStart + 1;
+    let syncEnd = syncStart + 1;
+    while (syncEnd < lines.length && lines[syncEnd]?.startsWith("> ")) {
+      syncEnd += 1;
+    }
     lines.splice(syncStart, syncEnd - syncStart, ...syncBlock);
     changed += 1;
   }

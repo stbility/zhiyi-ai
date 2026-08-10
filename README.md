@@ -36,9 +36,7 @@ env 已断开,新账号重建中 —— 收款处于如实 503 状态,重建完�
 | 7 | 全部页面接入真实数据 | 🟡 已接页面全部真实数据,无假数据;workflow/knowledge/memory/billing/skills(设置页)均已上线;reports 页面尚未创建 |
 | 8 | 安全、监控、部署、备份回滚 | 🟡 部署、密钥加密、限流已完成;评测集(20 内置用例 + 反馈沉淀用例)与 runner 已上线(/settings/eval,结果落 eval_runs);反馈飞轮消费端已通(改写反馈一键同步为评测用例);结构化日志、监控、备份回滚未做 |
 
-> 上次同步:2026-08-10,main@ac37589。本表由 scripts/sync-readme.ts 从 src/lib/phase.ts 生成;
-> 改动 `src/lib/phase.ts` 后跑 `pnpm sync:readme`。线上以 https://zhiyi-ai.vercel.app/status 为准。
-> 改动 `src/lib/phase.ts` 后跑 `pnpm sync:readme`。线上以 https://zhiyi-ai.vercel.app/status 为准。
+> 上次同步:2026-08-10,main@78324fa。本表由 scripts/sync-readme.ts 从 src/lib/phase.ts 生成;
 > 改动 `src/lib/phase.ts` 后跑 `pnpm sync:readme`。线上以 https://zhiyi-ai.vercel.app/status 为准。
 
 ## 开始开发
