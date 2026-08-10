@@ -83,10 +83,12 @@ export const PLANS: readonly Plan[] = [
     name: "Professional 专业版",
     price: "HK49",
     period: "月",
-    stripeUrl: "https://buy.stripe.com/28E4gB8S35O54ga2JCfbq02",
+    // 旧账号 Payment Link 已于 2026-08-10 随账号删除失效 —— 清空防死链;
+    // 新账号重建后填入新链接(checkout 503 时降级用)。
+    stripeUrl: "",
     annualPrice: "HK490/年",
     annualNote: "年付 HK490,约省 2 个月",
-    annualStripeUrl: "https://buy.stripe.com/7sYbJ30lx0tL3c6ckcfbq04",
+    annualStripeUrl: "",
     features: [
       "多个工作流与自定义 Agent", // [已实现·权益层强制] entitlements.workflows = 5
       // [待实现] 向量检索需 EMBEDDINGS_API_URL/KEY,当前生产未配置;
@@ -103,10 +105,11 @@ export const PLANS: readonly Plan[] = [
     name: "Enterprise 企业版",
     price: "HK229",
     period: "月",
-    stripeUrl: "https://buy.stripe.com/fZueVffgr2BT5ke1Fyfbq03",
+    // 旧账号 Payment Link 已随账号删除失效(2026-08-10),清空防死链。
+    stripeUrl: "",
     annualPrice: "HK2,290/年",
     annualNote: "年付 HK2,290,约省 2 个月",
-    annualStripeUrl: "https://buy.stripe.com/9B68wR5FR5O59Au4RKfbq05",
+    annualStripeUrl: "",
     features: [
       // [待实现] 成员管理未交付(/status 自陈:「组织」外壳套「个人」实质,
       // 页面固定取第一个组织);完整审计日志同样未交付。权益表无对应行。
