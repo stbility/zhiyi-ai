@@ -1,34 +1,54 @@
 /**
- * 套餐定义。
+ * 套餐与 Stripe Price ID 映射。
  *
- * 三档套餐名称来自产品需求第五章:Free / Professional / Enterprise。
+ * Price ID 来源: Stripe Dashboard → Products → 各产品 → Pricing tab → Price ID。
+ * 格式: price_xxx (Test mode) 或 price_xxx (Live mode)。
  *
- * 定价决策(2026-08-07,全球华人市场策略):
- *   主体:香港公司,结算货币港币 HKD。
- *   Professional HK$49/月 · Enterprise HK$229/月(替代 ¥39/¥199)。
- *   年付按行业惯例「两个月免费」:Pro HK$490/年 · Ent HK$2,290/年。
- *   三档沿同一能力线递进(超集关系,类比 Sensei AI):每档包含低一档全部权益。
- *   完整策略见 /Users/kuanxu/zhiyi-ai-market-monetization-strategy.md。
+ * STRIPE_PRICE_* 环境变量说明(来自 .env.example):
+ *   STRIPE_PRICE_PRO_MONTH      = price_xxx  Professional 月付
+ *   STRIPE_PRICE_PRO_YEAR       = price_xxx  Professional 年付
+ *   STRIPE_PRICE_ENT_MONTH      = price_xxx  Enterprise 月付
+ *   STRIPE_PRICE_ENT_YEAR       = price_xxx  Enterprise 年付
  *
- * 说明:价格文案为产品决策展示值。支付接入(Stripe 应用层)已移除,
- * 当前无线上收款路径;接入支付时以支付平台真实配置为准。
+ * Payment Link 来源: Stripe Dashboard → Products → Payment Links。
+ * STRIPE_PAYMENT_LINK_PRO_MONTH = https://buy.stripe.com/xxx
+ * STRIPE_PAYMENT_LINK_PRO_YEAR  = https://buy.stripe.com/xxx
+ * STRIPE_PAYMENT_LINK_ENT_MONTH = https://buy.stripe.com/xxx
+ * STRIPE_PAYMENT_LINK_ENT_YEAR  = https://buy.stripe.com/xxx
+ *
+ * 注意: Vercel 集成仅注入 STRIPE_SECRET_KEY / NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY / STRIPE_MCP_KEY。
+ * Price ID 和 Payment Link 属于业务层配置,需要你填入 Vercel Environment Variables。
  */
 
 export type PlanId = "free" | "professional" | "enterprise";
 
 export interface Plan {
-  readonly id: PlanId;
-  readonly name: string;
-  /** 已确定的价格展示文案;undefined 表示尚未从 Stripe 取到真实价格 */
-  readonly price: string | undefined;
-  readonly period: string;
-  /** 年付价格展示文案(两个月免费惯例);undefined 表示年付未开通 */
-  readonly annualPrice: string | undefined;
-  /** 年付说明文案,展示「省多少」增强感知 */
-  readonly annualNote: string | undefined;
-  readonly features: readonly string[];
-  readonly highlighted: boolean;
+  id: PlanId;
+  name: string;
+  /** 价格展示文案,undefined 表示尚未配置 */
+  price: string | undefined;
+  period: string;
+  annualPrice: string | undefined;
+  annualNote: string | undefined;
+  features: readonly string[];
+  highlighted: boolean;
+  /** Stripe Price ID (env: STRIPE_PRICE_PRO_MONTH 等) */
+  priceIdMonth: string | undefined;
+  priceIdYear: string | undefined;
+  /** Stripe Payment Link URL */
+  paymentLinkMonth: string | undefined;
+  paymentLinkYear: string | undefined;
 }
+
+const STRIPE_PRICE_PRO_MONTH = process.env.STRIPE_PRICE_PRO_MONTH;
+const STRIPE_PRICE_PRO_YEAR = process.env.STRIPE_PRICE_PRO_YEAR;
+const STRIPE_PRICE_ENT_MONTH = process.env.STRIPE_PRICE_ENT_MONTH;
+const STRIPE_PRICE_ENT_YEAR = process.env.STRIPE_PRICE_ENT_YEAR;
+
+const STRIPE_PAYMENT_LINK_PRO_MONTH = process.env.STRIPE_PAYMENT_LINK_PRO_MONTH;
+const STRIPE_PAYMENT_LINK_PRO_YEAR = process.env.STRIPE_PAYMENT_LINK_PRO_YEAR;
+const STRIPE_PAYMENT_LINK_ENT_MONTH = process.env.STRIPE_PAYMENT_LINK_ENT_MONTH;
+const STRIPE_PAYMENT_LINK_ENT_YEAR = process.env.STRIPE_PAYMENT_LINK_ENT_YEAR;
 
 export const PLANS: readonly Plan[] = [
   {
@@ -45,14 +65,18 @@ export const PLANS: readonly Plan[] = [
       "使用您自己的模型密钥",
     ],
     highlighted: false,
+    priceIdMonth: undefined,
+    priceIdYear: undefined,
+    paymentLinkMonth: undefined,
+    paymentLinkYear: undefined,
   },
   {
     id: "professional",
     name: "Professional 专业版",
-    price: undefined,
+    price: "HK$49/月",
     period: "月",
-    annualPrice: undefined,
-    annualNote: "年付 HK$490,约省 2 个月",
+    annualPrice: "HK$490/年",
+    annualNote: "年付约省 2 个月",
     features: [
       "多个工作流与自定义 Agent",
       "文件解析与向量检索",
@@ -61,14 +85,18 @@ export const PLANS: readonly Plan[] = [
       "包含 Free 全部权益",
     ],
     highlighted: true,
+    priceIdMonth: STRIPE_PRICE_PRO_MONTH,
+    priceIdYear: STRIPE_PRICE_PRO_YEAR,
+    paymentLinkMonth: STRIPE_PAYMENT_LINK_PRO_MONTH,
+    paymentLinkYear: STRIPE_PAYMENT_LINK_PRO_YEAR,
   },
   {
     id: "enterprise",
     name: "Enterprise 企业版",
-    price: undefined,
+    price: "HK$229/月",
     period: "月",
-    annualPrice: undefined,
-    annualNote: "年付 HK$2,290,约省 2 个月",
+    annualPrice: "HK$2,290/年",
+    annualNote: "年付约省 2 个月",
     features: [
       "组织、成员与角色权限",
       "组织知识库与团队级检索",
@@ -79,5 +107,25 @@ export const PLANS: readonly Plan[] = [
       "包含 Professional 全部权益",
     ],
     highlighted: false,
+    priceIdMonth: STRIPE_PRICE_ENT_MONTH,
+    priceIdYear: STRIPE_PRICE_ENT_YEAR,
+    paymentLinkMonth: STRIPE_PAYMENT_LINK_ENT_MONTH,
+    paymentLinkYear: STRIPE_PAYMENT_LINK_ENT_YEAR,
   },
 ];
+
+/** 根据 Price ID 找到对应 Plan。用于 webhook 解析 price → plan。 */
+export function getPlanByPriceId(priceId: string): Plan | undefined {
+  return PLANS.find(
+    (p) => p.priceIdMonth === priceId || p.priceIdYear === priceId,
+  );
+}
+
+/** 根据 Payment Link URL 找到对应 Plan。用于 webhook 解析 link → plan。 */
+export function getPlanByPaymentLink(paymentLink: string): Plan | undefined {
+  return PLANS.find(
+    (p) =>
+      p.paymentLinkMonth === paymentLink ||
+      p.paymentLinkYear === paymentLink,
+  );
+}
