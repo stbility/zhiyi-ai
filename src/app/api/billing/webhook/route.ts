@@ -100,7 +100,16 @@ async function upsertSubscription(
   const planId =
     typeof pricePlan === "string" && PLAN_WHITELIST.has(pricePlan)
       ? pricePlan
-      : ((await resolvePlanIdForPrice(stripe, item?.price.id ?? "")) ?? "free");
+      : await resolvePlanIdForPrice(stripe, item?.price.id ?? "");
+  if (!planId) {
+    // 官方做法:metadata 与 env 都判不出套餐 → 如实失败(500,Stripe 重试),
+    // 绝不静默降级 free —— 静默降级 = 付了钱权益不升,是断链根因。
+    logger.error(
+      { priceId: item?.price.id ?? "?" },
+      "无法判定订阅套餐(metadata.plan_id 与 STRIPE_PRICE_* 均无)——拒绝落库",
+    );
+    throw new Error(`无法判定订阅套餐: price=${item?.price.id ?? "?"}`);
+  }
 
   const { error } = await admin.from("subscriptions").upsert(
     {
