@@ -78,7 +78,7 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
     label: "Entitlement Service、Stripe 订阅",
     state: "partial",
     missing:
-      "权益判断(0034 get_entitlements)与用量计量(0035)已就位;Stripe 应用层(checkout/portal/webhook)与订阅页已上线,但需配置 STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / 套餐 Price ID 后才可线上收款",
+      "权益判断(0034 get_entitlements)与用量计量(0035)已就位;Stripe 应用层(checkout/portal/webhook)与订阅页已上线;2026-08-10 旧 Stripe 账号已删、Vercel 集成与 env 已断开、新账号重建中 —— 配齐 STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / STRIPE_PRICE_*(新 Price ID)后恢复线上收款",
   },
   {
     id: "7",
