@@ -1,0 +1,66 @@
+name: post-deploy-verify
+
+# 部署后闭环验证(2026-08-10 开发治理 P0-2):
+#   main 推送 → Vercel 自动部署 → 本工作流轮询 /status.json 直到
+#   deployed_sha == 本次推送 SHA → 渲染冒烟关键路由 → 结果作为 commit check。
+# 「本地全绿 ≠ 生产交付」从此有机器闭环:部署滞后/渲染阻断 = check 红。
+#
+# 零密钥依赖:只访问公开端点 https://zhiyi-ai.vercel.app/status.json。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: 部署闭环验证(/status.json)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 目标 SHA
+        run: echo "TARGET=${{ github.sha }}" >> "$GITHUB_ENV"
+
+      - name: 轮询 /status.json 直到部署 SHA 对齐(最长 ~12 分钟)
+        run: |
+          LIVE_URL="${ZHIYI_LIVE_URL:-https://zhiyi-ai.vercel.app}"
+          ok=0
+          for i in $(seq 1 48); do
+            body=$(curl -s --max-time 10 "$LIVE_URL/status.json" || true)
+            deployed=$(echo "$body" | jq -r '.deployed_sha // empty' 2>/dev/null || true)
+            if [ -n "$deployed" ] && [ "$deployed" = "$TARGET" ]; then
+              echo "✅ 部署对齐: deployed_sha=$deployed == 推送 SHA"
+              echo "$body" | jq '{deployed_sha, commit_ref, env_fingerprint}' | sed 's/^/  /'
+              ok=1
+              break
+            fi
+            echo "  第 ${i} 次轮询: deployed=$deployed(期望 $TARGET),15s 后再试…"
+            sleep 15
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "❌ 部署未对齐:12 分钟内 /status.json 未报告本次 SHA(部署失败/队列/滞后)"
+            exit 1
+          fi
+
+      - name: 渲染冒烟(关键路由)
+        run: |
+          LIVE_URL="${ZHIYI_LIVE_URL:-https://zhiyi-ai.vercel.app}"
+          for path in / /pricing /status; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$LIVE_URL$path")
+            if [ "$code" != "200" ]; then
+              echo "❌ $path → $code(期望 200)"
+              exit 1
+            fi
+            echo "  ✅ $path → 200"
+          done
+          # 登录门禁路由:307 是预期(设计行为),500/404 才是问题
+          for path in /agent /workflow /memory /billing; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$LIVE_URL$path")
+            case "$code" in
+              200|307) echo "  ✅ $path → $code(200 或登录跳转,预期)" ;;
+              *) echo "❌ $path → $code(期望 200/307)"; exit 1 ;;
+            esac
+          done
+
+      - name: 结论
+        run: echo "部署闭环验证通过:部署 SHA 对齐 + 关键路由渲染正常。"
