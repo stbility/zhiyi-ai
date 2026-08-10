@@ -82,6 +82,7 @@
 | `0047_rate_limits_explicit_lockdown.sql` | 待应用 | rate_limits 显式封锁策略(RLS 无策略 INFO 修复,详见备注 E) |
 | `0048_rls_auth_initplan.sql` | 待应用 | Performance Advisor:10 条策略 auth.uid() → (select auth.uid()) InitPlan 化(详见备注 F) |
 | `0049_clear_overlapping_policies.sql` | 待应用 | Performance「多项宽松政策」11 条告警根治:清除 0012 生产漂移残留的 8 条旧策略(有效权限不变,详见备注 G) |
+| `0050_index_hygiene.sql` | 待应用 | Performance 信息建议前 10 条:补 6 条真缺外键索引(feedback_id/created_by/token_id/user_id/message_id)+ 删 4 条零查询路径的防御性索引(详见备注 H) |
 
 ### 备注 D：Security Advisor 修复(2026-08-10)
 
@@ -148,8 +149,21 @@ select_member 覆盖 admin(admin 是成员);profiles/organizations 旧 SELECT �
 select_visible OR 覆盖;memberships insert_admin/bootstrap → insert_allowed
 覆盖。删除后每动作仅剩 1 条 permissive 策略,Advisor 11 条清零。
 
-### 备注 A：0005 在账本里没有记录(已由 0044 补记)
+### 备注 H：Performance 信息建议前 10 条(2026-08-10)
 
+- **[1-6] 未索引外键 ×6**(eval_cases.feedback_id / knowledge_files.created_by /
+  mcp_execution_log.token_id+user_id / memories.message_id / workflows.created_by):
+  逐列核对表定义,PK/UNIQUE/组合索引均未覆盖(与 0049 翻车不同——0049 两列是
+  PK 隐含索引,这里 6 列真缺)。0050 补 `<table>_<col>_idx`(列名去 _id 后缀,
+  沿用仓库惯例)。反馈飞轮同步幂等查 `eval_cases where feedback_id` 直接受益。
+- **[7-10] 未使用索引 ×4**(conversation_attachments_organization_idx /
+  ai_providers_created_by_idx / audit_logs_actor_idx / organizations_created_by_idx):
+  0011/0015 防御性预建,应用层零查询路径(attachments 全走 conversation_id 且
+  RLS 只认 conversation;providers 按 org 查;audit_logs 无 actor 过滤;
+  organizations 小表恒 seq scan)。非唯一约束(唯一索引删除会破坏约束,已核对),
+  0050 删。**教训:预建索引要配查询路径,否则 Advisor 会因 idx_scan=0 报未使用。**
+
+### 备注 A：0005 在账本里没有记录(已由 0044 补记)
 `0005_restore_auth_service_grants.sql` 恢复的是 `supabase_auth_admin` 对
 `public` schema 的授权。生产账本里没有同名条目 —— 最可能的解释是当初
 直接执行、没走迁移通道。它是幂等的(纯 GRANT),重放不会出问题;
