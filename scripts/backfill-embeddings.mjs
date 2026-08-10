@@ -73,18 +73,20 @@ async function embedBatch(texts) {
 }
 
 async function main() {
-  let processed = 0;
   let updated = 0;
   let skipped = 0;
   let rounds = 0;
 
   // 逐批取「没有向量」的记忆;一次 1000 条上限,游标分页
+  // ⚠️ 排序键必须与游标键一致(order=id.asc + id gt. 游标):
+  // 曾用 order=created_at.asc 而游标按 id —— UUID 与 created_at 无相关性,
+  // 同刻并列/并发新记忆会被 id 过滤永久跳过 = 回填静默漏行。
   let cursor = null;
   while (true) {
     const params = new URLSearchParams({
       select: "id,content",
       "embedding": "is.null",
-      order: "created_at.asc",
+      order: "id.asc",
       limit: String(BATCH),
     });
     if (cursor) params.set("id", `gt.${cursor}`);
@@ -120,12 +122,11 @@ async function main() {
         console.error(`更新记忆 ${row.id} 失败:${e.message}`);
         process.exit(1);
       }
-      processed += 1;
     }
     cursor = rows[rows.length - 1].id;
     rounds += 1;
     console.log(
-      `第 ${rounds} 轮:本批 ${rows.length} 条,累计更新 ${updated} / 跳过 ${skipped} / 处理 ${processed}`,
+      `第 ${rounds} 轮:本批 ${rows.length} 条,累计更新 ${updated} / 跳过 ${skipped} / 合计 ${updated + skipped}`,
     );
   }
 
