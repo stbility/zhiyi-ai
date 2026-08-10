@@ -26,6 +26,11 @@
 
 set -euo pipefail
 
+# --sync:重放成功后把实际策略/索引集合写回 expected-*.txt(作者改动迁移后
+# 用一条命令同步契约快照,再人审 diff 确认预期)。默认(无参)= 只核对。
+SYNC=0
+[[ "${1:-}" == "--sync" ]] && SYNC=1
+
 : "${DATABASE_URL:?需要 DATABASE_URL}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -107,7 +112,16 @@ fi
 if [ "$fail" -ne 0 ]; then
   echo ""
   echo "重建出来的库与生产不是同一个东西。缺策略 → 功能坏;多策略 → 权限可能变宽。"
+  echo "如果这是有意的新迁移,跑:bash scripts/check-migrations.sh --sync 重新生成快照,"
+  echo "然后人审 expected-*.txt 的 diff 再提交。"
   exit 1
+fi
+
+if [ "$SYNC" -eq 1 ]; then
+  cp /tmp/actual-policies.txt "$ROOT/supabase/test/expected-policies.txt"
+  cp /tmp/actual-indexes.txt "$ROOT/supabase/test/expected-indexes.txt"
+  summary "### ↻ 快照已同步(actual → expected-policies/indexes),请人审 diff 后提交"
+  exit 0
 fi
 
 summary "### ✓ 从空库重放 $count 条迁移成功,最终状态与生产一致"
