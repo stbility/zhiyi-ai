@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 嵌套代理工作区(zhiyi-ai/ 是另一个 checkout,含 .next 构建产物,
+    // 不参与本仓库 lint;其内容由 CI 独立校验)
+    "zhiyi-ai/**",
   ]),
 ]);
 

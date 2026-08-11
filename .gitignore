@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 嵌套代理工作区(另一个 checkout,含 node_modules/.next,不提交)
+zhiyi-ai/

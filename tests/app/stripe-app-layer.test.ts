@@ -65,28 +65,35 @@ describe("0033/0034 与 plans.ts 对齐", () => {
 });
 
 describe("agent 路由权益守卫", () => {
-  it("权益守卫:agent 路由按 monthly_agent_turns 额度判断,不信任客户端 plan", () => {
+  it("权益守卫:agent 路由经 checkTurnQuota 按 monthly_agent_turns 额度判断", () => {
     const agentRoute = readFileSync(
       resolve(ROOT, "src/app/api/agent/route.ts"),
       "utf8",
     );
-    expect(agentRoute).toContain("getMyEntitlements");
-    expect(agentRoute).toContain("monthly_agent_turns");
-    expect(agentRoute).toContain("不信任客户端");
+    // 守卫已收敛到 lib/billing/turn-quota.ts(唯一实现,chat/agent 共用)
+    expect(agentRoute).toContain("checkTurnQuota");
+    expect(agentRoute).toContain("@/lib/billing/turn-quota");
+
+    const turnQuota = readFileSync(
+      resolve(ROOT, "src/lib/billing/turn-quota.ts"),
+      "utf8",
+    );
+    expect(turnQuota).toContain("getMyEntitlements");
+    expect(turnQuota).toContain("monthly_agent_turns");
   });
 
   it("权益守卫:组织 owner/admin 豁免套餐限制(项目所有者不受自己产品限制)", () => {
-    const agentRoute = readFileSync(
-      resolve(ROOT, "src/app/api/agent/route.ts"),
+    const turnQuota = readFileSync(
+      resolve(ROOT, "src/lib/billing/turn-quota.ts"),
       "utf8",
     );
-    // owner/admin 从 memberships 读角色并豁免
-    expect(agentRoute).toContain('membership?.role === "owner"');
-    expect(agentRoute).toContain('membership?.role === "admin"');
-    expect(agentRoute).toContain("isOrgAdmin");
-    // 豁免逻辑必须在权益判断之前 —— 先查角色,再决定要不要查额度
-    expect(
-      agentRoute.indexOf("isOrgAdmin"),
-    ).toBeLessThan(agentRoute.indexOf("getMyEntitlements"));
+    // owner/admin 从 memberships 读角色并豁免(仅多成员组织,个人组织不豁免)
+    expect(turnQuota).toContain('membership?.role === "owner"');
+    expect(turnQuota).toContain('membership?.role === "admin"');
+    expect(turnQuota).toContain("isTeamAdmin");
+    // 豁免逻辑在权益查询之前调用 —— 先查角色,再决定要不要查额度
+    expect(turnQuota.indexOf("await isTeamAdmin")).toBeLessThan(
+      turnQuota.indexOf("getMyEntitlements()"),
+    );
   });
 });
