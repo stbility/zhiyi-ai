@@ -36,7 +36,9 @@ jobs:
     # 这件事在本机永远无法验证 —— 而漏掉整条 0012 正是因此没被发现。
     services:
       postgres:
-        image: postgres:16
+        # 0040 起迁移用 pgvector 扩展 —— 纯 postgres 镜像没有,
+        # 换官方 pgvector 镜像(自带 postgres:16 + vector 扩展)
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_PASSWORD: postgres
         ports:

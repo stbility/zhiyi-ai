@@ -48,6 +48,8 @@ export interface RegisterState {
    * 但必须让用户知道下一步该干什么,不能让他干等一封永远不来的邮件。
    */
   readonly alreadyRegistered?: boolean;
+  /** 邮箱验证模式:账号已建,等用户点确认邮件。不尝试登录。 */
+  readonly needsEmailConfirmation?: boolean;
 }
 
 export async function register(
@@ -94,12 +96,15 @@ export async function register(
     };
   }
 
-  // 建号。email_confirm: true 表示直接标记为已确认,不触发任何邮件。
+  // 建号。email_confirm 由 ALLOW_UNVERIFIED_SIGNUP 决定(P1 修复),
+  // 严格语义与 .env.example 契约一致:只认 "true" = 允许绕过邮箱验证;
+  // 未设/其它值 = 关闭(走邮箱验证,由 Supabase 发确认邮件)。
+  const allowUnverified = process.env["ALLOW_UNVERIFIED_SIGNUP"] === "true";
   const { data: createdUser, error: createError } =
     await admin.auth.admin.createUser({
       email,
       password,
-      email_confirm: true,
+      email_confirm: allowUnverified,
     });
 
   if (createError) {
@@ -107,6 +112,13 @@ export async function register(
       return { alreadyRegistered: true };
     }
     return { error: translate(createError.message) };
+  }
+
+  // 邮箱验证模式(email_confirm=false):账号已建,但未确认前登录必失败。
+  // 不尝试登录,如实告诉用户去查收确认邮件 —— 这是「允许未验证注册」关闭后
+  // 的正式流程,不是错误。
+  if (!allowUnverified) {
+    return { needsEmailConfirmation: true };
   }
 
   // 立刻登录,把会话 Cookie 写进响应。

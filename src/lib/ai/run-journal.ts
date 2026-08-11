@@ -167,7 +167,45 @@ export async function openRunJournal(
           { runId, outcome, dbError: error.message },
           "智能体运行状态未能收尾,记录会一直停在 running",
         );
+        return;
       }
+
+      // 【Bug 4 修复】用量计量:统计本轮 agent_turns 写入 usage_metering
+      // agent_runs 表没有 user_id,通过 conversations 查到
+      const { data: conv } = await supabase
+        .from("conversations")
+        .select("user_id")
+        .eq("id", input.conversationId)
+        .single();
+
+      if (!conv?.user_id) {
+        logger.warn({ runId, conversationId: input.conversationId }, "finish: 找不到 conversation 的 user_id,跳过用量记录");
+        return;
+      }
+
+      // agent_steps 表的 step_index 是 step*100+tool_index,最大步数 = Math.ceil(max_index/100)
+      const { data: stepRow } = await supabase
+        .from("agent_steps")
+        .select("step_index")
+        .eq("run_id", runId)
+        .order("step_index", { ascending: false })
+        .limit(1)
+        .single();
+
+      const stepCount = stepRow ? Math.ceil(Number(stepRow.step_index) / 100) : 0;
+      const units = Math.max(1, stepCount);
+
+      // bump_usage 失败不阻断:计量漏记比整轮失败危害小
+      await supabase.rpc("bump_usage", {
+        p_user_id: conv.user_id,
+        p_category: "agent_turns",
+        p_units: units,
+      }).then(({ error: rpcErr }) => {
+        if (rpcErr) {
+          logger.warn({ runId, userId: conv.user_id, units, rpcErr: rpcErr.message },
+            "finish: bump_usage 失败,用量未记录");
+        }
+      });
     },
   };
 }

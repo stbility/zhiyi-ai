@@ -39,9 +39,10 @@ export const APP_NAV: readonly NavEntry[] = [
   // 两者的执行形态完全不同:一个只说话,一个动工作区。见 /api/agent。
   { key: "agent", label: "智能体", icon: "bot", href: "/agent", available: true },
   { key: "workspace", label: "工作区", icon: "book", href: "/workspace", available: true },
-  { key: "workflow", label: "工作流", icon: "workflow", href: "/workflow", available: false },
-  { key: "knowledge", label: "知识库", icon: "knowledge", href: "/knowledge", available: false },
-  { key: "memory", label: "AI 记忆", icon: "memory", href: "/memory", available: false },
+  { key: "workflow", label: "工作流", icon: "workflow", href: "/workflow", available: true },
+  { key: "knowledge", label: "知识库", icon: "knowledge", href: "/knowledge", available: true },
+  { key: "memory", label: "AI 记忆", icon: "memory", href: "/memory", available: true },
+  { key: "billing", label: "订阅", icon: "billing", href: "/billing", available: true },
   { key: "integrations", label: "集成", icon: "link", href: "/settings/integrations", available: true },
   { key: "settings", label: "模型服务", icon: "settings", href: "/settings/models", available: true },
 ];

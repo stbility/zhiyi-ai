@@ -1,0 +1,47 @@
+name: prod-migrations
+
+# 生产迁移自动交付。
+#
+# 此前 0028-0035 是「写完文件就算交付」:仓库有文件,生产库从未应用,
+# 也没有任何管道把迁移送上生产 —— 网页功能(记忆/MCP 服务器/技能/权益/用量)
+# 在生产上永远没有数据落点。这个 workflow 把交付自动化:
+#
+#   · push main 且 supabase/migrations/ 有变化 → 自动应用缺失迁移
+#   · workflow_dispatch → 手动补跑(首次上线用它补齐 0028-0035)
+#   · 全幂等:每个迁移独立请求、失败即停、可安全重跑
+#   · 首次运行自动判定:空库全量应用 / 已有库基线 0001-0027 + 增量
+#
+# 凭据:SUPABASE_ACCESS_TOKEN(sbp_ 开头)必须配为 repo secret。
+#       它只用于 Management API,不需要数据库密码。
+#       路径:repo → Settings → Secrets and variables → Actions
+#       → New repository secret → SUPABASE_ACCESS_TOKEN
+#       (可选)SUPABASE_PROJECT_REF 变量,默认 ullmdnbgtauupndwqqzd
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - supabase/migrations/**
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prod-migrations
+  cancel-in-progress: false
+
+jobs:
+  deliver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || 'ullmdnbgtauupndwqqzd' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 应用缺失迁移到生产库
+        run: bash scripts/prod-migrate.sh
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

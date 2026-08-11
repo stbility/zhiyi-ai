@@ -18,7 +18,9 @@
 
 **尚未交付,不得对外宣称**:工作流状态机与后台 Worker(续跑是缓解,单次窗口内仍受平台时限约束)、
 知识库与 RAG(解析/向量化/检索)、记忆管理页与记忆召回界面(沉淀闭环已通,界面未建)、
-订阅与权益体系、成员管理、监控与备份回滚。
+**支付收款**(权益与配额链路已生产运行,但旧 Stripe 账号已于 2026-08-10 删除、Vercel 集成与
+env 已断开,新账号重建中 —— 收款处于如实 503 状态,重建完成配好 STRIPE_PRICE_* 后恢复)、
+成员管理、监控与备份回滚。
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
@@ -28,14 +30,14 @@
 | 1 | 数据库 Schema、迁移、RLS、Supabase 认证 | ✅ 已完成(越权隔离已实测) |
 | 2 | 组织、成员、角色权限、审计日志 | 🟡 组织与审计可用;成员管理未交付,页面固定取第一个组织 |
 | 3 | Provider/Model Registry、AI Gateway、Adapter、模型服务设置页 | ✅ 已完成 |
-| 4 | Tool Registry、Agent、工作流状态机、Worker | 🟡 工具注册与智能体循环已完成;续跑(检查点摘要恢复,突破 300s)已实现;工作流状态机与 Worker 未做 |
-| 5 | 文件上传、解析、RAG、长期记忆 | 🟡 文件夹上传、跨轮保留、上下文预算已完成;记忆沉淀闭环已实现(0028,确认 → 落库 → Wiki 同步);解析、RAG、记忆管理页未做 |
-| 6 | Entitlement Service、Stripe 订阅 | ⬜ 未开始 |
-| 7 | 全部页面接入真实数据 | 🟡 已接页面全部真实数据;workflow/knowledge/memory/reports/billing 页面未创建 |
-| 8 | 安全、监控、部署、备份回滚 | 🟡 部署、密钥加密、限流已完成;结构化日志接入中,监控与备份回滚未做 |
+| 4 | Tool Registry、Agent、工作流状态机、Worker | 🟡 工具注册与智能体循环已完成;续跑(检查点摘要恢复,突破 300s)已实现;工作流已上线(0036:10 态状态机 + 定义/步骤编辑 + 同步执行,单次最多 5 步,运行历史留痕);后台 Worker 排队执行与人工闸门后续上线 |
+| 5 | 文件上传、解析、RAG、长期记忆 | 🟡 文件夹上传、跨轮保留、上下文预算已完成;记忆沉淀闭环已实现(0028,确认 → 落库 → Wiki 同步);长期记忆向量召回已上线(0040 pgvector + search_memories,需 EMBEDDINGS_API_URL/KEY 后生效);AI 记忆管理页已上线(/memory);知识库已上线(0038,解析 + 全文检索 + /knowledge 管理页);向量检索待 embedding 服务接入 |
+| 6 | Entitlement Service、Stripe 订阅 | 🟡 权益/配额(get_entitlements 0034、bump_usage 0035、402 守卫)与订阅链路(webhook/checkout/plans/billing 页)已交付并生产运行;收款暂停 —— 旧 Stripe 账号已删,新账号重建中(2026-08-10),配齐 STRIPE_PRICE_* 后恢复 |
+| 7 | 全部页面接入真实数据 | 🟡 已接页面全部真实数据,无假数据;workflow/knowledge/memory/billing/skills(设置页)均已上线;reports 页面尚未创建 |
+| 8 | 安全、监控、部署、备份回滚 | 🟡 部署、密钥加密、限流已完成;评测集(20 内置用例 + 反馈沉淀用例)与 runner 已上线(/settings/eval,结果落 eval_runs);反馈飞轮消费端已通(改写反馈一键同步为评测用例);结构化日志、监控、备份回滚未做 |
 
-> 上次同步:2026-08-07,main@997f166。本表为手工副本 —— 改动 `src/lib/phase.ts` 后必须同步本表;
-> 线上以 https://zhiyi-ai.vercel.app/status 为准。
+> 上次同步:2026-08-10,main@78324fa。本表由 scripts/sync-readme.ts 从 src/lib/phase.ts 生成;
+> 改动 `src/lib/phase.ts` 后跑 `pnpm sync:readme`。线上以 https://zhiyi-ai.vercel.app/status 为准。
 
 ## 开始开发
 

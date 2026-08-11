@@ -26,6 +26,10 @@ const M0035 = readFileSync(
   resolve(ROOT, "supabase/migrations/0035_usage_metering.sql"),
   "utf8",
 );
+const M0036 = readFileSync(
+  resolve(ROOT, "supabase/migrations/0037_entitlements_quota_alignment.sql"),
+  "utf8",
+);
 const PLANS = readFileSync(resolve(ROOT, "src/lib/plans.ts"), "utf8");
 
 describe("0033 Stripe 客户与订阅", () => {
@@ -87,6 +91,18 @@ describe("0034 权益矩阵", () => {
     expect(M0034).toContain("('free',              'monthly_agent_turns',  100)");
     expect(M0034).toContain("('professional',      'monthly_agent_turns',  2000)");
     expect(M0034).toContain("('enterprise',        'monthly_agent_turns',  null)");
+  });
+
+  it("0037 配额对齐:Pro → 500 / Ent → 5000(对齐落地页宣传)", () => {
+    expect(M0036).toContain("monthly_agent_turns");
+    expect(M0036).toContain("quota = 500");
+    expect(M0036).toContain("quota = 5000");
+    // 幂等:只命中未对齐的行,重放安全
+    expect(M0036).toContain("quota = 2000");
+    expect(M0036).toContain("quota is null");
+    // 与 plans.ts 宣传文案一致(展示层 = 判断层)
+    expect(PLANS).toContain("每月 500 次 Agent 额度");
+    expect(PLANS).toContain("每月 5,000 次 Agent 额度");
   });
 
   it("get_entitlements 是 security definer —— 用调用者 user_id 参数,不信任客户端 plan", () => {

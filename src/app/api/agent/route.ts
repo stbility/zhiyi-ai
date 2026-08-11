@@ -1,6 +1,10 @@
 import type { NextRequest } from "next/server";
 
-import { errorResponse, preflightTurn } from "@/lib/ai/turn-preflight";
+import {
+  errorResponse,
+  preflightTurn,
+  quotaExceededResponse,
+} from "@/lib/ai/turn-preflight";
 import type { ProviderKind } from "@/lib/providers/registry";
 
 /**
@@ -56,36 +60,20 @@ export async function POST(request: NextRequest) {
   // 而不是让他在「正在思考」的界面里等一个注定失败的运行。
   // 判断走数据库(get_entitlements),不信任客户端传的 plan。
   //
-  // 组织 owner/admin 豁免:管理者是产品的主人,不该被自己的产品挡在门外。
-  // 角色从 memberships 读(RLS 策略 memberships_select_member 允许成员读)。
+  // 组织 owner/admin 豁免、配额减去本月已用量、异常 fail-closed ——
+  // 这三件事两条通道一字不差地都要做,所以只有一处实现:
+  // lib/billing/turn-quota.ts。此前它只写在这条路由里,
+  // /api/chat 一行都没有,免费用户走助手通道可以无限调用。
   if (!resumeRunId) {
-    const { data: membership } = await supabase
-      .from("memberships")
-      .select("role")
-      .eq("organization_id", organizationId)
-      .eq("user_id", userId)
-      .maybeSingle();
-    const isOrgAdmin =
-      membership?.role === "owner" || membership?.role === "admin";
-
-    if (!isOrgAdmin) {
-      const { getMyEntitlements, quotaOf } = await import(
-        "@/lib/billing/entitlements"
-      );
-      const entitlements = await getMyEntitlements();
-      // quota null = 不限额度(enterprise);0 = 本月额度已耗尽;其余 = 还有余量
-      const turnsQuota = entitlements ? quotaOf(entitlements, "monthly_agent_turns") : 0;
-      const blocked =
-        !entitlements || (turnsQuota !== null && turnsQuota <= 0);
-      if (blocked) {
-        return errorResponse(
-          entitlements
-            ? `本月的智能体运行额度已用完,升级 Professional(月付 HK$49)可提升额度。`
-            : `智能体运行需要 Professional 及以上套餐(月付 HK$49)。` +
-                `升级后即可使用多步工具循环;或改用「AI 助手」对话通道。`,
-          402,
-        );
-      }
+    const { checkTurnQuota } = await import("@/lib/billing/turn-quota");
+    const blocked = await checkTurnQuota({
+      supabase,
+      userId,
+      organizationId,
+      channel: "agent",
+    });
+    if (blocked) {
+      return quotaExceededResponse(blocked.reason);
     }
   }
   // resumeRunId 存在时跳过权益检查 —— 续跑的是用户已经付过费的运行,
@@ -111,7 +99,9 @@ export async function POST(request: NextRequest) {
     // 时间预算由**这条路由的 maxDuration** 推导,不在别处另写一个秒数。
     // 减掉的那点是留给「把记录写进库」的:平台到点直接杀进程,
     // 不留这点时间用户连发生了什么都看不到。
-    budgetMs: maxDuration * 1000 - 15_000,
+    // 0043 起余量加大到 30s:工具执行也被预算约束后,护栏在 270s 附近
+    // 优雅触发,平台 300s 硬杀不会再抢先(硬杀 = 连接断开、只报断网)。
+    budgetMs: maxDuration * 1000 - 30_000,
     supabase,
     userId,
     organizationId,

@@ -144,6 +144,10 @@ export function getServiceAvailability(): readonly ServiceAvailability[] {
         },
         { names: ["STRIPE_WEBHOOK_SECRET"], value: env.STRIPE_WEBHOOK_SECRET },
       ],
+      // Price ID 不再判为必需:主支付路径是 Payment Link(不依赖 env),
+      // checkout 后备路由用 STRIPE_PRICE_* 显式配置(官方做法);未配时
+      // checkout 如实 503 → 前端降级 Payment Link。状态页口径必须
+      // 与支付路径一致 —— 否则「配置不完整」与「支付可用」自相矛盾。
       ["订阅升级", "账单门户", "套餐权益变更"],
       [
         validateStripeSecretKey(env.STRIPE_SECRET_KEY),

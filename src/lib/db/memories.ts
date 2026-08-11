@@ -124,6 +124,20 @@ export async function saveMemory(
     });
   });
 
+  // 异步写向量(长期记忆的检索端)。失败不阻断 —— 记忆本体已入库,
+  // 向量缺失时召回自动降级为最近优先。
+  void (async () => {
+    try {
+      const { embedText } = await import("@/lib/ai/embeddings");
+      const embedding = await embedText(content);
+      if (embedding) {
+        await supabase.from("memories").update({ embedding }).eq("id", created.id);
+      }
+    } catch {
+      // 忽略:向量是增强
+    }
+  })();
+
   return { ok: true, id: created.id as string };
 }
 
@@ -224,11 +238,110 @@ ${input.content}
  * 走 RPC:服务端装配上下文时用,不走客户端查询。
  * 客户端查了也没用 —— 召回发生在服务端,用户看到的是已经带进上下文的回答。
  */
+/**
+ * 工作流产物沉淀为记忆(闭环最后一环)。
+ *
+ * 与 saveMemory 的区别:工作流步骤没有 messageId —— 产物来自运行输出,
+ * source_type 固定为 from_workflow(设计系统徽章语义:从工作流生成),
+ * 归组织级、可召回。沉淀失败只记日志,不阻断工作流本身 ——
+ * 运行已经完成,记忆是增强不是承诺(与 wiki 同步同一哲学)。
+ */
+import { buildWorkflowMemoryContent } from "@/lib/workflow/memory-content";
+
+export { buildWorkflowMemoryContent, WORKFLOW_MEMORY_MAX_CHARS } from "@/lib/workflow/memory-content";
+
+export async function saveWorkflowMemory(
+  supabase: SupabaseClient,
+  input: {
+    organizationId: string;
+    createdBy: string;
+    content: string;
+  },
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const content = buildWorkflowMemoryContent(input.content);
+  if (content === "") {
+    return { ok: false, error: "没有可沉淀的产物内容。" };
+  }
+
+  const { data: created, error } = await supabase
+    .from("memories")
+    .insert({
+      organization_id: input.organizationId,
+      conversation_id: null,
+      message_id: null,
+      created_by: input.createdBy,
+      category: "knowledge",
+      content,
+      source_type: "from_workflow",
+      confidence: null,
+      scope: "organization",
+      recall_enabled: true,
+    })
+    .select("id")
+    .single();
+
+  if (error || !created) {
+    logDbFailure("memories.workflow_insert", error, {
+      organizationId: input.organizationId,
+    });
+    return { ok: false, error: `未能沉淀工作流记忆:${error?.message ?? "未知错误"}` };
+  }
+
+  // 与对话记忆同一待遇:同步进 LLM Wiki。失败不影响记忆本身。
+  await syncMemoryToWiki(supabase, {
+    organizationId: input.organizationId,
+    conversationId: null,
+    memoryId: created.id as string,
+    category: "knowledge",
+    content,
+    createdBy: input.createdBy,
+  }).catch((e) => {
+    logDbFailure("memories.workflow_wiki_sync", e instanceof Error ? e : undefined);
+  });
+
+  // 异步写向量(长期记忆的检索端)。失败不阻断 —— 与对话记忆同一哲学。
+  void (async () => {
+    try {
+      const { embedText } = await import("@/lib/ai/embeddings");
+      const embedding = await embedText(content);
+      if (embedding) {
+        await supabase.from("memories").update({ embedding }).eq("id", created.id);
+      }
+    } catch {
+      // 忽略:向量是增强
+    }
+  })();
+
+  return { ok: true, id: created.id as string };
+}
+
 export async function recallMemories(
   supabase: SupabaseClient,
   organizationId: string,
   limit = 10,
+  query?: string | undefined,
 ): Promise<MemoryRow[]> {
+  // 向量召回:配置了 embedding 且有查询文本时,按语义相似度取最相关的记忆。
+  // 未配置/失败 → 降级到「最近优先」召回 —— 长期记忆是增强,不是阻断。
+  if (query && query.trim().length > 0) {
+    try {
+      const { embedText } = await import("@/lib/ai/embeddings");
+      const embedding = await embedText(query);
+      if (embedding) {
+        const { data, error } = await supabase.rpc("search_memories", {
+          p_embedding: embedding,
+          p_limit: limit,
+        });
+        if (!error && Array.isArray(data)) {
+          return data as unknown as MemoryRow[];
+        }
+        logDbFailure("memories.vector_recall", error, { organizationId });
+      }
+    } catch (e) {
+      logDbFailure("memories.vector_recall", e instanceof Error ? e : undefined);
+    }
+  }
+
   const { data, error } = await supabase.rpc("recall_memories", {
     p_organization_id: organizationId,
     p_limit: limit,

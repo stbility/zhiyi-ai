@@ -27,6 +27,7 @@ export default async function RegisterPage() {
       <RegisterForm
         siteUrl={getSiteUrl()}
         oauthProviders={capabilities.oauthProviders}
+        signupEnabled={capabilities.signupEnabled}
       />
     </AuthShell>
   );

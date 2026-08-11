@@ -92,6 +92,23 @@ export function errorResponse(message: string, status: number) {
 }
 
 /**
+ * 额度用尽的 402。
+ *
+ * 与其它错误不同,这一个的 `error` 是**机器可读的代号**而不是文案 ——
+ * 前端要据此把用户领到升级页,而不是只弹一句红字。人看的那句话在
+ * `message` 里(ChatPanel 优先读 message),升级入口在 `upgrade_url`。
+ *
+ * 两条通道共用这一个形状:助手和智能体撞的是同一份额度,
+ * 前端没有理由为它们写两套处理。
+ */
+export function quotaExceededResponse(message: string) {
+  return NextResponse.json(
+    { error: "quota_exceeded", message, upgrade_url: "/billing" },
+    { status: 402 },
+  );
+}
+
+/**
  * 落库一条助手消息,失败时留痕。
  *
  * 这几处写入发生在模型调用**之后** —— 钱已经花了,撤不回来,所以不能

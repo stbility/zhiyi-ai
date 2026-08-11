@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 
+import { PlansSection } from "@/components/marketing/PlansSection";
 import { ProductShowcase } from "@/components/marketing/ProductShowcase";
 import { ScrollReveal } from "@/components/marketing/ScrollReveal";
 import { Icon, type IconName } from "@/components/icons/Icon";
@@ -170,78 +170,7 @@ export default function HomePage() {
         <h2 className="font-zh text-h2 text-fg mb-8 text-center font-semibold">
           定价
         </h2>
-        <div className="flex flex-wrap justify-center gap-5">
-          {PLANS.map((plan) => (
-            <div
-              key={plan.id}
-              className={`rounded-panel font-zh flex w-65 flex-col gap-3.5 border p-6 ${
-                plan.highlighted
-                  ? "bg-surface-3 border-brand"
-                  : "bg-surface-2 border-border-default"
-              }`}
-            >
-              <h3 className="text-fg text-[16px] font-semibold">{plan.name}</h3>
-
-              {plan.price ? (
-                <p className="flex items-baseline gap-1">
-                  <span className="text-fg text-[32px] font-semibold">
-                    {plan.price}
-                  </span>
-                  <span className="text-fg-tertiary text-caption">
-                    /{plan.period}
-                  </span>
-                </p>
-              ) : (
-                <p className="text-fg-tertiary text-body-lg">价格待定</p>
-              )}
-
-              <ul className="flex flex-col gap-2">
-                {plan.features.map((feature) => (
-                  <li
-                    key={feature}
-                    className="text-fg-secondary flex items-start gap-2 text-[13px]"
-                  >
-                    <Icon
-                      name="check"
-                      size={14}
-                      className="text-success mt-0.5 shrink-0"
-                    />
-                    {feature}
-                  </li>
-                ))}
-              </ul>
-
-              {plan.id === "free" ? (
-                <Link
-                  href="/register"
-                  className={buttonClasses({
-                    variant: plan.highlighted ? "primary" : "secondary",
-                    className: "mt-1.5 w-full",
-                  })}
-                >
-                  免费开始
-                </Link>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    disabled
-                    className={buttonClasses({
-                      variant: plan.highlighted ? "primary" : "secondary",
-                      disabled: true,
-                      className: "mt-1.5 w-full",
-                    })}
-                  >
-                    暂不可购买
-                  </button>
-                  <p className="text-fg-tertiary text-label text-center">
-                    支付通道尚未接通,价格以 Stripe 配置为准
-                  </p>
-                </>
-              )}
-            </div>
-          ))}
-        </div>
+        <PlansSection plans={PLANS} />
       </Section>
 
       {/* 安全 */}

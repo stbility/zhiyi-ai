@@ -24,7 +24,9 @@ import {
   errorResponse,
   insertAssistantMessage,
   preflightTurn,
+  quotaExceededResponse,
 } from "@/lib/ai/turn-preflight";
+import { checkTurnQuota, meterChatTurn } from "@/lib/billing/turn-quota";
 
 /**
  * AI 助手的流式对话接口。**只管对话,不碰工作区。**
@@ -112,6 +114,7 @@ export async function POST(request: NextRequest) {
   if (!pre.ok) return pre.response;
   const {
     supabase,
+    userId,
     organizationId,
     conversationId,
     providerId,
@@ -122,6 +125,25 @@ export async function POST(request: NextRequest) {
     filesIncluded,
     apiKeyCipher: cipher,
   } = pre.ctx;
+
+  // 额度守卫。
+  //
+  // 这条路由此前**一行额度判断都没有** —— 套餐里那句「每月 500 次」
+  // 只拦得住 /api/agent,免费用户走 AI 助手可以无限调用。
+  // 付费买到的东西和拦得住的东西必须是同一件事,否则套餐是句空话。
+  //
+  // 判断挡在模型调用之前:一次注定要被拒的请求不该先花掉上游的钱,
+  // 也不该让用户在「正在思考」的界面里等一个空结果。
+  // 实现与智能体通道共用(lib/billing/turn-quota.ts),不在这里另写一遍。
+  const blocked = await checkTurnQuota({
+    supabase,
+    userId,
+    organizationId,
+    channel: "chat",
+  });
+  if (blocked) {
+    return quotaExceededResponse(blocked.reason);
+  }
 
   const startedAt = Date.now();
 
@@ -422,6 +444,22 @@ export async function POST(request: NextRequest) {
             message:
               "这条回答没能保存到对话记录里(刷新后会看不到)。内容还在上面,需要的话请先自行复制。",
           });
+        }
+
+        // 计量:一轮对话记 1 次,与智能体共用 agent_turns 类别(0035)。
+        //
+        // 记在这里而不是入口 —— 上面那道守卫拦的是「还有没有额度」,
+        // 这里记的是「确实用掉了一次」。失败的调用不扣额度,
+        // 否则模型服务商抽风一次就白扣用户一次。
+        //
+        // 计量失败不阻断:漏记一次的危害,远小于把已经生成好的回答弄丢。
+        try {
+          await meterChatTurn(supabase, userId);
+        } catch (e) {
+          logger.warn(
+            { userId, error: e instanceof Error ? e.message : String(e) },
+            "AI 助手用量计量失败,本轮未计入额度",
+          );
         }
 
         // 这次真的成功了,清掉上次的失败留痕 ——
