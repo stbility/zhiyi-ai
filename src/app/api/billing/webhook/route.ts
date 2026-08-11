@@ -17,7 +17,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { stripe } from '@/lib/stripe'
-import { PLANS } from '@/lib/plans'
+import { PLANS, getPlanByPaymentLink } from '@/lib/plans'
 
 export const runtime = 'nodejs'
 
@@ -35,7 +35,17 @@ function resolvePlan(session: Record<string, unknown>): {
     }
   }
 
-  // Payment Link 路径:从 price 反查
+  // Payment Link URL 在 metadata.paymentLink 里
+  if (metadata?.paymentLink) {
+    const plan = getPlanByPaymentLink(metadata.paymentLink)
+    if (plan) {
+      const interval: 'month' | 'year' =
+        plan.paymentLinkMonth === metadata.paymentLink ? 'month' : 'year'
+      return { planId: plan.id, interval }
+    }
+  }
+
+  // 从 line_items 的 price 反查(Payment Link 和 Checkout Session 通用)
   const lineItems = session.line_items as { data?: Array<{ price?: { id?: string } }> } | undefined
   const priceId = lineItems?.data?.[0]?.price?.id
   if (priceId) {
@@ -80,6 +90,8 @@ export async function POST(req: NextRequest) {
         const customerId = (session.customer as string | undefined) ?? ''
         const subscriptionId = (session.subscription as string | undefined) ?? ''
         const { planId } = resolvePlan(session)
+        const currentPeriodEnd = session.current_period_end as string | undefined
+        const cancelAtPeriodEnd = (session.cancel_at_period_end as boolean | undefined) ?? false
 
         if (!customerEmail || !planId) {
           console.warn('[webhook] checkout.session.completed: missing email or planId', {
@@ -96,24 +108,20 @@ export async function POST(req: NextRequest) {
           process.env.SUPABASE_SERVICE_ROLE_KEY!,
         )
 
-        // upsert stripe_customers
-        await supabase.from('stripe_customers').upsert(
-          { user_id: null, customer_id: customerId }, // user_id 待 email 查找后补充
-          { onConflict: 'user_id' },
-        )
-
-        // upsert subscriptions
-        if (subscriptionId) {
-          await supabase.from('subscriptions').upsert(
-            {
-              user_id: null,
-              stripe_subscription_id: subscriptionId,
-              status: 'active',
-              plan_id: planId,
-            },
-            { onConflict: 'stripe_subscription_id' },
-          )
-        }
+        // 通过 upsert_stripe_subscription 函数:
+        // 1. email → user_id 关联(stripe_customers)
+        // 2. 幂等 upsert subscriptions
+        await supabase.rpc('upsert_stripe_subscription', {
+          p_customer_email: customerEmail,
+          p_stripe_customer_id: customerId,
+          p_stripe_subscription_id: subscriptionId || null,
+          p_status: 'active',
+          p_plan_id: planId,
+          p_current_period_end: currentPeriodEnd
+            ? new Date(currentPeriodEnd).toISOString()
+            : null,
+          p_cancel_at_period_end: cancelAtPeriodEnd,
+        })
         break
       }
 
@@ -123,6 +131,8 @@ export async function POST(req: NextRequest) {
         const subscriptionId = (sub.id as string | undefined) ?? ''
         const status = (sub.status as string | undefined) ?? 'active'
         const planId = (sub.metadata as Record<string, string> | undefined)?.planId
+        const currentPeriodEnd = sub.current_period_end as string | undefined
+        const cancelAtPeriodEnd = (sub.cancel_at_period_end as boolean | undefined) ?? false
 
         if (!customerEmail || !planId) break
 
@@ -132,16 +142,17 @@ export async function POST(req: NextRequest) {
           process.env.SUPABASE_SERVICE_ROLE_KEY!,
         )
 
-        if (subscriptionId) {
-          await supabase.from('subscriptions').upsert(
-            {
-              stripe_subscription_id: subscriptionId,
-              status,
-              plan_id: planId,
-            },
-            { onConflict: 'stripe_subscription_id' },
-          )
-        }
+        await supabase.rpc('upsert_stripe_subscription', {
+          p_customer_email: customerEmail,
+          p_stripe_customer_id: null,
+          p_stripe_subscription_id: subscriptionId || null,
+          p_status: status,
+          p_plan_id: planId,
+          p_current_period_end: currentPeriodEnd
+            ? new Date(currentPeriodEnd).toISOString()
+            : null,
+          p_cancel_at_period_end: cancelAtPeriodEnd,
+        })
         break
       }
 
@@ -158,16 +169,15 @@ export async function POST(req: NextRequest) {
           process.env.SUPABASE_SERVICE_ROLE_KEY!,
         )
 
-        if (subscriptionId) {
-          await supabase.from('subscriptions').upsert(
-            {
-              stripe_subscription_id: subscriptionId,
-              status: 'canceled',
-              plan_id: 'free',
-            },
-            { onConflict: 'stripe_subscription_id' },
-          )
-        }
+        await supabase.rpc('upsert_stripe_subscription', {
+          p_customer_email: customerEmail,
+          p_stripe_customer_id: null,
+          p_stripe_subscription_id: subscriptionId || null,
+          p_status: 'canceled',
+          p_plan_id: 'free',
+          p_current_period_end: null,
+          p_cancel_at_period_end: false,
+        })
         break
       }
 

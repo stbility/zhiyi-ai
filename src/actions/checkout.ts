@@ -39,7 +39,7 @@ export async function startCheckout(
   if (!priceId) {
     return {
       success: false,
-      error: `Price not configured for ${plan.name} ${interval}. Set STRIPE_PRICE_${plan.id.toUpperCase()}_${interval.toUpperCase()} in Vercel env.`,
+      error: `Payment link not configured for ${plan.name} ${interval}. Set STRIPE_PAYMENT_LINK_${plan.id.toUpperCase()}_${interval.toUpperCase()} in Vercel env.`,
     }
   }
 
@@ -56,6 +56,7 @@ export async function startCheckout(
       line_items: [{ price: priceId, quantity: 1 }],
       mode: 'subscription',
       allow_promotion_codes: true,
+      metadata: { planId, interval },
     })
 
     if (!session.url) {
