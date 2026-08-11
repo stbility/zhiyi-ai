@@ -20,11 +20,17 @@ export async function GET() {
   const env = getServerEnv();
   const services = getServiceAvailability();
 
+  // Price ID 环境变量名与 src/lib/billing/stripe.ts 的 getPriceIdForPlan 保持一致
+  // (2026-08-10 清理后命名:PRO/PRO_PLUS/TEAM/ENT × _MONTH/_YEAR)。
   const priceKeys = [
-    "STRIPE_PRICE_PROFESSIONAL",
-    "STRIPE_PRICE_PROFESSIONAL_YEAR",
-    "STRIPE_PRICE_ENTERPRISE",
-    "STRIPE_PRICE_ENTERPRISE_YEAR",
+    "STRIPE_PRICE_PRO_MONTH",
+    "STRIPE_PRICE_PRO_YEAR",
+    "STRIPE_PRICE_PRO_PLUS_MONTH",
+    "STRIPE_PRICE_PRO_PLUS_YEAR",
+    "STRIPE_PRICE_TEAM_MONTH",
+    "STRIPE_PRICE_TEAM_YEAR",
+    "STRIPE_PRICE_ENT_MONTH",
+    "STRIPE_PRICE_ENT_YEAR",
   ] as const;
 
   const payload = {
