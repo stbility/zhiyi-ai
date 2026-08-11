@@ -26,6 +26,8 @@ export interface PricingCardProps {
   href?: string | undefined;
   /** href 为外部地址时置 true(渲染原生 <a> + target=_blank + noopener) */
   external?: boolean | undefined;
+  /** 是否在按钮上方显示金额与计费周期(2026-08-11:营销/定价卡默认不再显示金额文字) */
+  showPrice?: boolean | undefined;
   /** 支付未接通时禁用并说明原因,不得渲染成点了没反应的按钮 */
   ctaDisabled?: boolean | undefined;
   ctaDisabledReason?: string | undefined;
@@ -58,6 +60,7 @@ export function PricingCard({
   external,
   ctaDisabled = false,
   ctaDisabledReason,
+  showPrice = true,
   className,
 }: PricingCardProps) {
   return (
@@ -72,10 +75,12 @@ export function PricingCard({
     >
       <h3 className="text-fg text-[16px] font-semibold">{name}</h3>
 
-      <p className="flex items-baseline gap-1">
-        <span className="text-fg text-[32px] font-semibold">{price}</span>
-        <span className="text-fg-tertiary text-caption">/{period}</span>
-      </p>
+      {showPrice && (
+        <p className="flex items-baseline gap-1">
+          <span className="text-fg text-[32px] font-semibold">{price}</span>
+          <span className="text-fg-tertiary text-caption">/{period}</span>
+        </p>
+      )}
 
       <ul className="flex flex-col gap-2">
         {features.map((feature) => (
