@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { PersonaSettingsPanel } from "@/components/settings/PersonaSettingsPanel";
-import { getMyOrganizations } from "@/lib/db/queries";
+import { getCurrentOrganization } from "@/lib/db/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "品牌人格 · 智一 AI" };
@@ -31,8 +31,7 @@ async function loadOrgPersona(organizationId: string): Promise<string> {
 }
 
 export default async function PersonaPage() {
-  const organizations = await getMyOrganizations();
-  const org = organizations[0];
+  const org = await getCurrentOrganization();
 
   if (!org) {
     return (

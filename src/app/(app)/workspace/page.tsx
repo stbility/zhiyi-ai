@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { WorkspaceBrowser, type WorkspaceFile } from "@/components/app/WorkspaceBrowser";
-import { getMyOrganizations } from "@/lib/db/queries";
+import { getCurrentOrganization } from "@/lib/db/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "工作区 · 智一 AI" };
@@ -54,8 +54,7 @@ async function loadWorkspaces(
 }
 
 export default async function WorkspacePage() {
-  const organizations = await getMyOrganizations();
-  const org = organizations[0];
+  const org = await getCurrentOrganization();
 
   if (!org) {
     return (

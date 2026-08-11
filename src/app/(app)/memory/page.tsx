@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import { MemoryManager, type MemoryRow } from "@/components/app/MemoryManager";
 import type { MemorySource } from "@/components/memory/MemorySourceBadge";
-import { getMyOrganizations } from "@/lib/db/queries";
+import { getCurrentOrganization } from "@/lib/db/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "AI 记忆 · 智一 AI" };
@@ -59,8 +59,7 @@ async function loadMemories(
 }
 
 export default async function MemoryPage() {
-  const organizations = await getMyOrganizations();
-  const org = organizations[0];
+  const org = await getCurrentOrganization();
 
   if (!org) {
     return (

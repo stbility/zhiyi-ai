@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { SkillsManager, type SkillRow } from "@/components/app/SkillsManager";
-import { getMyOrganizations } from "@/lib/db/queries";
+import { getCurrentOrganization } from "@/lib/db/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "技能库 · 智一 AI" };
@@ -56,8 +56,7 @@ async function loadSkills(organizationId: string): Promise<SkillRow[]> {
 }
 
 export default async function SkillsPage() {
-  const organizations = await getMyOrganizations();
-  const org = organizations[0];
+  const org = await getCurrentOrganization();
 
   if (!org) {
     return (

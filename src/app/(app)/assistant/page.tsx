@@ -7,7 +7,7 @@ import {
   loadModels,
   loadTurns,
 } from "@/lib/db/conversations";
-import { getMyOrganizations } from "@/lib/db/queries";
+import { getCurrentOrganization } from "@/lib/db/queries";
 
 /**
  * AI 助手 —— 想清楚一件事。
@@ -29,8 +29,7 @@ export default async function AssistantPage({
 }: {
   searchParams: Promise<{ c?: string }>;
 }) {
-  const organizations = await getMyOrganizations();
-  const org = organizations[0];
+    const org = await getCurrentOrganization();
 
   if (!org) {
     return (

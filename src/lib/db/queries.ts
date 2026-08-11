@@ -1,5 +1,7 @@
 import "server-only";
 
+import { cookies } from "next/headers";
+
 import { ensurePersonalOrganization } from "@/lib/auth/personal-org";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -76,6 +78,42 @@ export async function getMyOrganizations(): Promise<readonly Organization[]> {
   }
 
   return toOrganizations(rows);
+}
+
+const ORG_COOKIE = "zhiyi_current_org";
+
+/**
+ * 当前组织(2026-08-11 组织切换器)。
+ *
+ * 优先读 cookie 里用户上次选择的组织;未选择或已失效(不再属于该组织)
+ * 时回退第一个。cookie 存 org id,不存角色/名字 —— 那些每次从库读。
+ *
+ * 这是「页面固定取第一个组织」的收口:所有页面改用本函数后,
+ * 多组织用户即可切换上下文。
+ */
+export async function getCurrentOrganization(): Promise<Organization | null> {
+  const organizations = await getMyOrganizations();
+  if (organizations.length === 0) return null;
+
+  const cookieStore = await cookies();
+  const chosen = cookieStore.get(ORG_COOKIE)?.value;
+  if (chosen) {
+    const match = organizations.find((o) => o.id === chosen);
+    if (match) return match;
+  }
+
+  return organizations[0] ?? null;
+}
+
+/** 记录用户选择的组织到 cookie(供 getCurrentOrganization 读取)。 */
+export async function rememberOrganization(organizationId: string): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.set(ORG_COOKIE, organizationId, {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+  });
 }
 
 /** 原始成员关系行。null 表示查询本身失败(与「查到 0 条」是两回事) */
