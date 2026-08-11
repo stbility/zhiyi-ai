@@ -85,6 +85,7 @@
 | `0050_index_hygiene.sql` | 待应用 | Performance 信息建议前 10 条:补 6 条真缺外键索引(feedback_id/created_by/token_id/user_id/message_id)+ 删 4 条零查询路径的防御性索引(详见备注 H) |
 | `0051_restore_fk_column_indexes.sql` | 待应用 | 恢复 0050 误删的 4 条 **FK 列**索引(0001 未索引外键 vs 0005 未使用索引冲突,FK 列必须保索引,详见备注 I) |
 | `0052_entitlements_five_tier_and_grants.sql` | 待应用 | 五档定价落地:entitlements/subscriptions 的 plan_id CHECK 3 档→5 档 + 五档默认权益 upsert + 计费 RPC EXECUTE 授权重建(详见备注 J) |
+| `0053_platform_models_refresh.sql` | 待应用 | 平台免费档模型池刷新:下线 EOL 的 deepseek-v4-flash/pro(410 Gone),保留 glm-5.2(用户点名长期免费),加入实测快的 minimax-m3 / gpt-oss-20b(详见备注 K) |
 
 ### 备注 D：Security Advisor 修复(2026-08-10)
 
@@ -250,3 +251,17 @@ CI 的真实重放已经覆盖它。0044 已把 0005 连同基线 0001-0027 一�
 0044 以 4 位前缀行把基线补记入账本(幂等),配套
 `scripts/prod-migrate.sh` 的清理逻辑改为只删「无对应迁移文件」的行,
 避免每次交付把补记冲掉。
+
+### 备注 K：平台免费档模型池刷新(2026-08-11)
+
+0026 种子的 3 个免费模型在 NVIDIA integrate API 生产实测:
+- `deepseek-ai/deepseek-v4-flash` / `deepseek-ai/deepseek-v4-pro`:
+  HTTP 410 Gone,「reached its end of life on 2026-08-07」—— 已下线。
+  智能体/AI助手页选到它们必失败。
+- `z-ai/glm-5.2`:可用,但首 token 70-120 秒(NVIDIA 容量塌陷),
+  单步 45s 超时、整轮 300s 上限全撞,产物随中断丢失。
+
+0052 下线两个 EOL 模型(enabled=false 留痕不删行)、保留 glm-5.2
+(用户点名长期免费)、加入生产实测快的 minimax-m3(≈4s)与 gpt-oss-20b(即时),
+让免费档降级链真正可用。密钥仍走 PLATFORM_NVIDIA_API_KEY 环境变量,
+未配置时界面如实显示「未配置」。
