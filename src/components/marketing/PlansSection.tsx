@@ -51,7 +51,9 @@ function PlanCard({
   const shownPeriod = isFree || !isYear ? plan.period : "年";
   const ctaLabel = isFree
     ? "免费开始"
-    : `立即订阅 ${shownPrice ?? ""}${isYear ? "/年" : `/${plan.period ?? ""}`}`;
+    : plan.id === "enterprise"
+      ? "联系销售"
+      : "立即订阅";
 
   // 免费档没有订阅动作,CTA 就是注册链接。
   // 付费档(非 enterprise):走服务端 Checkout。Payment Link 只作为 checkout 不可用时的备用。
@@ -71,6 +73,7 @@ function PlanCard({
         highlighted={plan.highlighted}
         ctaLabel={ctaLabel}
         href={enterpriseHref}
+        showPrice={false}
       />
     );
   }
@@ -101,6 +104,7 @@ function PlanCard({
           fallbackUrl={fallbackUrl}
         />
       }
+      showPrice={false}
     />
   );
 }
