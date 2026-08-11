@@ -52,7 +52,7 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
     label: "组织、成员、角色权限、审计日志",
     state: "partial",
     missing:
-      "成员管理未交付;当前是「组织」外壳套「个人」实质,页面固定取第一个组织",
+      "组织/成员/角色/审计的数据库层完整(0001:organizations + memberships + audit_logs + has_org_role + RLS);品牌人格(P3)已上线(/settings/persona,organizations.persona 注入智能体系统提示);成员管理前端未交付,页面固定取第一个组织",
   },
   {
     id: "3",
@@ -78,7 +78,7 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
     label: "Entitlement Service、Stripe 订阅",
     state: "partial",
     missing:
-      "权益判断(0034 get_entitlements)与用量计量(0035)已就位;Stripe 应用层(checkout/portal/webhook)与订阅页已上线;2026-08-10 旧 Stripe 账号已删、Vercel 集成与 env 已断开、新账号重建中 —— 配齐 STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / STRIPE_PRICE_*(新 Price ID)后恢复线上收款",
+      "权益判断(0034 get_entitlements)与用量计量(0035)已就位;五档定价(Free/128/198/388/自定义)全链路生产运行:checkout/webhook/plans/billing 已上线,STRIPE_PRICE_* 6/8 已配;权益矩阵已扩展(0055:concurrent_tasks/history_days/knowledge_capacity/mcp_servers 四类 feature,生产 30 行种子实证);MCP 登记与知识库上传已按档位 gating;待配 STRIPE_PRICE_ENT_* 2 个(Enterprise 自定义报价可选)",
   },
   {
     id: "7",
