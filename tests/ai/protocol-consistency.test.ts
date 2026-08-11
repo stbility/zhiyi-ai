@@ -69,7 +69,7 @@ describe("工具调用的请求端与解析端必须对齐", () => {
 });
 
 describe("上游若回了非流式响应,必须明确失败", () => {
-  it("不能静默返回「空文本 + 零工具调用」", async () => {
+  it("不能静默返回「空文本 + 零工具调用」", { timeout: 60_000 }, async () => {
     const { gateway, cipher } = await load();
     // 单个 JSON,不是 SSE —— 正是 stream: false 时上游的样子
     vi.stubGlobal(

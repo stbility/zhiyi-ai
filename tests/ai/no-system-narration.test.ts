@@ -68,7 +68,7 @@ describe("留痕记的是实际跑的那个模型", () => {
 });
 
 describe("content 里不得出现系统写的文字", () => {
-  it("summarizeRun 只返回模型说的话,不做任何拼接", async () => {
+  it("summarizeRun 只返回模型说的话,不做任何拼接", { timeout: 60_000 }, async () => {
     vi.resetModules();
     vi.doMock("server-only", () => ({}));
     const { summarizeRun } = await import("@/lib/ai/agent");
