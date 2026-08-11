@@ -47,11 +47,13 @@ describe("0033 Stripe 客户与订阅", () => {
     );
   });
 
-  it("plan_id 白名单对齐 plans.ts 三档", () => {
-    expect(M0033).toMatch(/check \(plan_id in \('free','professional','enterprise'\)\)/);
-    // plans.ts 里必须有同样的三档
+  it("plan_id 白名单对齐 plans.ts 五档", () => {
+    expect(M0033).toMatch(/check \(plan_id in \('free','professional','professional_plus','team','enterprise'\)\)/);
+    // plans.ts 里必须有同样的五档
     expect(PLANS).toContain('id: "free"');
     expect(PLANS).toContain('id: "professional"');
+    expect(PLANS).toContain('id: "professional_plus"');
+    expect(PLANS).toContain('id: "team"');
     expect(PLANS).toContain('id: "enterprise"');
   });
 
@@ -75,16 +77,16 @@ describe("0034 权益矩阵", () => {
     expect(M0034).toMatch(/primary key \(plan_id, feature\)/);
   });
 
-  it("默认权益:Free 1 工作流 / Pro 5 / Enterprise 不限", () => {
-    expect(M0034).toContain("('free',         'workflows',            1)");
-    expect(M0034).toContain("('professional', 'workflows',            5)");
-    expect(M0034).toContain("('enterprise',   'workflows',            null)");
+  it("默认权益:Free 1 工作流 / Professional 5 / Enterprise 不限", () => {
+    expect(M0034).toContain("('free',              'workflows',            1)");
+    expect(M0034).toContain("('professional',      'workflows',            5)");
+    expect(M0034).toContain("('enterprise',        'workflows',            null)");
   });
 
-  it("月度 agent 额度:Free 200 / Pro 2000 / Enterprise 不限", () => {
-    expect(M0034).toContain("('free',         'monthly_agent_turns',  200)");
-    expect(M0034).toContain("('professional', 'monthly_agent_turns',  2000)");
-    expect(M0034).toContain("('enterprise',   'monthly_agent_turns',  null)");
+  it("月度 agent 额度:Free 100 / Professional 2000 / Enterprise 不限", () => {
+    expect(M0034).toContain("('free',              'monthly_agent_turns',  100)");
+    expect(M0034).toContain("('professional',      'monthly_agent_turns',  2000)");
+    expect(M0034).toContain("('enterprise',        'monthly_agent_turns',  null)");
   });
 
   it("get_entitlements 是 security definer —— 用调用者 user_id 参数,不信任客户端 plan", () => {

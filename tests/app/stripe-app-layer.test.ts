@@ -34,8 +34,8 @@ describe("plans.ts 港币定价(全球华人市场)", () => {
   });
 
   it("年付说明存在(两个月免费惯例)", () => {
-    expect(PLANS).toContain("年付 HK$490");
-    expect(PLANS).toContain("年付 HK$2,290");
+    expect(PLANS).toContain("HK$1,280/年");
+    expect(PLANS).toContain("HK$3,880/年");
   });
 
   it("三档沿能力线递进(超集关系标注)", () => {
@@ -50,10 +50,12 @@ describe("plans.ts 港币定价(全球华人市场)", () => {
 });
 
 describe("0033/0034 与 plans.ts 对齐", () => {
-  it("plan_id 白名单一致:free/professional/enterprise", () => {
-    expect(M0033).toMatch(/plan_id in \('free','professional','enterprise'\)/);
+  it("plan_id 白名单一致:free/professional/professional_plus/team/enterprise", () => {
+    expect(M0033).toMatch(/plan_id in \('free','professional','professional_plus','team','enterprise'\)/);
     expect(PLANS).toContain('id: "free"');
     expect(PLANS).toContain('id: "professional"');
+    expect(PLANS).toContain('id: "professional_plus"');
+    expect(PLANS).toContain('id: "team"');
     expect(PLANS).toContain('id: "enterprise"');
   });
 
