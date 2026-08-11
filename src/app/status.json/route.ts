@@ -33,6 +33,11 @@ export async function GET() {
     "STRIPE_PRICE_ENT_YEAR",
   ] as const;
 
+  // 直接读 process.env —— STRIPE_PRICE_* 不在 serverEnvSchema(zod 白名单)里,
+  // getPriceIdForPlan 也是直接读 process.env,这里保持一致。
+  const envOf = (k: string): string | undefined =>
+    process.env[k]?.trim() || undefined;
+
   const payload = {
     ok: true,
     deployed_sha:
@@ -47,7 +52,7 @@ export async function GET() {
       stripe_secret: Boolean(env.STRIPE_SECRET_KEY),
       stripe_webhook: Boolean(env.STRIPE_WEBHOOK_SECRET),
       stripe_prices_configured: priceKeys.filter(
-        (k) => Boolean(env[k]),
+        (k) => Boolean(envOf(k)),
       ).length,
       stripe_prices_total: priceKeys.length,
       embeddings: Boolean(
