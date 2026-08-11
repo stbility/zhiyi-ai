@@ -93,16 +93,18 @@ describe("0034 权益矩阵", () => {
     expect(M0034).toContain("('enterprise',        'monthly_agent_turns',  null)");
   });
 
-  it("0037 配额对齐:Pro → 500 / Ent → 5000(对齐落地页宣传)", () => {
+  it("0037 配额对齐:五档权益(2026-08-11 重写,对齐新版落地页)", () => {
     expect(M0036).toContain("monthly_agent_turns");
-    expect(M0036).toContain("quota = 500");
-    expect(M0036).toContain("quota = 5000");
-    // 幂等:只命中未对齐的行,重放安全
-    expect(M0036).toContain("quota = 2000");
-    expect(M0036).toContain("quota is null");
+    // 0037 重写后:pro=2000 已是 0034 初始值,ent=null 不限
+    expect(M0036).toContain("professional_plus");
+    expect(M0036).toContain("'professional_plus', 'monthly_agent_turns',  4000");
+    expect(M0036).toContain("'team', 'monthly_agent_turns', 10000");
+    // 约束放宽前置:0034 生产版 3 档 CHECK → 5 档
+    expect(M0036).toContain("entitlements_plan_id_check");
     // 与 plans.ts 宣传文案一致(展示层 = 判断层)
     expect(PLANS).toContain("每月 2,000 次标准 Agent 运行");
     expect(PLANS).toContain("每月 4,000 次标准 Agent 运行");
+    expect(PLANS).toContain("每月 10,000 次标准 Agent 运行");
   });
 
   it("get_entitlements 是 security definer —— 用调用者 user_id 参数,不信任客户端 plan", () => {

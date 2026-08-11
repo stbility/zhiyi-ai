@@ -23,7 +23,7 @@
 -- 额度单位由 feature 名约定:workflows=个数, monthly_agent_turns=次数/月
 create table if not exists public.entitlements (
   plan_id     text not null
-    check (plan_id in ('free','professional','enterprise')),
+    check (plan_id in ('free','professional','professional_plus','team','enterprise')),
   feature     text not null,
   quota       integer,  -- null = 不限制
   primary key (plan_id, feature)
@@ -38,16 +38,22 @@ create policy entitlements_select_all on public.entitlements
   using (true);
 
 -- 默认权益。决策输入(以 Stripe 为准,价格不在此表):
---   Free ¥0         workflows=1,  monthly_agent_turns=200
---   Pro   ¥39/月    workflows=5,  monthly_agent_turns=2000
---   Ent   ¥199/月起 workflows=null(不限), monthly_agent_turns=null(不限)
+--   Free         HK$0/月      workflows=1,   monthly_agent_turns=100
+--   Professional HK$128/月   workflows=5,   monthly_agent_turns=2000
+--   Professional+ HK$198/月  workflows=10,  monthly_agent_turns=4000
+--   Team         HK$388/月   workflows=null(不限), monthly_agent_turns=10000
+--   Enterprise   自定义        workflows=null(不限), monthly_agent_turns=null(不限)
 insert into public.entitlements (plan_id, feature, quota) values
-  ('free',         'workflows',            1),
-  ('free',         'monthly_agent_turns',  200),
-  ('professional', 'workflows',            5),
-  ('professional', 'monthly_agent_turns',  2000),
-  ('enterprise',   'workflows',            null),
-  ('enterprise',   'monthly_agent_turns',  null)
+  ('free',              'workflows',            1),
+  ('free',              'monthly_agent_turns',  100),
+  ('professional',      'workflows',            5),
+  ('professional',      'monthly_agent_turns',  2000),
+  ('professional_plus', 'workflows',            10),
+  ('professional_plus', 'monthly_agent_turns',  4000),
+  ('team',              'workflows',            null),
+  ('team',              'monthly_agent_turns',  10000),
+  ('enterprise',        'workflows',            null),
+  ('enterprise',        'monthly_agent_turns',  null)
 on conflict (plan_id, feature) do nothing;
 
 -- 查询用户当前权益。无订阅 = free。

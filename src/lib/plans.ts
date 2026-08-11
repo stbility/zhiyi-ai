@@ -59,9 +59,12 @@ const STRIPE_PAYMENT_LINK_PRO_PLUS_MONTH = process.env.STRIPE_PAYMENT_LINK_PRO_P
 const STRIPE_PAYMENT_LINK_PRO_PLUS_YEAR = process.env.STRIPE_PAYMENT_LINK_PRO_PLUS_YEAR ?? "https://buy.stripe.com/00wcN6ad50RZ9HYaCa5AQ04";
 const STRIPE_PAYMENT_LINK_ENT_MONTH = process.env.STRIPE_PAYMENT_LINK_ENT_MONTH ?? "https://buy.stripe.com/cNi00kgBt3078DUaCa5AQ02";
 const STRIPE_PAYMENT_LINK_ENT_YEAR = process.env.STRIPE_PAYMENT_LINK_ENT_YEAR ?? "https://buy.stripe.com/fZu4gA1GzaszcUaeSq5AQ05";
-// Team Payment Links not yet configured
-const STRIPE_PAYMENT_LINK_TEAM_MONTH: string | undefined = process.env.STRIPE_PAYMENT_LINK_TEAM_MONTH;
-const STRIPE_PAYMENT_LINK_TEAM_YEAR: string | undefined = process.env.STRIPE_PAYMENT_LINK_TEAM_YEAR;
+// Team Payment Links:用户 Stripe 侧 HK$388 产品(2026-08-11 配置),
+// 与 ENTERPRISE 同 URL(Stripe 产品命名与代码档位错位,以产品结构为准:388 = Team)
+const STRIPE_PAYMENT_LINK_TEAM_MONTH: string | undefined =
+  process.env.STRIPE_PAYMENT_LINK_TEAM_MONTH ?? STRIPE_PAYMENT_LINK_ENT_MONTH;
+const STRIPE_PAYMENT_LINK_TEAM_YEAR: string | undefined =
+  process.env.STRIPE_PAYMENT_LINK_TEAM_YEAR ?? STRIPE_PAYMENT_LINK_ENT_YEAR;
 
 export const PLANS: readonly Plan[] = [
   {
