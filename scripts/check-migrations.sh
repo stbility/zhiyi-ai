@@ -28,8 +28,16 @@ set -euo pipefail
 
 # --sync:重放成功后把实际策略/索引集合写回 expected-*.txt(作者改动迁移后
 # 用一条命令同步契约快照,再人审 diff 确认预期)。默认(无参)= 只核对。
+# --advisor-info:重放成功后,从真实 PostgreSQL 查询 Performance Advisor INFO 建议,
+# 并输出到 GitHub 运行汇总页(用于提取完整 33 条建议列表)。
 SYNC=0
-[[ "${1:-}" == "--sync" ]] && SYNC=1
+ADVISOR=0
+for arg in "$@"; do
+  case "$arg" in
+    --sync) SYNC=1 ;;
+    --advisor-info) ADVISOR=1 ;;
+  esac
+done
 
 : "${DATABASE_URL:?需要 DATABASE_URL}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -76,6 +84,36 @@ for f in "$ROOT"/supabase/migrations/*.sql; do
     exit 1
   fi
 done
+
+# ── Performance Advisor INFO 查询 ─────────────────────────────────────────────
+# 跑完所有迁移后,从 supabase_advisor.check_results 拉出全部 INFO 级别建议,
+# 格式化输出到 CI 日志 + 运行汇总页,用于提取完整 33 条建议列表。
+# supabase_advisor 扩展仅在真实 Supabase 实例中安装;本地/CI postgres 镜像无此扩展,
+# 所以这里用 DO 块做存在性检查,无扩展时跳过(避免 CI 失败)。
+if [ "$ADVISOR" -eq 1 ]; then
+  echo ""
+  echo "── Performance Advisor INFO 查询"
+  "${PSQL[@]}" <<'EOF'
+DO $$
+BEGIN
+  IF to_regclass('supabase_advisor.check_results') IS NOT NULL THEN
+    RAISE NOTICE '=== Performance Advisor INFO ===';
+    FOR r IN
+      SELECT table_name, message, detail
+      FROM supabase_advisor.check_results
+      WHERE severity = 'info'
+      ORDER BY table_name, message
+    LOOP
+      RAISE NOTICE 'TABLE=% MESSAGE=% DETAIL=%',
+        r.table_name, r.message, r.detail;
+    END LOOP;
+  ELSE
+    RAISE NOTICE 'supabase_advisor.check_results 不存在(本地 CI postgres 镜像无此扩展),跳过';
+  END IF;
+END $$;
+EOF
+  echo "── Advisor 查询完成"
+fi
 
 echo "── 核对最终状态"
 q() { "${PSQL[@]}" --tuples-only --no-align -c "$1" | sed '/^$/d' | sort; }

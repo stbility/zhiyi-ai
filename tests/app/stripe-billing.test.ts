@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
  *
  * 覆盖 0033/0034/0035 三份迁移的关键契约:
  *   · 订阅状态机锁死(只认 active/trialing 为有效权益)
- *   · plan_id 白名单对齐 plans.ts 三档
+ *   · plan_id 白名单对齐 plans.ts 五档
  *   · 无订阅 = free(最重要的兜底,漏配订阅绝不允许等于漏配权益)
  *   · 权益判断走 security definer 函数,不信任客户端 plan
  *   · 用量按 (user, month, category) 聚合,upsert 计数并发安全
@@ -51,11 +51,13 @@ describe("0033 Stripe 客户与订阅", () => {
     );
   });
 
-  it("plan_id 白名单对齐 plans.ts 三档", () => {
-    expect(M0033).toMatch(/check \(plan_id in \('free','professional','enterprise'\)\)/);
-    // plans.ts 里必须有同样的三档
+  it("plan_id 白名单对齐 plans.ts 五档", () => {
+    expect(M0033).toMatch(/check \(plan_id in \('free','professional','professional_plus','team','enterprise'\)\)/);
+    // plans.ts 里必须有同样的五档
     expect(PLANS).toContain('id: "free"');
     expect(PLANS).toContain('id: "professional"');
+    expect(PLANS).toContain('id: "professional_plus"');
+    expect(PLANS).toContain('id: "team"');
     expect(PLANS).toContain('id: "enterprise"');
   });
 
@@ -80,15 +82,17 @@ describe("0034 权益矩阵", () => {
   });
 
   it("默认权益:Free 1 工作流 / Pro 5 / Enterprise 不限", () => {
-    expect(M0034).toContain("('free',         'workflows',            1)");
-    expect(M0034).toContain("('professional', 'workflows',            5)");
-    expect(M0034).toContain("('enterprise',   'workflows',            null)");
+    expect(M0034).toContain("('free',             'workflows',             1)");
+    expect(M0034).toContain("('professional',     'workflows',             5)");
+    expect(M0034).toContain("('enterprise',       'workflows',            null)");
   });
 
-  it("月度 agent 额度:Free 200 / Pro 2000 / Enterprise 不限", () => {
-    expect(M0034).toContain("('free',         'monthly_agent_turns',  200)");
-    expect(M0034).toContain("('professional', 'monthly_agent_turns',  2000)");
-    expect(M0034).toContain("('enterprise',   'monthly_agent_turns',  null)");
+  it("月度 agent 额度:Free 200 / Pro 500 / Pro+ 2000 / Team 5000 / Ent 5000", () => {
+    expect(M0034).toContain("('free',             'monthly_agent_turns',  200)");
+    expect(M0034).toContain("('professional',     'monthly_agent_turns',  500)");
+    expect(M0034).toContain("('professional_plus','monthly_agent_turns', 2000)");
+    expect(M0034).toContain("('team',             'monthly_agent_turns',  5000)");
+    expect(M0034).toContain("('enterprise',       'monthly_agent_turns',  5000)");
   });
 
   it("0037 配额对齐:Pro → 500 / Ent → 5000(对齐落地页宣传)", () => {

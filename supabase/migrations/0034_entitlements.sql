@@ -48,9 +48,9 @@ insert into public.entitlements (plan_id, feature, quota) values
   ('free',         'monthly_agent_turns',  200),
   ('professional', 'workflows',            5),
   ('professional', 'monthly_agent_turns',  500),
-  ('professional_plus', 'workflows',       10),
-  ('professional_plus', 'monthly_agent_turns', 2000),
-  ('team',         'workflows',            30),
+  ('professional_plus','workflows',       10),
+  ('professional_plus','monthly_agent_turns', 2000),
+  ('team',         'workflows',           30),
   ('team',         'monthly_agent_turns',  5000),
   ('enterprise',   'workflows',            null),
   ('enterprise',   'monthly_agent_turns',  5000)

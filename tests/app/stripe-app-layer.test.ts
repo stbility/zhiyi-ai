@@ -24,18 +24,19 @@ const M0034 = readFileSync(
 );
 
 describe("plans.ts 港币定价(全球华人市场)", () => {
-  it("Professional 产品决策价 HK49/月", () => {
+  it("Professional 产品决策价 HK$128/月", () => {
     expect(PLANS).toContain('name: "Professional 专业版"');
     expect(PLANS).toContain("annualNote");
   });
 
-  it("Enterprise 产品决策价 HK229/月", () => {
+  it("Enterprise 产品决策价 HK$自定义报价/月", () => {
     expect(PLANS).toContain('name: "Enterprise 企业版"');
   });
 
   it("年付说明存在(两个月免费惯例)", () => {
-    expect(PLANS).toContain("年付 HK490");
-    expect(PLANS).toContain("年付 HK2,290");
+    expect(PLANS).toContain("年付 HK$1,280");
+    expect(PLANS).toContain("年付 HK$1,980");
+    expect(PLANS).toContain("年付 HK$3,880");
   });
 
   it("支付路径 = checkout 为主,Payment Link 链接已清空(旧账号删除,重建后填新)", () => {
@@ -46,17 +47,21 @@ describe("plans.ts 港币定价(全球华人市场)", () => {
     expect(PLANS).toContain('stripeUrl: ""');
     expect(PLANS).toContain('annualStripeUrl: ""');
     // 年付文案必须与月付文案同档配对(Pro 年付配 Pro 月付);链接已清空待重建
-    const pro = PLANS.split("id: \"professional\"")[1]?.split("id: \"enterprise\"")[0] ?? "";
-    expect(pro).toContain("年付 HK490");
+    const pro = PLANS.split('id: "professional"')[1]?.split('id: "professional_plus"')[0] ?? "";
+    expect(pro).toContain("年付 HK$1,280");
     expect(pro).toContain('annualStripeUrl: ""');
-    const ent = PLANS.split("id: \"enterprise\"")[1] ?? "";
-    expect(ent).toContain("年付 HK2,290");
-    expect(ent).toContain('annualStripeUrl: ""');
+    const proPlus = PLANS.split('id: "professional_plus"')[1]?.split('id: "team"')[0] ?? "";
+    expect(proPlus).toContain("年付 HK$1,980");
+    expect(proPlus).toContain('annualStripeUrl: ""');
+    const team = PLANS.split('id: "team"')[1]?.split('id: "enterprise"')[0] ?? "";
+    expect(team).toContain("年付 HK$3,880");
+    expect(team).toContain('annualStripeUrl: ""');
   });
 
-  it("三档沿能力线递进(超集关系标注)", () => {
+  it("四档沿能力线递进(超集关系标注)", () => {
     expect(PLANS).toContain("包含 Free 全部权益");
     expect(PLANS).toContain("包含 Professional 全部权益");
+    expect(PLANS).toContain("包含 Professional+ 全部权益");
   });
 
   it("plans.ts 已移除 Stripe 字段(Stripe 应用层已删除)", () => {
@@ -66,10 +71,12 @@ describe("plans.ts 港币定价(全球华人市场)", () => {
 });
 
 describe("0033/0034 与 plans.ts 对齐", () => {
-  it("plan_id 白名单一致:free/professional/enterprise", () => {
-    expect(M0033).toMatch(/plan_id in \('free','professional','enterprise'\)/);
+  it("plan_id 白名单一致:free/professional/professional_plus/team/enterprise", () => {
+    expect(M0033).toMatch(/plan_id in \('free','professional','professional_plus','team','enterprise'\)/);
     expect(PLANS).toContain('id: "free"');
     expect(PLANS).toContain('id: "professional"');
+    expect(PLANS).toContain('id: "professional_plus"');
+    expect(PLANS).toContain('id: "team"');
     expect(PLANS).toContain('id: "enterprise"');
   });
 
