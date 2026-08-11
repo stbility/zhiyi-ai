@@ -138,11 +138,11 @@ export default function PricingPage() {
             从专业版开始,随团队成长无缝升级至企业版。
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3">
-            <LinkButton href="/register" size="lg">
-              订阅专业版 HK49 →
+            <LinkButton href="https://buy.stripe.com/aFa28setlcAHaM28u25AQ00" size="lg" external>
+              订阅专业版 HK$128 →
             </LinkButton>
-            <LinkButton href="/register" variant="secondary" size="lg">
-              企业版 HK229
+            <LinkButton href="https://buy.stripe.com/cNi00kgBt3078DUaCa5AQ02" variant="secondary" size="lg" external>
+              企业版 Enterprise
             </LinkButton>
           </div>
         </div>
