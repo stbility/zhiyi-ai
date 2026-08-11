@@ -51,25 +51,9 @@ export function getPriceIdForPlan(
   planId: string,
   interval: "month" | "year" = "month",
 ): string | null {
-  if (planId === "professional") {
-    return (
-      process.env[
-        interval === "year"
-          ? "STRIPE_PRICE_PROFESSIONAL_YEAR"
-          : "STRIPE_PRICE_PROFESSIONAL"
-      ]?.trim() ?? null
-    );
-  }
-  if (planId === "enterprise") {
-    return (
-      process.env[
-        interval === "year"
-          ? "STRIPE_PRICE_ENTERPRISE_YEAR"
-          : "STRIPE_PRICE_ENTERPRISE"
-      ]?.trim() ?? null
-    );
-  }
-  return null;
+  const year = interval === "year" ? "_YEAR" : "_MONTH";
+  const key = `STRIPE_PRICE_${planId.toUpperCase()}${year}`.replace("PROFESSIONAL_PLUS", "PRO_PLUS").replace("PROFESSIONAL", "PRO");
+  return process.env[key]?.trim() ?? null;
 }
 
 /**
@@ -82,10 +66,14 @@ export function getPriceIdForPlan(
  */
 export function getPlanIdForPrice(priceId: string): string | null {
   const candidates: ReadonlyArray<readonly [string | undefined, string]> = [
-    [process.env["STRIPE_PRICE_PROFESSIONAL"], "professional"],
-    [process.env["STRIPE_PRICE_PROFESSIONAL_YEAR"], "professional"],
-    [process.env["STRIPE_PRICE_ENTERPRISE"], "enterprise"],
-    [process.env["STRIPE_PRICE_ENTERPRISE_YEAR"], "enterprise"],
+    [process.env["STRIPE_PRICE_PRO_MONTH"], "professional"],
+    [process.env["STRIPE_PRICE_PRO_YEAR"], "professional"],
+    [process.env["STRIPE_PRICE_PRO_PLUS_MONTH"], "professional_plus"],
+    [process.env["STRIPE_PRICE_PRO_PLUS_YEAR"], "professional_plus"],
+    [process.env["STRIPE_PRICE_TEAM_MONTH"], "team"],
+    [process.env["STRIPE_PRICE_TEAM_YEAR"], "team"],
+    [process.env["STRIPE_PRICE_ENT_MONTH"], "enterprise"],
+    [process.env["STRIPE_PRICE_ENT_YEAR"], "enterprise"],
   ];
   for (const [id, plan] of candidates) {
     if (id && id === priceId) return plan;

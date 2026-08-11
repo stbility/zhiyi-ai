@@ -1,203 +1,308 @@
+import { NextResponse, type NextRequest } from "next/server";
+
+import type Stripe from "stripe";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { logger } from "@/lib/log";
+import {
+  resolvePlanIdForPrice,
+  getStripe,
+  getStripeConfig,
+} from "@/lib/billing/stripe";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+
 /**
- * Stripe Webhook 处理。
+ * Stripe Webhook —— subscriptions 表唯一的写入方(0033 的写者纪律)。
  *
- * 支持 Payment Link 和 Checkout Session 两种路径:
- *   - Payment Link: Stripe 托管结账页,完成后触发 checkout.session.completed
- *   - Checkout Session: 服务端 Session,同样触发 checkout.session.completed
+ * 客户端、checkout 路由都不得直接写 subscriptions;订阅状态的任何变化
+ * 都以 Stripe 为准,幂等 upsert(onConflict stripe_subscription_id)
+ * 让重放安全。
  *
- * Stripe Dashboard → Developers → Webhooks:
- *   Endpoint URL: https://zhiyi-ai.vercel.app/api/billing/webhook
- *   Events: checkout.session.completed, customer.subscription.updated,
- *           customer.subscription.deleted, invoice.payment_failed
+ * 套餐判定只认 Price 上的 metadata.plan_id(白名单),
+ * 绝不信任客户端传来的 plan 字段。
  *
- * 本地开发:
- *   stripe listen --forward-to localhost:3000/api/billing/webhook
- *   把 whsec_xxx 填入 STRIPE_WEBHOOK_SECRET env。
+ * 【事件乱序 —— 曾经会漏钱的地方,别退回去】
+ * 官方文档 /webhooks「Event ordering」明说:
+ *   "Stripe doesn't guarantee the delivery of events in the order that
+ *    they're generated. ... You can also use the API to retrieve any
+ *    missing objects."
+ * 此前 created/updated 分支直接把 event.data.object 的状态写库。后果:
+ *   1. 用户取消 → deleted 先到 → 库里 canceled
+ *   2. 一条**更早生成、延迟送达**的 updated(载荷里 status=active)后到
+ *   3. 无条件 upsert → 库里被改回 active,且再无事件来纠正
+ *   → 该用户不再付费却永久保留付费权益。
+ * 现在所有订阅分支一律 fetchAuthoritative() 去 API 拉当前真实状态,
+ * 载荷只用于取 id。拉取失败就抛错吃 5xx 让 Stripe 重试,
+ * 绝不退回去写可能过期的载荷状态。
+ *
+ * 残留窗口(已知,可接受):两条事件并发处理时,各自拉到的快照仍可能
+ * 后写覆盖先写。窗口从「投递延迟(可达数小时)」缩到「并发处理(毫秒级)」。
+ * 要彻底消除需要在 subscriptions 上加事件时间戳列做单调守卫(需迁移)。
  */
 
-import { NextRequest, NextResponse } from 'next/server'
-import { stripe } from '@/lib/stripe'
-import { PLANS, getPlanByPaymentLink } from '@/lib/plans'
+export const dynamic = "force-dynamic";
 
-export const runtime = 'nodejs'
+const PLAN_WHITELIST = new Set(["professional", "professional_plus", "team", "enterprise"]);
 
-/** 从 session.metadata 或 Price 反查 planId + interval */
-function resolvePlan(session: Record<string, unknown>): {
-  planId: string | null
-  interval: 'month' | 'year' | null
-} {
-  // 优先 metadata(Checkout Session 路径)
-  const metadata = session.metadata as Record<string, string> | undefined
-  if (metadata?.planId) {
-    return {
-      planId: metadata.planId,
-      interval: (metadata.interval as 'month' | 'year') ?? null,
-    }
-  }
-
-  // Payment Link URL 在 metadata.paymentLink 里
-  if (metadata?.paymentLink) {
-    const plan = getPlanByPaymentLink(metadata.paymentLink)
-    if (plan) {
-      const interval: 'month' | 'year' =
-        plan.paymentLinkMonth === metadata.paymentLink ? 'month' : 'year'
-      return { planId: plan.id, interval }
-    }
-  }
-
-  // 从 line_items 的 price 反查(Payment Link 和 Checkout Session 通用)
-  const lineItems = session.line_items as { data?: Array<{ price?: { id?: string } }> } | undefined
-  const priceId = lineItems?.data?.[0]?.price?.id
-  if (priceId) {
-    const plan = PLANS.find(
-      (p) => p.priceIdMonth === priceId || p.priceIdYear === priceId,
-    )
-    if (plan) {
-      const interval: 'month' | 'year' =
-        plan.priceIdMonth === priceId ? 'month' : 'year'
-      return { planId: plan.id, interval }
-    }
-  }
-
-  return { planId: null, interval: null }
+/**
+ * 拿订阅的**权威状态** —— 以 Stripe API 当前返回为准,不信事件载荷。
+ *
+ * 已取消的订阅 Stripe 依然可 retrieve(返回 status=canceled),
+ * 所以 deleted 分支同样走这里,不需要特殊处理。
+ */
+async function fetchAuthoritative(
+  stripe: Stripe,
+  subscriptionId: string,
+): Promise<Stripe.Subscription> {
+  return await stripe.subscriptions.retrieve(subscriptionId);
 }
 
-export async function POST(req: NextRequest) {
-  const body = await req.text()
-  const sig = req.headers.get('stripe-signature')
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
+async function upsertSubscription(
+  admin: SupabaseClient,
+  stripe: Stripe,
+  subscription: Stripe.Subscription,
+): Promise<void> {
+  // 归属判定:subscription.metadata.userId 优先(checkout 路由创建时写入);
+  // 没有则用 customer 映射反查;再没有则按 Stripe customer 的邮箱
+  // 反查 app 用户(覆盖 Payment Link 购买 —— 静态链接无法携带 userId,
+  // 但结账邮箱通常与注册邮箱一致)。三条路都拿不到就抛错让 Stripe 重试。
+  const metadataUserId = subscription.metadata?.userId;
+  let userId: string | undefined = metadataUserId;
 
-  if (!sig || !webhookSecret) {
-    return NextResponse.json(
-      { error: 'Missing signature or webhook secret' },
-      { status: 400 },
-    )
+  if (!userId) {
+    const customerId = subscription.customer as string;
+    const { data } = await admin
+      .from("stripe_customers")
+      .select("user_id")
+      .eq("customer_id", customerId)
+      .maybeSingle();
+    userId = data?.user_id as string | undefined;
   }
 
-  let event: { type: string; data: { object: Record<string, unknown> } }
+  if (!userId) {
+    const customerId = subscription.customer as string;
+    try {
+      const customer = await stripe.customers.retrieve(customerId);
+      const email = !customer.deleted
+        ? (customer as Stripe.Customer).email
+        : undefined;
+      if (email) {
+        // 【审计修复】不能只扫第一页(1000 人):用户规模一大,第二页起
+        // 的订阅就无人认领。分页循环直到命中或取尽(上限 50 页防失控)。
+        let match: { id: string } | null = null;
+        for (let page = 1; page <= 50; page++) {
+          const { data } = await admin.auth.admin.listUsers({
+            page,
+            perPage: 1000,
+          });
+          const users = data?.users ?? [];
+          match =
+            users.find(
+              (u) => u.email?.toLowerCase() === email.toLowerCase(),
+            ) ?? null;
+          if (match || users.length < 1000) break;
+        }
+        if (match) {
+          userId = match.id;
+          await admin.from("stripe_customers").upsert(
+            { user_id: match.id, customer_id: customerId },
+            { onConflict: "user_id" },
+          );
+        }
+      }
+    } catch (e) {
+      logger.warn(
+        { customerId, error: e instanceof Error ? e.message : String(e) },
+        "webhook email 归属兜底失败(不影响后续,订阅将重试)",
+      );
+    }
+  }
+
+  if (!userId) {
+    // 归属认不出时,若该订阅**已在库**,仍必须把状态落下去 ——
+    // 否则「取消」这类事件会因为归属查不到而整条丢失,用户已退订却仍有权益。
+    // 行不存在才是真的无从下手,抛错吃 5xx 让 Stripe 重试。
+    const affected = await setSubscriptionStatus(
+      admin,
+      subscription.id,
+      subscription.status,
+    );
+    if (affected > 0) {
+      logger.warn(
+        { subscriptionId: subscription.id, status: subscription.status },
+        "订阅归属未能确定,已按 id 更新状态(未改归属)",
+      );
+      return;
+    }
+    throw new Error(`无法确定订阅 ${subscription.id} 所属用户`);
+  }
+
+  // v22:current_period_end 不在 Subscription 顶层,在 items.data[0] 上。
+  const item = subscription.items.data[0];
+  const periodEnd = item?.current_period_end ?? null;
+  // 套餐判定:price.metadata.plan_id 优先(白名单);生产实测 4 条 HKD 价格
+  // metadata 全空 —— 此时用环境变量里的 Price ID 反查,绝不静默降级成 free。
+  const pricePlan = item?.price.metadata?.plan_id;
+  const planId =
+    typeof pricePlan === "string" && PLAN_WHITELIST.has(pricePlan)
+      ? pricePlan
+      : await resolvePlanIdForPrice(stripe, item?.price.id ?? "");
+  if (!planId) {
+    // 官方做法:metadata 与 env 都判不出套餐 → 如实失败(500,Stripe 重试),
+    // 绝不静默降级 free —— 静默降级 = 付了钱权益不升,是断链根因。
+    logger.error(
+      { priceId: item?.price.id ?? "?" },
+      "无法判定订阅套餐(metadata.plan_id 与 STRIPE_PRICE_* 均无)——拒绝落库",
+    );
+    throw new Error(`无法判定订阅套餐: price=${item?.price.id ?? "?"}`);
+  }
+
+  const { error } = await admin.from("subscriptions").upsert(
+    {
+      user_id: userId,
+      stripe_subscription_id: subscription.id,
+      status: subscription.status,
+      plan_id: planId,
+      current_period_end: periodEnd
+        ? new Date(periodEnd * 1000).toISOString()
+        : null,
+      cancel_at_period_end: subscription.cancel_at_period_end,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "stripe_subscription_id" },
+  );
+  if (error) {
+    throw new Error(`订阅落库失败:${error.message}`);
+  }
+}
+
+/**
+ * 只改状态,不碰归属。返回**实际命中的行数** ——
+ * 调用方据此区分「更新成功」与「这条订阅根本不在库里」。
+ * 从前这里是 update-only 且不看命中数:deleted 若比 created 先到
+ * (事件不保证顺序),update 匹配 0 行、不报错、不重试,取消就永久丢了。
+ */
+async function setSubscriptionStatus(
+  admin: SupabaseClient,
+  stripeSubscriptionId: string,
+  status: string,
+): Promise<number> {
+  const { data, error } = await admin
+    .from("subscriptions")
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq("stripe_subscription_id", stripeSubscriptionId)
+    .select("stripe_subscription_id");
+  if (error) {
+    throw new Error(`订阅状态更新失败:${error.message}`);
+  }
+  return data?.length ?? 0;
+}
+
+export async function POST(request: NextRequest) {
+  const config = getStripeConfig();
+  const stripe = getStripe();
+  if (!stripe || !config?.webhookSecret) {
+    return NextResponse.json(
+      { error: "Stripe 未配置(webhook 需要 STRIPE_WEBHOOK_SECRET)。" },
+      { status: 503 },
+    );
+  }
+
+  const body = await request.text();
+  const signature = request.headers.get("stripe-signature");
+  if (!signature) {
+    return NextResponse.json({ error: "缺少 stripe-signature 头。" }, { status: 400 });
+  }
+
+  let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(body, sig, webhookSecret) as unknown as typeof event
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Webhook verification failed'
-    return NextResponse.json({ error: message }, { status: 400 })
+    event = stripe.webhooks.constructEvent(body, signature, config.webhookSecret);
+  } catch (e) {
+    logger.warn(
+      { error: e instanceof Error ? e.message : String(e) },
+      "Stripe webhook 签名校验失败",
+    );
+    return NextResponse.json({ error: "签名校验失败。" }, { status: 400 });
+  }
+
+  const admin = createSupabaseAdminClient();
+  if (!admin) {
+    return NextResponse.json({ error: "服务端数据库未配置。" }, { status: 503 });
   }
 
   try {
     switch (event.type) {
-      case 'checkout.session.completed': {
-        const session = event.data.object
-        const customerEmail = (session.customer_email as string | undefined) ?? ''
-        const customerId = (session.customer as string | undefined) ?? ''
-        const subscriptionId = (session.subscription as string | undefined) ?? ''
-        const { planId } = resolvePlan(session)
-        const currentPeriodEnd = session.current_period_end as string | undefined
-        const cancelAtPeriodEnd = (session.cancel_at_period_end as boolean | undefined) ?? false
-
-        if (!customerEmail || !planId) {
-          console.warn('[webhook] checkout.session.completed: missing email or planId', {
-            customerEmail,
-            planId,
-            metadata: session.metadata,
-          })
-          break
+      case "checkout.session.completed": {
+        const session = event.data.object as Stripe.Checkout.Session;
+        const subscriptionId = session.subscription;
+        if (subscriptionId && typeof subscriptionId === "string") {
+          // 客户映射一并补上(幂等),订阅则取最新状态落库
+          const sessionUserId = session.metadata?.userId;
+          if (sessionUserId && session.customer) {
+            await admin.from("stripe_customers").upsert(
+              {
+                user_id: sessionUserId,
+                customer_id: session.customer as string,
+              },
+              { onConflict: "user_id" },
+            );
+          }
+          const subscription = await fetchAuthoritative(stripe, subscriptionId);
+          await upsertSubscription(admin, stripe, subscription);
         }
-
-        const { createClient } = await import('@supabase/supabase-js')
-        const supabase = createClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        )
-
-        // 通过 upsert_stripe_subscription 函数:
-        // 1. email → user_id 关联(stripe_customers)
-        // 2. 幂等 upsert subscriptions
-        await supabase.rpc('upsert_stripe_subscription', {
-          p_customer_email: customerEmail,
-          p_stripe_customer_id: customerId,
-          p_stripe_subscription_id: subscriptionId || null,
-          p_status: 'active',
-          p_plan_id: planId,
-          p_current_period_end: currentPeriodEnd
-            ? new Date(currentPeriodEnd).toISOString()
-            : null,
-          p_cancel_at_period_end: cancelAtPeriodEnd,
-        })
-        break
+        break;
       }
 
-      case 'customer.subscription.updated': {
-        const sub = event.data.object
-        const customerEmail = (sub.customer_email as string | undefined) ?? ''
-        const subscriptionId = (sub.id as string | undefined) ?? ''
-        const status = (sub.status as string | undefined) ?? 'active'
-        const planId = (sub.metadata as Record<string, string> | undefined)?.planId
-        const currentPeriodEnd = sub.current_period_end as string | undefined
-        const cancelAtPeriodEnd = (sub.cancel_at_period_end as boolean | undefined) ?? false
-
-        if (!customerEmail || !planId) break
-
-        const { createClient } = await import('@supabase/supabase-js')
-        const supabase = createClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        )
-
-        await supabase.rpc('upsert_stripe_subscription', {
-          p_customer_email: customerEmail,
-          p_stripe_customer_id: null,
-          p_stripe_subscription_id: subscriptionId || null,
-          p_status: status,
-          p_plan_id: planId,
-          p_current_period_end: currentPeriodEnd
-            ? new Date(currentPeriodEnd).toISOString()
-            : null,
-          p_cancel_at_period_end: cancelAtPeriodEnd,
-        })
-        break
+      case "customer.subscription.updated":
+      case "customer.subscription.created":
+      case "customer.subscription.paused":
+      case "customer.subscription.resumed":
+      case "customer.subscription.deleted": {
+        // 【链路修复】created 与 updated 同处理:Payment Link 新订阅
+        // 触发的是 created —— 端点若配了 created 而非 completed,
+        // 没有这个分支订阅同样永不落库。
+        //
+        // paused/resumed 也走这里:0033 的状态白名单含 paused,
+        // 官方文档把它们列为**独立事件**(试用期结束无支付方式时触发),
+        // 不处理的话被暂停的订阅在库里仍是 active,权益不该留却留着。
+        //
+        // deleted 同样走这里:已取消的订阅 retrieve 回来就是 canceled,
+        // 走同一条 upsert 路径,顺带修掉「行不存在时静默丢失取消」。
+        //
+        // 五种事件统一取 id 后拉权威状态,**绝不写载荷里的 status** ——
+        // 理由见文件顶部「事件乱序」。
+        const payload = event.data.object as Stripe.Subscription;
+        const subscription = await fetchAuthoritative(stripe, payload.id);
+        await upsertSubscription(admin, stripe, subscription);
+        break;
       }
 
-      case 'customer.subscription.deleted': {
-        const sub = event.data.object
-        const customerEmail = (sub.customer_email as string | undefined) ?? ''
-        const subscriptionId = (sub.id as string | undefined) ?? ''
-
-        if (!customerEmail) break
-
-        const { createClient } = await import('@supabase/supabase-js')
-        const supabase = createClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        )
-
-        await supabase.rpc('upsert_stripe_subscription', {
-          p_customer_email: customerEmail,
-          p_stripe_customer_id: null,
-          p_stripe_subscription_id: subscriptionId || null,
-          p_status: 'canceled',
-          p_plan_id: 'free',
-          p_current_period_end: null,
-          p_cancel_at_period_end: false,
-        })
-        break
+      case "invoice.payment_failed": {
+        const invoice = event.data.object as Stripe.Invoice;
+        // v22:invoice.subscription 字符串字段已移除,改从 parent 链取。
+        const subscriptionId =
+          invoice.parent?.type === "subscription_details" &&
+          invoice.parent.subscription_details &&
+          typeof invoice.parent.subscription_details.subscription === "string"
+            ? invoice.parent.subscription_details.subscription
+            : undefined;
+        if (subscriptionId) {
+          await setSubscriptionStatus(admin, subscriptionId, "past_due");
+        }
+        break;
       }
-
-      case 'invoice.payment_failed': {
-        const invoice = event.data.object
-        console.warn('[webhook] invoice.payment_failed', {
-          customerEmail: invoice.customer_email,
-          invoiceId: invoice.id,
-        })
-        break
-      }
-
-      default:
-        break
     }
-  } catch (err) {
-    console.error('[webhook] handler error:', err)
-    // 返回 500 会让 Stripe 重试
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 })
+  } catch (e) {
+    logger.error(
+      { event: event.type, error: e instanceof Error ? e.message : String(e) },
+      "Stripe webhook 处理失败",
+    );
+    // 处理失败返回 5xx,让 Stripe 稍后重试
+    return NextResponse.json(
+      { error: "处理失败,请重试。" },
+      { status: 500 },
+    );
   }
 
-  return NextResponse.json({ received: true })
+  return NextResponse.json({ received: true });
 }
