@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import { CreateOrganizationForm } from "@/components/app/CreateOrganizationForm";
 import { Icon } from "@/components/icons/Icon";
-import { getMyOrganizations, getProfile, getRecentAudit } from "@/lib/db/queries";
+import { getCurrentOrganization, getProfile, getRecentAudit } from "@/lib/db/queries";
 import { getCurrentUser } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "今日 · 智一 AI" };
@@ -35,13 +35,12 @@ function greeting(): string {
  * 因此这些板块如实标注「尚未交付」,而不是填充占位内容让页面显得饱满。
  */
 export default async function TodayPage() {
-  const [user, profile, organizations] = await Promise.all([
+  const [user, profile, org] = await Promise.all([
     getCurrentUser(),
     getProfile(),
-    getMyOrganizations(),
+    getCurrentOrganization(),
   ]);
 
-  const org = organizations[0];
   const audit = org ? await getRecentAudit(org.id, 5) : [];
 
   const name = profile?.displayName ?? user?.email?.split("@")[0] ?? "";

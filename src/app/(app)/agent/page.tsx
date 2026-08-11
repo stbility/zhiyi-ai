@@ -8,7 +8,7 @@ import {
   loadTurns,
   loadWorkspaceForConversation,
 } from "@/lib/db/conversations";
-import { getMyOrganizations } from "@/lib/db/queries";
+import { getCurrentOrganization } from "@/lib/db/queries";
 
 /**
  * 智能体 —— 干成一件事。
@@ -57,8 +57,7 @@ export default async function AgentPage({
 }: {
   searchParams: Promise<{ c?: string }>;
 }) {
-  const organizations = await getMyOrganizations();
-  const org = organizations[0];
+  const org = await getCurrentOrganization();
 
   if (!org) {
     return (

@@ -1,7 +1,11 @@
 import { redirect } from "next/navigation";
 
 import { AppChrome } from "@/components/app/AppChrome";
-import { getMyOrganizations, getProfile } from "@/lib/db/queries";
+import {
+  getCurrentOrganization,
+  getMyOrganizations,
+  getProfile,
+} from "@/lib/db/queries";
 import { getCurrentUser } from "@/lib/supabase/server";
 
 /**
@@ -18,9 +22,10 @@ export default async function AppLayout({
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const [profile, organizations] = await Promise.all([
+  const [profile, organizations, currentOrg] = await Promise.all([
     getProfile(),
     getMyOrganizations(),
+    getCurrentOrganization(),
   ]);
 
   const displayName =
@@ -29,7 +34,9 @@ export default async function AppLayout({
   return (
     <AppChrome
       displayName={displayName}
-      organizationName={organizations[0]?.name ?? null}
+      organizationName={currentOrg?.name ?? organizations[0]?.name ?? null}
+      organizations={organizations.map((o) => ({ id: o.id, name: o.name }))}
+      currentOrganizationId={currentOrg?.id}
     >
       {children}
     </AppChrome>

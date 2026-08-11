@@ -19,7 +19,7 @@ import {
 } from "@/lib/integrations/github";
 import { getSiteUrl } from "@/lib/env/server";
 import { logger } from "@/lib/log";
-import { getMyOrganizations } from "@/lib/db/queries";
+import { getCurrentOrganization } from "@/lib/db/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "集成 · 智一 AI" };
@@ -204,8 +204,7 @@ export default async function IntegrationsPage({
 }: {
   searchParams: Promise<{ githubOk?: string; githubError?: string }>;
 }) {
-  const organizations = await getMyOrganizations();
-  const org = organizations[0];
+  const org = await getCurrentOrganization();
 
   if (!org) {
     return (

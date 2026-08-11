@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { ThemeToggle } from "@/components/app/ThemeToggle";
+import { OrganizationSwitcher } from "@/components/app/OrganizationSwitcher";
 import { Icon, type IconName } from "@/components/icons/Icon";
 import { IconButton } from "@/components/primitives/IconButton";
 import { Avatar } from "@/components/primitives/Avatar";
@@ -53,12 +54,16 @@ export const APP_NAV: readonly NavEntry[] = [
 export interface AppChromeProps {
   displayName: string;
   organizationName: string | null;
+  organizations?: readonly { id: string; name: string }[] | undefined;
+  currentOrganizationId?: string | undefined;
   children: ReactNode;
 }
 
 export function AppChrome({
   displayName,
   organizationName,
+  organizations,
+  currentOrganizationId,
   children,
 }: AppChromeProps) {
   const pathname = usePathname();
@@ -158,6 +163,21 @@ export function AppChrome({
       {nav}
 
       <div className="border-divider flex flex-col gap-2 border-t p-4">
+        {/* 组织切换器:多组织用户在这里切换上下文(2026-08-11)。
+            动态 import server action —— 避免 client 组件静态依赖 "use server"
+            模块(server-only 泄漏会炸 nav-links 契约测试)。 */}
+        {organizations && currentOrganizationId && (
+          <OrganizationSwitcher
+            organizations={organizations}
+            currentOrganizationId={currentOrganizationId}
+            onSwitch={async (orgId) => {
+              const { switchOrganization } = await import(
+                "@/app/(app)/organization-actions"
+              );
+              await switchOrganization(orgId);
+            }}
+          />
+        )}
         {/* 组织名不再单独占一行 —— 单人使用时它就是个重复的产品名,
             只在真的没加入组织时提示一次(那是需要用户处理的状态) */}
         {organizationName === null && (

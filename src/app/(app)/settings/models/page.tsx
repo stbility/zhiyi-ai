@@ -7,7 +7,7 @@ import {
   type ProviderRow,
 } from "@/components/app/ProviderManager";
 import { isEncryptionAvailable } from "@/lib/crypto/secret-box";
-import { getMyOrganizations } from "@/lib/db/queries";
+import { getCurrentOrganization } from "@/lib/db/queries";
 import type { ProviderKind } from "@/lib/providers/registry";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -98,8 +98,7 @@ async function loadModels(
 }
 
 export default async function ModelSettingsPage() {
-  const organizations = await getMyOrganizations();
-  const org = organizations[0];
+  const org = await getCurrentOrganization();
 
   if (!org) {
     return (

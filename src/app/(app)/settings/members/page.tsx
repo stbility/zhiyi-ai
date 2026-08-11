@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { MembersManager, type MemberRow } from "@/components/settings/MembersManager";
-import { getMyOrganizations } from "@/lib/db/queries";
+import { getCurrentOrganization } from "@/lib/db/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "成员管理 · 智一 AI" };
@@ -76,8 +76,7 @@ export default async function MembersPage() {
     );
   }
 
-  const organizations = await getMyOrganizations();
-  const org = organizations[0];
+  const org = await getCurrentOrganization();
   if (!org) {
     return (
       <main className="mx-auto w-full max-w-4xl px-4 py-6 md:px-8 md:py-10">

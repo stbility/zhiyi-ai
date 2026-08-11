@@ -18,9 +18,11 @@
 
 **尚未交付,不得对外宣称**:工作流状态机与后台 Worker(续跑是缓解,单次窗口内仍受平台时限约束)、
 知识库与 RAG(解析/向量化/检索)、记忆管理页与记忆召回界面(沉淀闭环已通,界面未建)、
-**支付收款**(权益与配额链路已生产运行,但旧 Stripe 账号已于 2026-08-10 删除、Vercel 集成与
-env 已断开,新账号重建中 —— 收款处于如实 503 状态,重建完成配好 STRIPE_PRICE_* 后恢复)、
-成员管理、监控与备份回滚。
+监控与备份回滚。
+
+> 已交付更新(2026-08-11):五档定价支付全链路已生产运行(STRIPE_PRICE_* 6/8 已配,
+> 权益矩阵 0055 已应用 30 行种子);成员管理已上线(/settings/members);组织切换器已上线。
+> 待配:STRIPE_PRICE_ENT_* 2 个(Enterprise 自定义报价可选)、EMBEDDINGS_API_URL/KEY(向量召回)。
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
@@ -28,7 +30,7 @@ env 已断开,新账号重建中 —— 收款处于如实 503 状态,重建完�
 | 0.5 | 工程地基、设计系统 token 移植、配置状态注册表 | ✅ 已完成 |
 | 0.6 | 38 个设计系统组件移植为 TSX + Tailwind | ✅ 已完成 |
 | 1 | 数据库 Schema、迁移、RLS、Supabase 认证 | ✅ 已完成(越权隔离已实测) |
-| 2 | 组织、成员、角色权限、审计日志 | 🟡 组织与审计可用;成员管理未交付,页面固定取第一个组织 |
+| 2 | 组织、成员、角色权限、审计日志 | ✅ 已完成(数据库层 0001 + 品牌人格 /settings/persona + 成员管理 /settings/members + 组织切换器) |
 | 3 | Provider/Model Registry、AI Gateway、Adapter、模型服务设置页 | ✅ 已完成 |
 | 4 | Tool Registry、Agent、工作流状态机、Worker | 🟡 工具注册与智能体循环已完成;续跑(检查点摘要恢复,突破 300s)已实现;工作流已上线(0036:10 态状态机 + 定义/步骤编辑 + 同步执行,单次最多 5 步,运行历史留痕);后台 Worker 排队执行与人工闸门后续上线 |
 | 5 | 文件上传、解析、RAG、长期记忆 | 🟡 文件夹上传、跨轮保留、上下文预算已完成;记忆沉淀闭环已实现(0028,确认 → 落库 → Wiki 同步);长期记忆向量召回已上线(0040 pgvector + search_memories,需 EMBEDDINGS_API_URL/KEY 后生效);AI 记忆管理页已上线(/memory);知识库已上线(0038,解析 + 全文检索 + /knowledge 管理页);向量检索待 embedding 服务接入 |
@@ -36,7 +38,7 @@ env 已断开,新账号重建中 —— 收款处于如实 503 状态,重建完�
 | 7 | 全部页面接入真实数据 | 🟡 已接页面全部真实数据,无假数据;workflow/knowledge/memory/billing/skills(设置页)均已上线;reports 页面尚未创建 |
 | 8 | 安全、监控、部署、备份回滚 | 🟡 部署、密钥加密、限流已完成;评测集(20 内置用例 + 反馈沉淀用例)与 runner 已上线(/settings/eval,结果落 eval_runs);反馈飞轮消费端已通(改写反馈一键同步为评测用例);结构化日志、监控、备份回滚未做 |
 
-> 上次同步:2026-08-11,main@10a0873。本表由 scripts/sync-readme.ts 从 src/lib/phase.ts 生成;
+> 上次同步:2026-08-11,main@500640c。本表由 scripts/sync-readme.ts 从 src/lib/phase.ts 生成;
 > 改动 `src/lib/phase.ts` 后跑 `pnpm sync:readme`。线上以 https://zhiyi-ai.vercel.app/status 为准。
 
 ## 开始开发
