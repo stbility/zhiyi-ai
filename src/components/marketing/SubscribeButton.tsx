@@ -34,7 +34,7 @@ import { Button, type ButtonVariant } from "@/components/primitives/Button";
  */
 
 export interface SubscribeButtonProps {
-  readonly planId: "professional" | "enterprise";
+  readonly planId: "professional" | "professional_plus" | "team" | "enterprise";
   /** 月付(默认)/年付 */
   readonly interval?: "month" | "year" | undefined;
   readonly label: string;

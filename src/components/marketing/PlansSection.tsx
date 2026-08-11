@@ -54,7 +54,7 @@ function PlanCard({
     : `立即订阅 ${shownPrice ?? ""}${isYear ? "/年" : `/${plan.period ?? ""}`}`;
 
   // 免费档没有订阅动作,CTA 就是注册链接。
-  if (isFree || (plan.id !== "professional" && plan.id !== "enterprise")) {
+  if (isFree) {
     return (
       <PricingCard
         name={plan.name}

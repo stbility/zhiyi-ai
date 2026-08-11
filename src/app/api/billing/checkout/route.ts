@@ -19,7 +19,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 const checkoutSchema = z.object({
-  planId: z.enum(["professional", "enterprise"], "仅支持付费套餐"),
+  planId: z.enum(["free", "professional", "professional_plus", "team", "enterprise"], "仅支持 free/professional/professional_plus/team/enterprise"),
   interval: z.enum(["month", "year"], "仅支持月付/年付").optional(),
 });
 

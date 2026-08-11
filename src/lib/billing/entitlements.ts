@@ -16,13 +16,13 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
  */
 
 export interface EntitlementRow {
-  plan_id: "free" | "professional" | "enterprise";
+  plan_id: "free" | "professional" | "professional_plus" | "team" | "enterprise";
   feature: string;
   quota: number | null;
 }
 
 export interface Entitlements {
-  readonly planId: "free" | "professional" | "enterprise";
+  readonly planId: "free" | "professional" | "professional_plus" | "team" | "enterprise";
   readonly byFeature: ReadonlyMap<string, number | null>;
 }
 

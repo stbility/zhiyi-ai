@@ -60,6 +60,24 @@ export function getPriceIdForPlan(
       ]?.trim() ?? null
     );
   }
+  if (planId === "professional_plus") {
+    return (
+      process.env[
+        interval === "year"
+          ? "STRIPE_PRICE_PROFESSIONAL_PLUS_YEAR"
+          : "STRIPE_PRICE_PROFESSIONAL_PLUS"
+      ]?.trim() ?? null
+    );
+  }
+  if (planId === "team") {
+    return (
+      process.env[
+        interval === "year"
+          ? "STRIPE_PRICE_TEAM_YEAR"
+          : "STRIPE_PRICE_TEAM"
+      ]?.trim() ?? null
+    );
+  }
   if (planId === "enterprise") {
     return (
       process.env[
@@ -84,6 +102,10 @@ export function getPlanIdForPrice(priceId: string): string | null {
   const candidates: ReadonlyArray<readonly [string | undefined, string]> = [
     [process.env["STRIPE_PRICE_PROFESSIONAL"], "professional"],
     [process.env["STRIPE_PRICE_PROFESSIONAL_YEAR"], "professional"],
+    [process.env["STRIPE_PRICE_PROFESSIONAL_PLUS"], "professional_plus"],
+    [process.env["STRIPE_PRICE_PROFESSIONAL_PLUS_YEAR"], "professional_plus"],
+    [process.env["STRIPE_PRICE_TEAM"], "team"],
+    [process.env["STRIPE_PRICE_TEAM_YEAR"], "team"],
     [process.env["STRIPE_PRICE_ENTERPRISE"], "enterprise"],
     [process.env["STRIPE_PRICE_ENTERPRISE_YEAR"], "enterprise"],
   ];
