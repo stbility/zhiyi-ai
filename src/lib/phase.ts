@@ -52,7 +52,7 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
     label: "组织、成员、角色权限、审计日志",
     state: "partial",
     missing:
-      "组织/成员/角色/审计的数据库层完整(0001:organizations + memberships + audit_logs + has_org_role + RLS);品牌人格(P3)已上线(/settings/persona,organizations.persona 注入智能体系统提示);成员管理前端未交付,页面固定取第一个组织",
+      "数据库层完整(0001:organizations + memberships + audit_logs + has_org_role + RLS);品牌人格(P3)已上线(/settings/persona);成员管理已上线(/settings/members:列表+邀请+改角色+移除,owner/admin 权限由 RLS 保证);组织切换器(多组织选择)仍固定取第一个组织",
   },
   {
     id: "3",
