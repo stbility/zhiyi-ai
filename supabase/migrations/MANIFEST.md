@@ -84,6 +84,7 @@
 | `0049_clear_overlapping_policies.sql` | 待应用 | Performance「多项宽松政策」11 条告警根治:清除 0012 生产漂移残留的 8 条旧策略(有效权限不变,详见备注 G) |
 | `0050_index_hygiene.sql` | 待应用 | Performance 信息建议前 10 条:补 6 条真缺外键索引(feedback_id/created_by/token_id/user_id/message_id)+ 删 4 条零查询路径的防御性索引(详见备注 H) |
 | `0051_restore_fk_column_indexes.sql` | 待应用 | 恢复 0050 误删的 4 条 **FK 列**索引(0001 未索引外键 vs 0005 未使用索引冲突,FK 列必须保索引,详见备注 I) |
+| `0052_entitlements_five_tier_and_grants.sql` | 待应用 | 五档定价落地:entitlements/subscriptions 的 plan_id CHECK 3 档→5 档 + 五档默认权益 upsert + 计费 RPC EXECUTE 授权重建(详见备注 J) |
 
 | `0052_entitlements_five_tier_and_grants.sql` | 待应用 | 五档定价落地:entitlements/subscriptions 的 plan_id CHECK 3 档→5 档 + 五档默认权益 upsert + 计费 RPC EXECUTE 授权重建(详见备注 J) |
 | `0053_platform_models_refresh.sql` | 待应用 | 平台免费档模型池刷新:下线 EOL 的 deepseek-v4-flash/pro(410 Gone),保留 glm-5.2(用户点名长期免费),加入实测快的 minimax-m3 / gpt-oss-20b(详见备注 K) |

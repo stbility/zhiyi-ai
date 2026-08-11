@@ -20,12 +20,23 @@ export async function GET() {
   const env = getServerEnv();
   const services = getServiceAvailability();
 
+  // Price ID 环境变量名与 src/lib/billing/stripe.ts 的 getPriceIdForPlan 保持一致
+  // (2026-08-10 清理后命名:PRO/PRO_PLUS/TEAM/ENT × _MONTH/_YEAR)。
   const priceKeys = [
-    "STRIPE_PRICE_PROFESSIONAL",
-    "STRIPE_PRICE_PROFESSIONAL_YEAR",
-    "STRIPE_PRICE_ENTERPRISE",
-    "STRIPE_PRICE_ENTERPRISE_YEAR",
+    "STRIPE_PRICE_PRO_MONTH",
+    "STRIPE_PRICE_PRO_YEAR",
+    "STRIPE_PRICE_PRO_PLUS_MONTH",
+    "STRIPE_PRICE_PRO_PLUS_YEAR",
+    "STRIPE_PRICE_TEAM_MONTH",
+    "STRIPE_PRICE_TEAM_YEAR",
+    "STRIPE_PRICE_ENT_MONTH",
+    "STRIPE_PRICE_ENT_YEAR",
   ] as const;
+
+  // 直接读 process.env —— STRIPE_PRICE_* 不在 serverEnvSchema(zod 白名单)里,
+  // getPriceIdForPlan 也是直接读 process.env,这里保持一致。
+  const envOf = (k: string): string | undefined =>
+    process.env[k]?.trim() || undefined;
 
   const payload = {
     ok: true,
@@ -41,7 +52,7 @@ export async function GET() {
       stripe_secret: Boolean(env.STRIPE_SECRET_KEY),
       stripe_webhook: Boolean(env.STRIPE_WEBHOOK_SECRET),
       stripe_prices_configured: priceKeys.filter(
-        (k) => Boolean(env[k]),
+        (k) => Boolean(envOf(k)),
       ).length,
       stripe_prices_total: priceKeys.length,
       embeddings: Boolean(
