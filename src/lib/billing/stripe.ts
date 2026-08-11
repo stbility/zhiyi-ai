@@ -40,34 +40,25 @@ export function getStripe(): Stripe | null {
 /**
  * 套餐对应的 Stripe Price ID,来自环境变量。
  *
- * 价格实体以 Stripe 为准(plans.ts 只放展示文案),Price 上必须带
- * metadata.plan_id ∈ {professional, enterprise} —— webhook 据此判定
- * 套餐,绝不信任客户端传来的 plan 字段。
- *
- * interval:month(默认)读 STRIPE_PRICE_<PLAN>,year 读 STRIPE_PRICE_<PLAN>_YEAR。
+ * interval:month 读 STRIPE_PRICE_<KEY>_MONTH,year 读 STRIPE_PRICE_<KEY>_YEAR。
  * 未配置返回 null,由调用方如实降级(503 + 提示),绝不伪造成功路径。
+ *
+ * 新 5 档命名(对齐 plans.ts):
+ *   pro/pro_plus/team → STRIPE_PRICE_PRO_MONTH / STRIPE_PRICE_PRO_PLUS_MONTH / STRIPE_PRICE_TEAM_MONTH
+ *   enterprise 无固定 Price ID(Payment Link 为主)
  */
 export function getPriceIdForPlan(
   planId: string,
   interval: "month" | "year" = "month",
 ): string | null {
-  if (planId === "professional") {
-    return (
-      process.env[
-        interval === "year"
-          ? "STRIPE_PRICE_PROFESSIONAL_YEAR"
-          : "STRIPE_PRICE_PROFESSIONAL"
-      ]?.trim() ?? null
-    );
-  }
-  if (planId === "enterprise") {
-    return (
-      process.env[
-        interval === "year"
-          ? "STRIPE_PRICE_ENTERPRISE_YEAR"
-          : "STRIPE_PRICE_ENTERPRISE"
-      ]?.trim() ?? null
-    );
+  const suffix = interval === "year" ? "_YEAR" : "_MONTH";
+  const envKey: string | undefined = {
+    professional: "STRIPE_PRICE_PRO_MONTH",
+    professional_plus: "STRIPE_PRICE_PRO_PLUS_MONTH",
+    team: "STRIPE_PRICE_TEAM_MONTH",
+  }[planId];
+  if (envKey) {
+    return process.env[envKey.replace("_MONTH", suffix)]?.trim() ?? null;
   }
   return null;
 }
@@ -75,17 +66,17 @@ export function getPriceIdForPlan(
 /**
  * Price ID → plan_id 反向映射(webhook 用)。
  *
- * 生产实测(2026-08-08):4 条 HKD 价格(月/年 × Pro/Ent)的 metadata 全为空,
- * webhook 只认 price.metadata.plan_id 会把所有订阅静默降级成 free ——
- * 用户付了钱权益不变。这里用环境变量里的 Price ID 兜底映射,
- * metadata 缺失时也能判对套餐;两处都配齐时以 metadata 为准。
+ * 新 5 档:professional/professional_plus/team → 各自 month/year 共 6 个 Price ID;
+ * enterprise 无固定 Price(Payment Link 为主,不会走此路径)。
  */
 export function getPlanIdForPrice(priceId: string): string | null {
   const candidates: ReadonlyArray<readonly [string | undefined, string]> = [
-    [process.env["STRIPE_PRICE_PROFESSIONAL"], "professional"],
-    [process.env["STRIPE_PRICE_PROFESSIONAL_YEAR"], "professional"],
-    [process.env["STRIPE_PRICE_ENTERPRISE"], "enterprise"],
-    [process.env["STRIPE_PRICE_ENTERPRISE_YEAR"], "enterprise"],
+    [process.env["STRIPE_PRICE_PRO_MONTH"], "professional"],
+    [process.env["STRIPE_PRICE_PRO_YEAR"], "professional"],
+    [process.env["STRIPE_PRICE_PRO_PLUS_MONTH"], "professional_plus"],
+    [process.env["STRIPE_PRICE_PRO_PLUS_YEAR"], "professional_plus"],
+    [process.env["STRIPE_PRICE_TEAM_MONTH"], "team"],
+    [process.env["STRIPE_PRICE_TEAM_YEAR"], "team"],
   ];
   for (const [id, plan] of candidates) {
     if (id && id === priceId) return plan;

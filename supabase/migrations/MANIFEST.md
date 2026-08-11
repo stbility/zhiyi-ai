@@ -222,3 +222,9 @@ CI 的真实重放已经覆盖它。0044 已把 0005 连同基线 0001-0027 一�
 0044 以 4 位前缀行把基线补记入账本(幂等),配套
 `scripts/prod-migrate.sh` 的清理逻辑改为只删「无对应迁移文件」的行,
 避免每次交付把补记冲掉。
+### 备注 D：0052 五档权益扩展
+
+plans.ts 已升级为 5 档方案(Free/Professional/Professional Plus/Team/Enterprise),
+entitlements 表的 plan_id CHECK 约束扩展到 5 档,
+补全 professional_plus 和 team 的权益种子数据,
+ent 配额修正:workflows=null→10000, monthly_agent_turns=5000→null(真正不限)。
