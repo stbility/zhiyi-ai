@@ -42,6 +42,7 @@ export const APP_NAV: readonly NavEntry[] = [
   { key: "workflow", label: "工作流", icon: "workflow", href: "/workflow", available: true },
   { key: "knowledge", label: "知识库", icon: "knowledge", href: "/knowledge", available: true },
   { key: "memory", label: "AI 记忆", icon: "memory", href: "/memory", available: true },
+  { key: "reports", label: "报表", icon: "reports", href: "/reports", available: true },
   { key: "billing", label: "订阅", icon: "billing", href: "/billing", available: true },
   { key: "integrations", label: "集成", icon: "link", href: "/settings/integrations", available: true },
   { key: "persona", label: "品牌人格", icon: "edit", href: "/settings/persona", available: true },
