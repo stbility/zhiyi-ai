@@ -27,7 +27,7 @@
 
 **已在真实 Stripe(test 账本)上验证过的事(2026-08-09)**:
 
-- 走通了一笔**真实测试卡付款**:HKD 4900 / 月,发票 `paid`,订阅 `active`。
+- 走通了一笔**真实测试卡付款**,发票 `paid`,订阅 `active`。(旧版价格记录,已归档)
 - **webhook 读取的 9 项字段假设,对着真实订阅对象逐条核对,9/9 通过**。
   其中两条是 v22 破坏性变更的要害,现在有真实证据:
   `current_period_end` **在** `items.data[0]` 上,订阅顶层**没有**这个字段。
@@ -147,7 +147,7 @@
 1. `curl -X POST -d '{}' /api/billing/webhook` → 400(缺签名)= secret 已配
 2. `curl -X POST -d '{}' /api/billing/checkout` → 401(未登录)= 路由活着且认证在岗
 3. `stripe webhook_endpoints list --live` → 端点订阅含 billing 事件
-4. `stripe prices list --live` → 4 条 HKD 价格在(49/490/229/2290)
+4. `stripe prices list --live` → 4 条 HKD 价格在(128/198/388 + Enterprise 自定义)
 5. 登录态点订阅 → 跳 Stripe Checkout Session → 付款 → 刷新 /billing 看套餐
 6. 自动化交付日志「权益表种子数据」≥ 6 行
 7. 免费档用付费能力 → 402 + 升级提示(配额拦截在岗)

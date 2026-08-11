@@ -32,7 +32,17 @@ SYNC=0
 [[ "${1:-}" == "--sync" ]] && SYNC=1
 
 : "${DATABASE_URL:?需要 DATABASE_URL}"
+
+# === Advisor 白名单锚点 ===
+# Supabase Advisor 报出的未使用索引告警，部分是 false positive（FK 维护索引，
+# idx_scan 不统计 FK 内部使用）。已判定的 false positive 归档于:
+#   supabase/advisor-whitelist.json
+# 当前归档: messages_organization_idx / conversation_attachments_organization_idx /
+#           ai_providers_created_by_idx / audit_logs_actor_idx / organizations_created_by_idx
+# Advisory 检查暂不纳入此 CI（Supabase Dashboard 管理），白名单为人类参考
+# + 未来 Supabase Management API 自动化检查的接口。
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ADVISOR_WHITELIST="$ROOT/supabase/advisor-whitelist.json"
 
 # ON_ERROR_STOP=1 是关键:不带它,psql 会跳过报错的语句继续往下跑,
 # 最后以 0 退出 —— 一条根本没建成的表会被当成建成了。

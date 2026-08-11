@@ -54,7 +54,14 @@ function PlanCard({
     : `立即订阅 ${shownPrice ?? ""}${isYear ? "/年" : `/${plan.period ?? ""}`}`;
 
   // 免费档没有订阅动作,CTA 就是注册链接。
-  if (isFree || (plan.id !== "professional" && plan.id !== "enterprise")) {
+  // 付费档(非 enterprise):走服务端 Checkout。Payment Link 只作为 checkout 不可用时的备用。
+  if (isFree || plan.id === "enterprise") {
+    const enterpriseHref = isFree
+      ? "/register"
+      : withPrefilledEmail(
+          isYear ? plan.paymentLinkYear : plan.paymentLinkMonth,
+          email,
+        );
     return (
       <PricingCard
         name={plan.name}
@@ -63,17 +70,19 @@ function PlanCard({
         features={plan.features}
         highlighted={plan.highlighted}
         ctaLabel={ctaLabel}
-        href="/register"
+        href={enterpriseHref}
       />
     );
   }
 
-  // 付费档:走服务端 Checkout。Payment Link 只作为 checkout 不可用时的备用,
-  // 依旧拼上 prefilled_email —— 走到那一步时它是唯一还能归户的线索。
+  // 付费档(专业版/进阶版/团队版):走服务端 Checkout。
   const fallbackUrl = withPrefilledEmail(
-    isYear ? plan.annualStripeUrl : plan.stripeUrl,
+    isYear ? plan.paymentLinkYear : plan.paymentLinkMonth,
     email,
   );
+
+  // Plan id is narrowed by the above conditionals: free|enterprise handled, rest fall through.
+  const paidPlanId = plan.id as "professional" | "professional_plus" | "team";
 
   return (
     <PricingCard
@@ -84,7 +93,7 @@ function PlanCard({
       highlighted={plan.highlighted}
       cta={
         <SubscribeButton
-          planId={plan.id}
+          planId={paidPlanId}
           interval={interval}
           label={ctaLabel}
           variant={plan.highlighted ? "primary" : "secondary"}

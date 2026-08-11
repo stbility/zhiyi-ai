@@ -42,7 +42,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
-const PLAN_WHITELIST = new Set(["professional", "enterprise"]);
+const PLAN_WHITELIST = new Set(["professional", "professional_plus", "team", "enterprise"]);
 
 /**
  * 拿订阅的**权威状态** —— 以 Stripe API 当前返回为准,不信事件载荷。

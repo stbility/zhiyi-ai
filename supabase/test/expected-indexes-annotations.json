@@ -1,0 +1,11 @@
+{
+  "version": "2026-08-10",
+  "note": "本文件记录 expected-indexes.txt 中索引名的附加上下文，不参与契约测试对比。格式: index_name -> 标注",
+  "annotations": {
+    "messages_organization_idx": "FK维护索引，ON DELETE CASCADE定位。idx_scan不统计FK内部使用，删除导致级联删除退化为全表扫。0032迁移已判定false positive。",
+    "conversation_attachments_organization_idx": "FK维护索引，ON DELETE CASCADE定位。idx_scan不统计FK内部使用。0032迁移已判定false positive。",
+    "ai_providers_created_by_idx": "FK维护索引，ON DELETE RESTRICT。idx_scan不统计FK内部使用。0032迁移已判定false positive。",
+    "audit_logs_actor_idx": "FK维护索引，ON DELETE SET NULL。idx_scan不统计FK内部使用。0032迁移已判定false positive。",
+    "organizations_created_by_idx": "FK维护索引，ON DELETE RESTRICT。idx_scan不统计FK内部使用。0032迁移已判定false positive。"
+  }
+}

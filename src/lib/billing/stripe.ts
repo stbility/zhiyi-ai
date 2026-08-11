@@ -51,25 +51,9 @@ export function getPriceIdForPlan(
   planId: string,
   interval: "month" | "year" = "month",
 ): string | null {
-  if (planId === "professional") {
-    return (
-      process.env[
-        interval === "year"
-          ? "STRIPE_PRICE_PROFESSIONAL_YEAR"
-          : "STRIPE_PRICE_PROFESSIONAL"
-      ]?.trim() ?? null
-    );
-  }
-  if (planId === "enterprise") {
-    return (
-      process.env[
-        interval === "year"
-          ? "STRIPE_PRICE_ENTERPRISE_YEAR"
-          : "STRIPE_PRICE_ENTERPRISE"
-      ]?.trim() ?? null
-    );
-  }
-  return null;
+  const year = interval === "year" ? "_YEAR" : "_MONTH";
+  const key = `STRIPE_PRICE_${planId.toUpperCase()}${year}`.replace("PROFESSIONAL_PLUS", "PRO_PLUS").replace("PROFESSIONAL", "PRO");
+  return process.env[key]?.trim() ?? null;
 }
 
 /**
@@ -82,10 +66,14 @@ export function getPriceIdForPlan(
  */
 export function getPlanIdForPrice(priceId: string): string | null {
   const candidates: ReadonlyArray<readonly [string | undefined, string]> = [
-    [process.env["STRIPE_PRICE_PROFESSIONAL"], "professional"],
-    [process.env["STRIPE_PRICE_PROFESSIONAL_YEAR"], "professional"],
-    [process.env["STRIPE_PRICE_ENTERPRISE"], "enterprise"],
-    [process.env["STRIPE_PRICE_ENTERPRISE_YEAR"], "enterprise"],
+    [process.env["STRIPE_PRICE_PRO_MONTH"], "professional"],
+    [process.env["STRIPE_PRICE_PRO_YEAR"], "professional"],
+    [process.env["STRIPE_PRICE_PRO_PLUS_MONTH"], "professional_plus"],
+    [process.env["STRIPE_PRICE_PRO_PLUS_YEAR"], "professional_plus"],
+    [process.env["STRIPE_PRICE_TEAM_MONTH"], "team"],
+    [process.env["STRIPE_PRICE_TEAM_YEAR"], "team"],
+    [process.env["STRIPE_PRICE_ENT_MONTH"], "enterprise"],
+    [process.env["STRIPE_PRICE_ENT_YEAR"], "enterprise"],
   ];
   for (const [id, plan] of candidates) {
     if (id && id === priceId) return plan;
@@ -99,12 +87,14 @@ export function getPlanIdForPrice(priceId: string): string | null {
  * 2026-08-10 清理:移除「目录自解析」(price-catalog)——不配 id 也能跑
  * 会把 STRIPE_PRICE_* 缺失伪装成可用,是错误做法;官方做法是显式配置,
  * 未配则返回 null,调用方如实 503(降级 Payment Link)。
+ *
+ * 2026-08-11:同步化 —— 内部只读环境变量,不需要 async/await。
  */
-export async function resolvePriceIdForPlan(
+export function resolvePriceIdForPlan(
   _stripe: Stripe,
   planId: string,
   interval: "month" | "year",
-): Promise<string | null> {
+): string | null {
   return getPriceIdForPlan(planId, interval);
 }
 

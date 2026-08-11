@@ -1,40 +1,53 @@
--- 0037 权益配额对齐:Pro 500 / Ent 5000(月度 Agent 额度)
+-- 0037 权益配额对齐:五档套餐 → 精确月度 Agent 额度
 --
--- 背景:落地页定价区(plans.ts)已按 2026-08-08 定价决策更新为
---   Professional「每月 500 次 Agent 额度」、Enterprise「每月 5,000 次」,
---   但 0034 里的月度配额仍是 professional=2000 / enterprise=null(不限)。
---   展示层与判断层分叉:页面宣传 500/5000,数据库放行 2000/不限 ——
---   交付大于承诺,商业模型受损,且违反「展示错了用户看得见,判断错了是越权」原则。
+-- 背景:落地页定价区(plans.ts)已按 2026-08-11 五档定价决策更新:
+--   Free:          monthly_agent_turns = 100
+--   Professional:  monthly_agent_turns = 2000
+--   Professional+: monthly_agent_turns = 4000
+--   Team:          monthly_agent_turns = 10000
+--   Enterprise:    monthly_agent_turns = null(不限)
 --
--- 本迁移把判断层对齐到页面承诺:
---   professional.monthly_agent_turns: 2000 → 500
---   enterprise.monthly_agent_turns:  null(不限) → 5000
+-- 【2026-08-11 修正】本迁移原为 0037_entitlements_quota_alignment(基于
+-- 2026-08-08 四档定价 pro=500/ent=5000),随五档定价更新为:
+--   · 约束放宽前置:0034 生产版 plan_id CHECK 只含 3 档(free/professional/
+--     enterprise),INSERT professional_plus/team 会违反约束 —— 必须先放宽。
+--   · 配额收敛到新页面承诺值(pro=2000,pro_plus=4000,team=10000,ent=不限)。
 --
--- 为什么用 UPDATE 而不是改 0034 的 INSERT:
---   0034 已进入生产账本,直接改历史迁移 = 生产与仓库漂移,
---   且 MANIFEST 的「备注 B:语句成功不等于结果正确」教训在前。
---   新迁移增量修正,CI 真实重放可验证最终状态。
+-- 【幂等策略】
+--   UPDATE ... WHERE quota = 旧值: 只命中尚未对齐的行,已对齐的不再变化
+--   INSERT ... ON CONFLICT: 对缺档增量插入,已存在的行 do nothing
+--   DO 块存在性检查放宽约束,重放安全。
 --
--- 【安全模型】
---   纯 UPDATE 数据行,不动表结构、策略、函数、授权 —— 风险最低一档。
---   配额收紧:pro 从 2000 → 500、ent 从不限 → 5000,均收敛到页面承诺值。
---   已在使用的用户当月额度不会回滚(usage_metering 是累计计量,
---   下月自然按新配额生效;若需当月生效,另行评估)。
---
--- 【幂等】
---   UPDATE ... WHERE quota = 旧值 只命中尚未对齐的行 ——
---   重放安全:已对齐的行不再变化,CI 迁移重放可反复执行。
+-- 【安全模型】数据行变更 + 约束放宽,不动策略/函数/授权。
 
--- Pro:2000 → 500
-update public.entitlements
-   set quota = 500
- where plan_id = 'professional'
-   and feature = 'monthly_agent_turns'
-   and quota = 2000;
+-- 0. 放宽 plan_id CHECK(3 档 → 5 档),0034 生产版只含 3 档
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.entitlements'::regclass
+      and conname = 'entitlements_plan_id_check'
+      and pg_get_constraintdef(oid) not like '%professional_plus%'
+  ) then
+    alter table public.entitlements drop constraint entitlements_plan_id_check;
+    alter table public.entitlements add constraint entitlements_plan_id_check
+      check (plan_id in ('free','professional','professional_plus','team','enterprise'));
+  end if;
+end
+$$;
 
--- Ent:不限 → 5000
-update public.entitlements
-   set quota = 5000
- where plan_id = 'enterprise'
-   and feature = 'monthly_agent_turns'
-   and quota is null;
+-- 1. professional: 2000 已是新页面承诺值,无需变更(旧版曾改为 500,已回滚)
+
+-- 2. enterprise: null(不限)已是新页面承诺值,无需变更(旧版曾改为 5000,已回滚)
+
+-- 3. professional_plus: 缺档,新增 4000
+insert into public.entitlements (plan_id, feature, quota) values
+  ('professional_plus', 'workflows',           10),
+  ('professional_plus', 'monthly_agent_turns',  4000)
+on conflict (plan_id, feature) do nothing;
+
+-- 4. team: 缺档,新增 10000
+insert into public.entitlements (plan_id, feature, quota) values
+  ('team', 'workflows',           null),
+  ('team', 'monthly_agent_turns', 10000)
+on conflict (plan_id, feature) do nothing;
