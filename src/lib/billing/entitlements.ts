@@ -15,14 +15,16 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
  * 无订阅 = free(0034 函数兜底)。漏配订阅绝不允许等于漏配权益。
  */
 
+export type PlanId = "free" | "professional" | "professional_plus" | "team" | "enterprise";
+
 export interface EntitlementRow {
-  plan_id: "free" | "professional" | "enterprise";
+  plan_id: PlanId;
   feature: string;
   quota: number | null;
 }
 
 export interface Entitlements {
-  readonly planId: "free" | "professional" | "enterprise";
+  readonly planId: PlanId;
   readonly byFeature: ReadonlyMap<string, number | null>;
 }
 
