@@ -73,7 +73,6 @@ function PlanCard({
         highlighted={plan.highlighted}
         ctaLabel={ctaLabel}
         href={enterpriseHref}
-        showPrice={false}
       />
     );
   }
@@ -104,7 +103,6 @@ function PlanCard({
           fallbackUrl={fallbackUrl}
         />
       }
-      showPrice={false}
     />
   );
 }
