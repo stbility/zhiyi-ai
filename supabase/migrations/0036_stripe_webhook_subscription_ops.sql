@@ -11,8 +11,8 @@ create or replace function public.upsert_stripe_subscription(
   p_customer_email          text,
   p_stripe_customer_id     text default null,
   p_stripe_subscription_id text default null,
-  p_status                 text,
-  p_plan_id                text,
+  p_status                 text default null,
+  p_plan_id                text default null,
   p_current_period_end     timestamptz default null,
   p_cancel_at_period_end   boolean    default false
 )
