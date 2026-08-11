@@ -84,6 +84,7 @@
 | `0049_clear_overlapping_policies.sql` | 待应用 | Performance「多项宽松政策」11 条告警根治:清除 0012 生产漂移残留的 8 条旧策略(有效权限不变,详见备注 G) |
 | `0050_index_hygiene.sql` | 待应用 | Performance 信息建议前 10 条:补 6 条真缺外键索引(feedback_id/created_by/token_id/user_id/message_id)+ 删 4 条零查询路径的防御性索引(详见备注 H) |
 | `0051_restore_fk_column_indexes.sql` | 待应用 | 恢复 0050 误删的 4 条 **FK 列**索引(0001 未索引外键 vs 0005 未使用索引冲突,FK 列必须保索引,详见备注 I) |
+| `0052_entitlements_five_tier_and_grants.sql` | 待应用 | 五档定价落地:entitlements/subscriptions 的 plan_id CHECK 3 档→5 档 + 五档默认权益 upsert + 计费 RPC EXECUTE 授权重建(详见备注 J) |
 
 ### 备注 D：Security Advisor 修复(2026-08-10)
 
@@ -176,6 +177,33 @@ organizations)。生产实测:0050 交付后 Advisor 立刻新增 4 条「未索
 冲突,0001 是硬规则(join/cascade/RI 性能),0005 只应作用于非 FK 列索引。
 0051 恢复 4 条。**规则:删索引前先查该列是否 FK(表定义 references 子句 /
 pg_constraint);FK 列索引永不删。**
+
+### 备注 J：五档定价落地(2026-08-11)
+
+0034/0033 生产版 plan_id CHECK 只含 3 档(free/professional/enterprise),
+0037 的 INSERT professional_plus/team 会违反约束 → 0036-0051 全部卡在
+「待应用」,五档定价永远无法落地。0052 做三件事:
+
+- **A. 约束放宽**:entitlements 与 subscriptions 的 plan_id CHECK 3 档→5 档
+  (DO 块存在性检查,幂等;0037 已改同法放宽 entitlements,0052 兜底两者)。
+- **B. 五档默认权益 upsert**(on conflict do update,保留已有行):
+  Free(1/100) / Professional(5/2000) / Professional+(10/4000) /
+  Team(null/10000) / Enterprise(null/null)。与新版落地页 plans.ts 完全一致。
+- **C. 计费 RPC 授权重建**:get_entitlements / bump_usage / get_monthly_usage
+  的 EXECUTE revoke+grant(0046 改 security invoker 后的完整性兜底,幂等)。
+
+配套(2026-08-11):
+- 0036 编号撞车修复:删除 0036_stripe_webhook_subscription_ops.sql
+  (upsert_stripe_subscription 全仓库零调用方,死代码;字母序排在 workflows
+  前导致 prod-migrate 只应用它、0036_workflows 永不应用)。
+- 0037 配额对齐修正:按 2026-08-11 五档定价重写(pro=2000/ent=不限,
+  非旧四档 pro=500/ent=5000);INSERT 前先放宽 entitlements 约束。
+- stripe.ts resolvePriceIdForPlan 同步化;turn-quota.ts 文案对齐新定价。
+
+⚠️ 生产现状核对(2026-08-11 探测):0033/0034/0035 已应用,0036-0051 待应用;
+Vercel env 的 STRIPE_PRICE_* 4 个全未配置(status.json
+stripe_prices_configured=0)→ checkout 主路径 503 → 降级 Payment Link。
+
 
 ### 备注 A：0005 在账本里没有记录(已由 0044 补记)
 
