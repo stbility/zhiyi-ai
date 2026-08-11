@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
   const { planId, interval } = parsed.data;
   const intervalOrMonth = interval ?? "month";
 
-  const priceId = await resolvePriceIdForPlan(stripe, planId, intervalOrMonth);
+  const priceId = resolvePriceIdForPlan(stripe, planId, intervalOrMonth);
   if (!priceId) {
     // 自诊断:env 未配价格 ID 时,把密钥类型前缀写进提示 ——
     // 生产实测教训:sk_test_(测试)密钥查的是空测试目录,会报同样的错,

@@ -87,12 +87,14 @@ export function getPlanIdForPrice(priceId: string): string | null {
  * 2026-08-10 清理:移除「目录自解析」(price-catalog)——不配 id 也能跑
  * 会把 STRIPE_PRICE_* 缺失伪装成可用,是错误做法;官方做法是显式配置,
  * 未配则返回 null,调用方如实 503(降级 Payment Link)。
+ *
+ * 2026-08-11:同步化 —— 内部只读环境变量,不需要 async/await。
  */
-export async function resolvePriceIdForPlan(
+export function resolvePriceIdForPlan(
   _stripe: Stripe,
   planId: string,
   interval: "month" | "year",
-): Promise<string | null> {
+): string | null {
   return getPriceIdForPlan(planId, interval);
 }
 
