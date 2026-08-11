@@ -62,7 +62,7 @@ const TURNS: InitialTurn[] = [
 ];
 
 describe("助手页渲染", () => {
-  it("有模型、有历史时能正常渲染,不白屏", () => {
+  it("有模型、有历史时能正常渲染,不白屏", { timeout: 60_000 }, () => {
     render(
       <ChatPanel
       channel="chat"

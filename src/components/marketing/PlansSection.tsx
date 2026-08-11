@@ -67,13 +67,12 @@ function PlanCard({
     return (
       <PricingCard
         name={plan.name}
-        price={shownPrice ?? "价格待定"}
+        price={shownPrice ?? ""}
         period={shownPeriod ?? ""}
         features={plan.features}
         highlighted={plan.highlighted}
         ctaLabel={ctaLabel}
         href={enterpriseHref}
-        showPrice={false}
       />
     );
   }
@@ -104,7 +103,6 @@ function PlanCard({
           fallbackUrl={fallbackUrl}
         />
       }
-      showPrice={false}
     />
   );
 }

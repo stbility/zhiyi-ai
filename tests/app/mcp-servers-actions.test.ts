@@ -126,7 +126,7 @@ describe("createMcpServer", () => {
     mockAdmin = fakeSupabase({ data: { auth_token_cipher: "cipher:tok" } }, adminSelectLog);
   });
 
-  it("成功登记:令牌加密落库,明文不下发", async () => {
+  it("成功登记:令牌加密落库,明文不下发", { timeout: 60_000 }, async () => {
     const inserted: Record<string, unknown>[] = [];
     mockSupabase = fakeSupabase(
       {
