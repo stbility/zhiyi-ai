@@ -45,6 +45,7 @@ export const APP_NAV: readonly NavEntry[] = [
   { key: "reports", label: "报表", icon: "reports", href: "/reports", available: true },
   { key: "billing", label: "订阅", icon: "billing", href: "/billing", available: true },
   { key: "integrations", label: "集成", icon: "link", href: "/settings/integrations", available: true },
+  { key: "members", label: "成员", icon: "today", href: "/settings/members", available: true },
   { key: "persona", label: "品牌人格", icon: "edit", href: "/settings/persona", available: true },
   { key: "settings", label: "模型服务", icon: "settings", href: "/settings/models", available: true },
 ];
