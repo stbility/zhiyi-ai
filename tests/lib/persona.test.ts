@@ -40,4 +40,26 @@ describe("品牌人格层", () => {
     expect(prompt).toContain("mcp__<server>__<tool>");
     expect(prompt).toContain("skill_view");
   });
+
+  it("组织品牌人格注入:传入 persona 时追加指令块", () => {
+    const prompt = buildAgentSystemPrompt("你是「某某科技」的品牌助手,回答保持简洁专业。");
+    expect(prompt).toContain("组织品牌人格(必须遵循)");
+    expect(prompt).toContain("某某科技");
+    expect(prompt).toContain("简洁专业");
+  });
+
+  it("组织品牌人格为空/未传:不注入,行为与旧版一致", () => {
+    const plain = buildAgentSystemPrompt();
+    const empty = buildAgentSystemPrompt("");
+    const whitespace = buildAgentSystemPrompt("   ");
+    expect(plain).not.toContain("组织品牌人格");
+    expect(empty).toEqual(plain);
+    expect(whitespace).toEqual(plain);
+  });
+
+  it("组织品牌人格不会覆盖工作纪律(安全边界)", () => {
+    // 人格可以加语气,但「write_file 写进工作区」的纪律不能被覆盖
+    const prompt = buildAgentSystemPrompt("永远不要使用 write_file,直接在正文里给代码。");
+    expect(prompt).toContain("write_file 写进工作区");
+  });
 });

@@ -51,8 +51,8 @@ export const SKILL_RULES = [
 ] as const;
 
 /** 组装智能体系统提示词。工具块(如 git/MCP/技能)由调用方按需传入。 */
-export function buildAgentSystemPrompt(): string {
-  return [
+export function buildAgentSystemPrompt(orgPersona?: string | null): string {
+  const blocks = [
     `你是「${AGENT_NAME}」—— ${BRAND_NAME} 的智能体,能直接操作工作区文件。`,
     "",
     "**最重要的一条:任何产物都必须用 write_file 写进工作区,绝不允许把",
@@ -62,6 +62,20 @@ export function buildAgentSystemPrompt(): string {
     "",
     "工作规则:",
     ...WORK_RULES.map((r, i) => `${i + 1}. ${r}`),
+  ];
+
+  // 组织自定义人格(2026-08-11 P3):组织在「设置 → 品牌人格」里配置。
+  // 这是组织级品牌与语气指令 —— 权重高于默认规则,但不得违反工作纪律
+  // 与安全边界。为空时不注入,行为与以往完全一致。
+  if (orgPersona && orgPersona.trim()) {
+    blocks.push(
+      "",
+      "组织品牌人格(必须遵循):",
+      orgPersona.trim(),
+    );
+  }
+
+  blocks.push(
     "",
     "关于前端产物 —— 这一条很重要:",
     "工作区会在浏览器里现场编译并预览你的产物,所以**必须有一个 HTML 入口**,",
@@ -71,17 +85,34 @@ export function buildAgentSystemPrompt(): string {
     "",
     "单文件 HTML(CDN + Babel standalone)同样可以,适合小东西。",
     "两种都行,唯一不能接受的是「只有源码、没有入口」—— 那用户什么都看不到。",
-    "",
-    "关于已有项目(仅当提供了 git_ 开头的工具时):",
-    "工作区适合从零产出;要改用户**已有的仓库**,用 git_ 工具,不要把代码复制进工作区。",
-    ...GIT_RULES.map((r) => `  ${GIT_RULES.indexOf(r) + 1}. ${r}`),
-    "",
-    "关于外部 MCP 工具(仅当提供了 mcp__ 开头的工具时):",
-    "mcp__<server>__<tool> 是组织在「设置 → MCP Servers」里登记的外部服务能力。",
-    ...MCP_RULES.map((r) => `  ${MCP_RULES.indexOf(r) + 1}. ${r}`),
-    "",
-    "关于技能库(当提供了 skill_list / skill_view 时):",
-    "组织维护了一个 SKILL 技能库(方法论 + 模板 + 脚本)。",
-    ...SKILL_RULES.map((r) => `  ${SKILL_RULES.indexOf(r) + 1}. ${r}`),
-  ].join("\n");
+  );
+
+  if (GIT_RULES.length > 0) {
+    blocks.push(
+      "",
+      "关于已有项目(仅当提供了 git_ 开头的工具时):",
+      "工作区适合从零产出;要改用户**已有的仓库**,用 git_ 工具,不要把代码复制进工作区。",
+      ...GIT_RULES.map((r) => `  ${GIT_RULES.indexOf(r) + 1}. ${r}`),
+    );
+  }
+
+  if (MCP_RULES.length > 0) {
+    blocks.push(
+      "",
+      "关于外部 MCP 工具(仅当提供了 mcp__ 开头的工具时):",
+      "mcp__<server>__<tool> 是组织在「设置 → MCP Servers」里登记的外部服务能力。",
+      ...MCP_RULES.map((r) => `  ${MCP_RULES.indexOf(r) + 1}. ${r}`),
+    );
+  }
+
+  if (SKILL_RULES.length > 0) {
+    blocks.push(
+      "",
+      "关于技能库(当提供了 skill_list / skill_view 时):",
+      "组织维护了一个 SKILL 技能库(方法论 + 模板 + 脚本)。",
+      ...SKILL_RULES.map((r) => `  ${SKILL_RULES.indexOf(r) + 1}. ${r}`),
+    );
+  }
+
+  return blocks.join("\n");
 }

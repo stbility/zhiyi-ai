@@ -20,8 +20,8 @@ const TOOLS_REJECTED =
 import { logger } from "@/lib/log";
 import type { ProviderCredentials } from "@/lib/ai/gateway";
 import { GIT_TOOLS, executeGitTool, type GitToolContext } from "@/lib/ai/git-tools";
+import { buildAgentSystemPrompt } from "@/lib/ai/persona";
 import {
-  AGENT_SYSTEM_PROMPT,
   FILE_TOOLS,
   executeExternalTool,
   executeTool,
@@ -208,6 +208,7 @@ export async function runAgent({
   signal,
   limits,
   reporter,
+  personaOverride,
 }: {
   /**
    * 用哪个「服务商 + 模型」跑。**就这一个,不换。**
@@ -242,6 +243,8 @@ export async function runAgent({
   signal: AbortSignal;
   limits: AgentLimits;
   reporter?: AgentReporter;
+  /** 组织自定义品牌人格(organizations.persona)。为空用默认人格。 */
+  personaOverride?: string | null | undefined;
 }): Promise<AgentOutcome> {
   const startedAt = Date.now();
 
@@ -327,7 +330,10 @@ export async function runAgent({
   // 对话消息数组会在循环里不断追加(助手的工具请求 + 工具结果),
   // 所以用宽松类型 —— tool 角色不在 ChatMessage 的三种之内。
   const messages: Record<string, unknown>[] = [
-    { role: "system", content: AGENT_SYSTEM_PROMPT },
+    {
+      role: "system",
+      content: buildAgentSystemPrompt(personaOverride),
+    },
     ...history.map((m) => ({ role: m.role, content: m.content })),
     { role: "user", content: userMessage },
   ];

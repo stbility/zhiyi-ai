@@ -44,6 +44,7 @@ export const APP_NAV: readonly NavEntry[] = [
   { key: "memory", label: "AI 记忆", icon: "memory", href: "/memory", available: true },
   { key: "billing", label: "订阅", icon: "billing", href: "/billing", available: true },
   { key: "integrations", label: "集成", icon: "link", href: "/settings/integrations", available: true },
+  { key: "persona", label: "品牌人格", icon: "edit", href: "/settings/persona", available: true },
   { key: "settings", label: "模型服务", icon: "settings", href: "/settings/models", available: true },
 ];
 
