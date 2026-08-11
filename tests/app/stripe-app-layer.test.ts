@@ -34,9 +34,9 @@ describe("plans.ts 港币定价(全球华人市场)", () => {
   });
 
   it("年付说明存在(两个月免费惯例)", () => {
-    expect(PLANS).toContain("年付 HK$1,280");
-    expect(PLANS).toContain("年付 HK$1,980");
-    expect(PLANS).toContain("年付 HK$3,880");
+    expect(PLANS).toContain("HK$1,280/年");
+    expect(PLANS).toContain("HK$1,980/年");
+    expect(PLANS).toContain("HK$3,880/年");
   });
 
   it("支付路径 = checkout 为主,Payment Link 链接已清空(旧账号删除,重建后填新)", () => {
@@ -48,13 +48,13 @@ describe("plans.ts 港币定价(全球华人市场)", () => {
     expect(PLANS).toContain('annualStripeUrl: ""');
     // 年付文案必须与月付文案同档配对(Pro 年付配 Pro 月付);链接已清空待重建
     const pro = PLANS.split('id: "professional"')[1]?.split('id: "professional_plus"')[0] ?? "";
-    expect(pro).toContain("年付 HK$1,280");
+    expect(pro).toContain("HK$1,280/年");
     expect(pro).toContain('annualStripeUrl: ""');
     const proPlus = PLANS.split('id: "professional_plus"')[1]?.split('id: "team"')[0] ?? "";
-    expect(proPlus).toContain("年付 HK$1,980");
+    expect(proPlus).toContain("HK$1,980/年");
     expect(proPlus).toContain('annualStripeUrl: ""');
     const team = PLANS.split('id: "team"')[1]?.split('id: "enterprise"')[0] ?? "";
-    expect(team).toContain("年付 HK$3,880");
+    expect(team).toContain("HK$3,880/年");
     expect(team).toContain('annualStripeUrl: ""');
   });
 

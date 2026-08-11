@@ -84,6 +84,7 @@
 | `0049_clear_overlapping_policies.sql` | 待应用 | Performance「多项宽松政策」11 条告警根治:清除 0012 生产漂移残留的 8 条旧策略(有效权限不变,详见备注 G) |
 | `0050_index_hygiene.sql` | 待应用 | Performance 信息建议前 10 条:补 6 条真缺外键索引(feedback_id/created_by/token_id/user_id/message_id)+ 删 4 条零查询路径的防御性索引(详见备注 H) |
 | `0051_restore_fk_column_indexes.sql` | 待应用 | 恢复 0050 误删的 4 条 **FK 列**索引(0001 未索引外键 vs 0005 未使用索引冲突,FK 列必须保索引,详见备注 I) |
+| `0052_entitlements_new_tiers.sql` | 待应用 | professional_plus / team 初始权益行:workflows=10/30, monthly_agent_turns=2000/5000;幂等 INSERT ON CONFLICT DO NOTHING |
 
 ### 备注 D：Security Advisor 修复(2026-08-10)
 

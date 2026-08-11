@@ -82,17 +82,17 @@ describe("0034 权益矩阵", () => {
   });
 
   it("默认权益:Free 1 工作流 / Pro 5 / Enterprise 不限", () => {
-    expect(M0034).toContain("('free',             'workflows',             1)");
-    expect(M0034).toContain("('professional',     'workflows',             5)");
-    expect(M0034).toContain("('enterprise',       'workflows',            null)");
+    expect(M0034).toMatch(/('free',\s+'workflows',\s+1)/);
+    expect(M0034).toMatch(/('professional',\s+'workflows',\s+5)/);
+    expect(M0034).toMatch(/('enterprise',\s+'workflows',\s+null)/);
   });
 
   it("月度 agent 额度:Free 200 / Pro 500 / Pro+ 2000 / Team 5000 / Ent 5000", () => {
-    expect(M0034).toContain("('free',             'monthly_agent_turns',  200)");
-    expect(M0034).toContain("('professional',     'monthly_agent_turns',  500)");
-    expect(M0034).toContain("('professional_plus','monthly_agent_turns', 2000)");
-    expect(M0034).toContain("('team',             'monthly_agent_turns',  5000)");
-    expect(M0034).toContain("('enterprise',       'monthly_agent_turns',  5000)");
+    expect(M0034).toMatch(/('free',\s+'monthly_agent_turns',\s+200)/);
+    expect(M0034).toMatch(/('professional',\s+'monthly_agent_turns',\s+500)/);
+    expect(M0034).toMatch(/('professional_plus',\s+'monthly_agent_turns',\s+2000)/);
+    expect(M0034).toMatch(/('team',\s+'monthly_agent_turns',\s+5000)/);
+    expect(M0034).toMatch(/('enterprise',\s+'monthly_agent_turns',\s+5000)/);
   });
 
   it("0037 配额对齐:Pro → 500 / Ent → 5000(对齐落地页宣传)", () => {
