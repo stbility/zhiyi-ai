@@ -68,26 +68,32 @@
 | `0033_stripe_customers_and_subscriptions.sql` | 20260807… | stripe_customers, subscriptions |
 | `0034_entitlements.sql` | 20260807… | entitlements, get_entitlements |
 | `0035_usage_metering.sql` | 20260807… | usage_metering, bump_usage, get_monthly_usage |
-| `0036_workflows.sql` | 待应用 | workflows, workflow_runs |
-| `0037_entitlements_quota_alignment.sql` | 待应用 | entitlements(配额 500/5000,见备注 C) |
-| `0038_knowledge_files.sql` | 待应用 | knowledge_files |
-| `0039_eval_runs.sql` | 待应用 | eval_runs, eval_run_cases |
-| `0040_memory_embeddings.sql` | 待应用 | pgvector 扩展 + memories.embedding + search_memories |
-| `0041_eval_cases.sql` | 待应用 | eval_cases(反馈飞轮消费端) |
-| `0042_skills_member_editable.sql` | 待应用 | skills 写策略 admin → 组织成员 |
-| `0043_messages_run_id.sql` | 待应用 | messages.run_id(续跑跨刷新) |
-| `0044_ledger_baseline_rows.sql` | 待应用 | 账本基线补记:0001-0027 以 4 位前缀行入账(详见备注 C) |
-| `0045_mcp_execution_log.sql` | 待应用 | MCP 执行日志:Hermes 执行状态回传(评审建议第 1 项) |
-| `0046_supabase_advisors_security.sql` | 待应用 | Security Advisor 8 条修复:vector → extensions schema;6 个 SECURITY DEFINER → INVOKER;usage_metering 写策略(详见备注 D) |
-| `0047_rate_limits_explicit_lockdown.sql` | 待应用 | rate_limits 显式封锁策略(RLS 无策略 INFO 修复,详见备注 E) |
-| `0048_rls_auth_initplan.sql` | 待应用 | Performance Advisor:10 条策略 auth.uid() → (select auth.uid()) InitPlan 化(详见备注 F) |
-| `0049_clear_overlapping_policies.sql` | 待应用 | Performance「多项宽松政策」11 条告警根治:清除 0012 生产漂移残留的 8 条旧策略(有效权限不变,详见备注 G) |
-| `0050_index_hygiene.sql` | 待应用 | Performance 信息建议前 10 条:补 6 条真缺外键索引(feedback_id/created_by/token_id/user_id/message_id)+ 删 4 条零查询路径的防御性索引(详见备注 H) |
-| `0051_restore_fk_column_indexes.sql` | 待应用 | 恢复 0050 误删的 4 条 **FK 列**索引(0001 未索引外键 vs 0005 未使用索引冲突,FK 列必须保索引,详见备注 I) |
-| `0052_entitlements_five_tier_and_grants.sql` | 待应用 | 五档定价落地:entitlements/subscriptions 的 plan_id CHECK 3 档→5 档 + 五档默认权益 upsert + 计费 RPC EXECUTE 授权重建(详见备注 J) |
+| `0036_workflows.sql` | 0036 | workflows, workflow_runs |
+| `0037_entitlements_quota_alignment.sql` | 0037 | entitlements(配额 500/5000,见备注 C) |
+| `0038_knowledge_files.sql` | 0038 | knowledge_files |
+| `0039_eval_runs.sql` | 0039 | eval_runs, eval_run_cases |
+| `0040_memory_embeddings.sql` | 0040 | pgvector 扩展 + memories.embedding + search_memories |
+| `0041_eval_cases.sql` | 0041 | eval_cases(反馈飞轮消费端) |
+| `0042_skills_member_editable.sql` | 0042 | skills 写策略 admin → 组织成员 |
+| `0043_messages_run_id.sql` | 0043 | messages.run_id(续跑跨刷新) |
+| `0044_ledger_baseline_rows.sql` | 0044 | 账本基线补记:0001-0027 以 4 位前缀行入账(详见备注 C) |
+| `0045_mcp_execution_log.sql` | 0045 | MCP 执行日志:Hermes 执行状态回传(评审建议第 1 项) |
+| `0046_supabase_advisors_security.sql` | 0046 | Security Advisor 8 条修复:vector → extensions schema;6 个 SECURITY DEFINER → INVOKER;usage_metering 写策略(详见备注 D) |
+| `0047_rate_limits_explicit_lockdown.sql` | 0047 | rate_limits 显式封锁策略(RLS 无策略 INFO 修复,详见备注 E) |
+| `0048_rls_auth_initplan.sql` | 0048 | Performance Advisor:10 条策略 auth.uid() → (select auth.uid()) InitPlan 化(详见备注 F) |
+| `0049_clear_overlapping_policies.sql` | 0049 | Performance「多项宽松政策」11 条告警根治:清除 0012 生产漂移残留的 8 条旧策略(有效权限不变,详见备注 G) |
+| `0050_index_hygiene.sql` | 0050 | Performance 信息建议前 10 条:补 6 条真缺外键索引(feedback_id/created_by/token_id/user_id/message_id)+ 删 4 条零查询路径的防御性索引(详见备注 H) |
+| `0051_restore_fk_column_indexes.sql` | 0051 | 恢复 0050 误删的 4 条 **FK 列**索引(0001 未索引外键 vs 0005 未使用索引冲突,FK 列必须保索引,详见备注 I) |
+| `0052_entitlements_five_tier_and_grants.sql` | 0052 | 五档定价落地:entitlements/subscriptions 的 plan_id CHECK 3 档→5 档 + 五档默认权益 upsert + 计费 RPC EXECUTE 授权重建(详见备注 J) |
+| `0053_platform_models_refresh.sql` | 0053 | 平台免费档模型池刷新:下线 EOL 的 deepseek-v4-flash/pro(410 Gone),保留 glm-5.2(用户点名长期免费),加入实测快的 minimax-m3 / gpt-oss-20b(详见备注 K) |
 
-| `0052_entitlements_five_tier_and_grants.sql` | 待应用 | 五档定价落地:entitlements/subscriptions 的 plan_id CHECK 3 档→5 档 + 五档默认权益 upsert + 计费 RPC EXECUTE 授权重建(详见备注 J) |
-| `0053_platform_models_refresh.sql` | 待应用 | 平台免费档模型池刷新:下线 EOL 的 deepseek-v4-flash/pro(410 Gone),保留 glm-5.2(用户点名长期免费),加入实测快的 minimax-m3 / gpt-oss-20b(详见备注 K) |
+### 备注 L：0036-0053 已应用(2026-08-11 实证)
+
+0036-0053 由 prod-migrate.sh 以 **4 位前缀行**入账(version='0036' 等,name=文件名)。
+实证:prod-migrations workflow 日志(dbe2bc77, 2026-08-11)「账本前缀行 53 条,待应用 0 个,
+生产库已是最新」+ 权益种子 10 行(五档落地)。此前标「待应用」是账本未随交付同步,
+**判定生产迁移状态以 prod-migrations workflow 日志为准,不以此表为准**。
+另:0052 曾出现重复条目(撞号残留),已清理为单条。
 
 
 ### 备注 D：Security Advisor 修复(2026-08-10)
