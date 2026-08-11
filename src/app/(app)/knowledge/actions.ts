@@ -52,6 +52,35 @@ export async function uploadKnowledgeFile(
     return { error: "暂支持 pdf / docx / md / txt,请上传这些格式。" };
   }
 
+  // 容量配额检查(2026-08-11 权益矩阵扩展):knowledge_capacity(单位 MB)。
+  // 免费 100MB / 专业 1GB / 进阶 5GB / 团队与企业不限。
+  // fail-closed:权益查不到按 0 处理 —— 宁可不让上传,不让超配。
+  const { getMyEntitlements, quotaOf } = await import(
+    "@/lib/billing/entitlements"
+  );
+  const entitlements = await getMyEntitlements();
+  const capacityMb = entitlements
+    ? quotaOf(entitlements, "knowledge_capacity")
+    : 0;
+
+  if (capacityMb !== null) {
+    const capacityBytes = capacityMb * 1024 * 1024;
+    const { data: existingFiles } = await ctx.supabase
+      .from("knowledge_files")
+      .select("size_bytes")
+      .eq("organization_id", ctx.organization.id);
+    const usedBytes = (existingFiles ?? []).reduce(
+      (sum: number, row) => sum + ((row.size_bytes as number | null) ?? 0),
+      0,
+    );
+    if (usedBytes + file.size > capacityBytes) {
+      const usedMb = Math.round(usedBytes / (1024 * 1024));
+      return {
+        error: `知识库容量已达上限(已用 ${usedMb}MB / 共 ${capacityMb}MB)。升级套餐可提升容量。`,
+      };
+    }
+  }
+
   // 入库:先以 parsing 状态落行,解析完成后原地更新 ——
   // 状态机 5 态与设计系统 KnowledgeFileRow 对齐。
   const { data: created, error: insertError } = await ctx.supabase

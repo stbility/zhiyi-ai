@@ -93,6 +93,13 @@ function fakeSupabase(
   };
   return {
     from: () => chain,
+    rpc: async () => ({
+      data: [
+        { plan_id: "free", feature: "mcp_servers", quota: 1 },
+        { plan_id: "free", feature: "knowledge_capacity", quota: 100 },
+      ],
+      error: null,
+    }),
     auth: { getUser: async () => ({ data: { user: { id: "u1" } } }) },
   };
 }

@@ -90,6 +90,24 @@ export async function runAgentTurn({
   // 并把有限的步数耗光。
   const gitContext = await loadGitContext(supabase, organizationId);
 
+  // 组织自定义品牌人格(P3,2026-08-11)。组织在「设置 → 品牌人格」配置,
+  // 存在 organizations.persona。未配置为空 —— 用默认人格,行为与旧版一致。
+  // 读取失败按空处理(不阻断本轮运行),留日志便于排查。
+  let orgPersona: string | null = null;
+  try {
+    const { data: orgRow } = await supabase
+      .from("organizations")
+      .select("persona")
+      .eq("id", organizationId)
+      .maybeSingle();
+    orgPersona = (orgRow?.persona as string | null | undefined) ?? null;
+  } catch (e) {
+    logger.warn(
+      { org: organizationId, err: e instanceof Error ? e.message : String(e) },
+      "读取组织品牌人格失败,按未配置处理",
+    );
+  }
+
   // 外部能力上下文:登记的 MCP server + 技能库。两者都没有时返回
   // undefined,agent 行为与旧版完全一致(不注入任何外部工具)。
   const externalContext = await buildExternalContext(supabase, organizationId);
@@ -369,6 +387,7 @@ export async function runAgentTurn({
           externalContext,
           signal,
           limits: { ...DEFAULT_LIMITS, budgetMs },
+          personaOverride: orgPersona,
           reporter: {
             // 模型每吐一段就推一段 —— 这是智能体从「看起来卡死」
             // 变成「看得见在跑」的关键。

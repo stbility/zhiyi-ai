@@ -89,6 +89,29 @@ export async function createMcpServer(
     };
   }
 
+  // 配额检查(2026-08-11 权益矩阵扩展):mcp_servers 数 ≤ 档位配额。
+  // 免费 1 / 专业 2 / 进阶 5 / 团队 10 / 企业不限。
+  // fail-closed:权益查不到按 0 处理 —— 宁可不让登记,不让超配。
+  const { getMyEntitlements, quotaOf } = await import(
+    "@/lib/billing/entitlements"
+  );
+  const entitlements = await getMyEntitlements();
+  const mcpQuota = entitlements
+    ? quotaOf(entitlements, "mcp_servers")
+    : 0;
+
+  if (mcpQuota !== null) {
+    const { count: existingCount, error: countError } = await supabase
+      .from("mcp_servers")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", parsed.data.organizationId);
+    if (!countError && (existingCount ?? 0) >= mcpQuota) {
+      return {
+        error: `当前套餐最多登记 ${mcpQuota} 个 MCP server。升级套餐可增加上限。`,
+      };
+    }
+  }
+
   const { error } = await supabase.from("mcp_servers").insert({
     organization_id: parsed.data.organizationId,
     name: parsed.data.name,
