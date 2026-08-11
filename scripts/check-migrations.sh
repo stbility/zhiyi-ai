@@ -41,8 +41,8 @@ SYNC=0
 #           ai_providers_created_by_idx / audit_logs_actor_idx / organizations_created_by_idx
 # Advisory 检查暂不纳入此 CI（Supabase Dashboard 管理），白名单为人类参考
 # + 未来 Supabase Management API 自动化检查的接口。
-ADVISOR_WHITELIST="$ROOT/supabase/advisor-whitelist.json"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ADVISOR_WHITELIST="$ROOT/supabase/advisor-whitelist.json"
 
 # ON_ERROR_STOP=1 是关键:不带它,psql 会跳过报错的语句继续往下跑,
 # 最后以 0 退出 —— 一条根本没建成的表会被当成建成了。

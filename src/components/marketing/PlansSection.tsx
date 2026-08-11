@@ -71,7 +71,7 @@ function PlanCard({
   // 付费档:走服务端 Checkout。Payment Link 只作为 checkout 不可用时的备用,
   // 依旧拼上 prefilled_email —— 走到那一步时它是唯一还能归户的线索。
   const fallbackUrl = withPrefilledEmail(
-    isYear ? plan.annualStripeUrl : plan.stripeUrl,
+    isYear ? plan.paymentLinkYear : plan.paymentLinkMonth,
     email,
   );
 

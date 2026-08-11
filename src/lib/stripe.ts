@@ -16,7 +16,6 @@ export function getStripe(): Stripe {
 
 // Lazy-loading proxy — `import { stripe }` keeps the same API as a Stripe instance,
 // but construction is deferred until first property access (i.e., runtime, not build time).
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const stripeProxy = new Proxy({} as Stripe, {
   get(_target, prop) {
     const val = (getStripe() as unknown as Record<string | symbol, unknown>)[prop]

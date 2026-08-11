@@ -101,8 +101,8 @@ describe("0034 权益矩阵", () => {
     expect(M0036).toContain("quota = 2000");
     expect(M0036).toContain("quota is null");
     // 与 plans.ts 宣传文案一致(展示层 = 判断层)
-    expect(PLANS).toContain("每月 500 次 Agent 额度");
-    expect(PLANS).toContain("每月 5,000 次 Agent 额度");
+    expect(PLANS).toContain("每月 2,000 次标准 Agent 运行");
+    expect(PLANS).toContain("每月 4,000 次标准 Agent 运行");
   });
 
   it("get_entitlements 是 security definer —— 用调用者 user_id 参数,不信任客户端 plan", () => {
