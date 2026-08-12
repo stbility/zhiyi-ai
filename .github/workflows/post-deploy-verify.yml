@@ -1,16 +1,22 @@
 name: post-deploy-verify
 
-# 部署后闭环验证(2026-08-10 开发治理 P0-2):
-#   main 推送 → Vercel 自动部署 → 本工作流轮询 /status.json 直到
-#   deployed_sha == 本次推送 SHA → 渲染冒烟关键路由 → 结果作为 commit check。
-# 「本地全绿 ≠ 生产交付」从此有机器闭环:部署滞后/渲染阻断 = check 红。
+# 部署后闭环验证(2026-08-10 开发治理 P0-2,2026-08-12 升级):
+#   · main 推送 → Vercel 自动部署 → 轮询生产 /status.json 直到
+#     deployed_sha == 推送 SHA → 渲染冒烟关键路由 → 结果作为 commit check。
+#   · pull_request → Vercel 自动 preview 部署 → 轮询 preview /status.json
+#     直到 deployed_sha == PR 头 SHA → 渲染冒烟 → 结果作为 PR required check。
+#     (2026-08-12 教训:#95-#99 GitHub CI 5/5 全绿但 Vercel 构建失败
+#      【vercel.json cron schema】——事后才暴露,合入没被拦。从此部署
+#      验证前置到 PR,配合 branch protection required check 真正阻断带病合入。)
 #
-# 零密钥依赖:只访问公开端点 https://zhiyi-ai.vercel.app/status.json。
+# 零密钥依赖:生产验证只访问公开端点;PR 验证用 GITHUB_TOKEN 查
+# preview deployment 的公开 URL(都是公开站点的 /status.json)。
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:
+  pull_request:
+    branches: [main]
 
 jobs:
   verify:
@@ -18,19 +24,68 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: 目标 SHA
-        run: echo "TARGET=${{ github.sha }}" >> "$GITHUB_ENV"
-
-      - name: 轮询 /status.json 直到部署 SHA 对齐(最长 ~12 分钟)
+      - name: 目标 SHA 与 LIVE_URL(PR=preview, push=生产)
         run: |
-          LIVE_URL="${ZHIYI_LIVE_URL:-https://zhiyi-ai.vercel.app}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            TARGET="${{ github.event.pull_request.head.sha }}"
+            echo "TARGET=$TARGET" >> "$GITHUB_ENV"
+            # Vercel 的 preview deployment 不写 GitHub Deployments API,
+            # 也不在 comment 里留明文 —— 但「Vercel Preview Comments」
+            # check 的 summary 里有 preview 域名(zhiyi-ai-git-<branch>-<hash>.vercel.app)。
+            # 轮询 check-runs 直到出现,提取域名。
+            URL=""
+            for i in $(seq 1 24); do
+              BODY=$(curl -s --max-time 10 \
+                -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/commits/$TARGET/check-runs" || true)
+              URL=$(echo "$BODY" | jq -r '.check_runs[]? | select((.name // "") | contains("Vercel")) | .output.summary // empty' 2>/dev/null | grep -oE '[a-zA-Z0-9-]+\.vercel\.app' | head -1)
+              [ -n "$URL" ] && break
+              echo "  Vercel check 未就绪,5s 后再试…"
+              sleep 5
+            done
+            if [ -z "$URL" ]; then
+              echo "❌ 拿不到 Vercel preview URL(构建失败或 check 缺失)"
+              exit 1
+            fi
+            echo "LIVE_URL=https://$URL" >> "$GITHUB_ENV"
+            echo "✅ preview URL: https://$URL"
+          else
+            echo "TARGET=${{ github.sha }}" >> "$GITHUB_ENV"
+            echo "LIVE_URL=${ZHIYI_LIVE_URL:-https://zhiyi-ai.vercel.app}" >> "$GITHUB_ENV"
+          fi
+
+      - name: 轮询 preview 部署就绪(最长 ~8 分钟)
+        if: github.event_name == 'pull_request'
+        run: |
+          ok=0
+          for i in $(seq 1 32); do
+            # -L 跟随重定向:Vercel preview 的 / 是 302 → 正式域名,
+            # 不带 -L 会永远拿到 302(实测踩坑)
+            code=$(curl -sL -o /dev/null -w "%{http_code}" --max-time 15 "$LIVE_URL/" || true)
+            if [ "$code" = "200" ]; then
+              echo "✅ preview 部署就绪: $LIVE_URL → 200"
+              ok=1
+              break
+            fi
+            echo "  第 ${i} 次轮询: preview $code,15s 后再试…"
+            sleep 15
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "❌ preview 部署不可达(Vercel 构建失败或队列阻塞)"
+            exit 1
+          fi
+
+      - name: 轮询 /status.json 直到生产部署 SHA 对齐(最长 ~12 分钟,仅 push)
+        if: github.event_name != 'pull_request'
+        run: |
           ok=0
           for i in $(seq 1 48); do
             body=$(curl -s --max-time 10 "$LIVE_URL/status.json" || true)
             deployed=$(echo "$body" | jq -r '.deployed_sha // empty' 2>/dev/null || true)
             if [ -n "$deployed" ] && [ "$deployed" = "$TARGET" ]; then
               echo "✅ 部署对齐: deployed_sha=$deployed == 推送 SHA"
-              echo "$body" | jq '{deployed_sha, commit_ref, env_fingerprint}' | sed 's/^/  /'
+              echo "$body" | jq '{deployed_sha, env_fingerprint}' | sed 's/^/  /'
               ok=1
               break
             fi
@@ -38,26 +93,27 @@ jobs:
             sleep 15
           done
           if [ "$ok" -ne 1 ]; then
-            echo "❌ 部署未对齐:12 分钟内 /status.json 未报告本次 SHA(部署失败/队列/滞后)"
+            echo "❌ 部署未对齐:12 分钟内 /status.json 未报告目标 SHA(部署失败/队列/滞后)"
             exit 1
           fi
 
       - name: 渲染冒烟(关键路由)
         run: |
-          LIVE_URL="${ZHIYI_LIVE_URL:-https://zhiyi-ai.vercel.app}"
+          # -L 跟随重定向:preview 的公开路由是 302 → 正式域名,
+          # 不带 -L 会把 302 当失败(实测踩坑,与「轮询 preview 就绪」同款)
           for path in / /pricing /status; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$LIVE_URL$path")
+            code=$(curl -sL -o /dev/null -w "%{http_code}" --max-time 20 "$LIVE_URL$path")
             if [ "$code" != "200" ]; then
               echo "❌ $path → $code(期望 200)"
               exit 1
             fi
             echo "  ✅ $path → 200"
           done
-          # 登录门禁路由:307 是预期(设计行为),500/404 才是问题
+          # 登录门禁路由:-L 跟随后 200(登录页)是预期;500/404 才是问题
           for path in /agent /workflow /memory /billing; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$LIVE_URL$path")
+            code=$(curl -sL -o /dev/null -w "%{http_code}" --max-time 20 "$LIVE_URL$path")
             case "$code" in
-              200|307) echo "  ✅ $path → $code(200 或登录跳转,预期)" ;;
+              200|307) echo "  ✅ $path → $code(登录页或跳转,预期)" ;;
               *) echo "❌ $path → $code(期望 200/307)"; exit 1 ;;
             esac
           done
