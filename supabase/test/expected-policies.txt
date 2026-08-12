@@ -40,11 +40,11 @@ mcp_access_tokens_delete_admin
 mcp_access_tokens_insert_admin
 mcp_access_tokens_select_member
 mcp_access_tokens_update_admin
+mcp_execution_log_select_member
 mcp_servers_delete_admin
 mcp_servers_insert_admin
 mcp_servers_select_member
 mcp_servers_update_admin
-mcp_execution_log_select_member
 memberships_delete_admin
 memberships_insert_allowed
 memberships_select_member
@@ -66,6 +66,7 @@ platform_models_select_authenticated
 profiles_insert_self
 profiles_select_visible
 profiles_update_self
+rate_limits_no_direct_access
 skill_files_delete_admin
 skill_files_insert_admin
 skill_files_select_member
@@ -76,7 +77,11 @@ skills_select_member
 skills_update_member
 stripe_customers_select_own
 subscriptions_select_own
+system_logs_insert_authenticated
+system_logs_select_admin
+usage_metering_insert_own
 usage_metering_select_own
+usage_metering_update_own
 workflow_runs_insert_member
 workflow_runs_select_member
 workflow_runs_update_member
@@ -92,6 +97,3 @@ workspaces_delete_admin
 workspaces_insert_member
 workspaces_select_member
 workspaces_update_member
-usage_metering_insert_own
-usage_metering_update_own
-rate_limits_no_direct_access

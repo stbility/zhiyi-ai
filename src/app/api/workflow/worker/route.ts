@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getMyOrganizations } from "@/lib/db/queries";
 import { parseDefinition } from "@/lib/workflow/state-machine";
 import { executeWorkflowSteps } from "@/lib/workflow/execute";
+import { logEventWith } from "@/lib/logging";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,6 +52,12 @@ export async function GET(request: NextRequest) {
         .from("workflows")
         .update({ status: "READY", updated_at: new Date().toISOString() })
         .eq("id", run.workflow_id as string);
+      await logEventWith(supabase, {
+        level: "warn",
+        event: "workflow.zombie_cleared",
+        message: "清理超时未认领的排队运行",
+        meta: { runId: run.id, workflowId: run.workflow_id },
+      });
       cleared += 1;
     }
     return NextResponse.json({ ok: true, cleared });
