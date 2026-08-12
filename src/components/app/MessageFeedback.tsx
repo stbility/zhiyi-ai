@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 
 import { Icon } from "@/components/icons/Icon";
 import { Button } from "@/components/primitives/Button";
+import { TextArea } from "@/components/primitives/TextArea";
 import { cn } from "@/lib/cn";
 import { SubmitButton } from "@/components/primitives/SubmitButton";
 import {
@@ -197,11 +198,10 @@ export function MessageFeedback({ messageId }: { messageId: string }) {
         <form action={action} className="flex flex-col gap-2">
           <input type="hidden" name="messageId" value={messageId} />
           <input type="hidden" name="verdict" value="edited" />
-          <textarea
+          <TextArea
             name="editedText"
             rows={4}
             placeholder="把你希望的写法粘在这里 —— 不用完整,改动的那部分就够"
-            className="bg-surface-2 text-fg font-zh text-caption rounded-control border-border-default focus:border-border-focus w-full resize-y border px-3 py-2 outline-none"
           />
           <input
             name="reason"
