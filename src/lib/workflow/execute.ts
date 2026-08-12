@@ -122,7 +122,13 @@ export async function executeWorkflowSteps(
 
       const res = await fetch(`${getSiteUrl()}/api/agent`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Cookie: cookieHeader },
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: cookieHeader,
+          // 并发已在 runWorkflow 入队时检查过;这里标记为 worker 步骤,
+          // 让 /api/agent 跳过并发检查,避免多步工作流自锁。
+          "x-zhiyi-worker": "1",
+        },
         body: JSON.stringify({ input: effectivePrompt }),
         signal: AbortSignal.timeout(45_000),
       });

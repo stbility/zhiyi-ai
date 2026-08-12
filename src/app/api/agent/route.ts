@@ -79,6 +79,19 @@ export async function POST(request: NextRequest) {
   // resumeRunId 存在时跳过权益检查 —— 续跑的是用户已经付过费的运行,
   // 订阅在运行中途到期也不该把「把已开始的任务掐断」。
 
+  // 并发数权益(0055 concurrent_tasks):同时运行的智能体任务数按档位限制。
+  //   · 用户直接发起的回合:检查 agent_runs 活跃数(queued/running/waiting_model/running_tool)
+  //     + workflow_runs 活跃数,达到档位上限即拒绝 —— 承诺必须有 gating。
+  //   · 续跑(resumeRunId)与工作流 Worker 步骤(x-zhiyi-worker)跳过:
+  //     并发已在入口检查过(worker 在 runWorkflow 入队时检查),避免自锁。
+  if (!resumeRunId && request.headers.get("x-zhiyi-worker") !== "1") {
+    const { checkConcurrentTasks } = await import("@/lib/billing/concurrency");
+    const concurrencyBlocked = await checkConcurrentTasks({ supabase, userId, organizationId });
+    if (concurrencyBlocked.blocked) {
+      return errorResponse(concurrencyBlocked.reason, 429);
+    }
+  }
+
   // 挡在入口,而不是等跑到第一步再失败。
   //
   // callWithTools 里已经有这道判断,但那时智能体循环已经启动、

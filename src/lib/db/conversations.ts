@@ -10,6 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { loadPlatformCandidates } from "@/lib/ai/platform-models";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getMyEntitlements, quotaOf } from "@/lib/billing/entitlements";
 
 /**
  * AI 助手页与智能体页共用的读取逻辑。
@@ -121,14 +122,24 @@ export async function loadConversations(
   const supabase = await createSupabaseServerClient();
   if (!supabase) return [];
 
+  // history_days 权益:按档位过滤历史可见范围(0055)。
+  //   quota=null(Free/Team/Enterprise)→ 永久保留,不额外过滤;
+  //   quota=N(Professional 90 天 / Plus 365 天)→ 只返回最近 N 天。
+  // getMyEntitlements 失败时按 0 天处理(异常不等于放行,与智能体通道同一纪律)。
+  const entitlements = await getMyEntitlements();
+  const historyDays = entitlements ? quotaOf(entitlements, "history_days") : 0;
+
   // RLS 已限定只能读到自己的对话,这里不必再按 user_id 过滤
-  const { data } = await supabase
+  let query = supabase
     .from("conversations")
     .select("id, title, created_at")
     .eq("organization_id", organizationId)
-    .eq("channel", channel)
-    .order("created_at", { ascending: false })
-    .limit(50);
+    .eq("channel", channel);
+  if (historyDays !== null && historyDays > 0) {
+    const cutoff = new Date(Date.now() - historyDays * 86_400_000).toISOString();
+    query = query.gte("created_at", cutoff);
+  }
+  const { data } = await query.order("created_at", { ascending: false }).limit(50);
 
   return (data ?? []).map((row) => ({
     id: row.id as string,
