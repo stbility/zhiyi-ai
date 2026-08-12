@@ -276,6 +276,18 @@ export async function runWorkflow(id: string): Promise<WorkflowActionResult> {
     return { error: e instanceof Error ? e.message : "当前状态不可运行。" };
   }
 
+  // 并发数权益(0055 concurrent_tasks):入队前检查,与 agent 入口同一实现。
+  // worker 步骤带 x-zhiyi-worker 跳过 agent 侧检查,此处是唯一检查点。
+  const { checkConcurrentTasks } = await import("@/lib/billing/concurrency");
+  const concurrencyBlocked = await checkConcurrentTasks({
+    supabase: ctx.supabase as never,
+    userId: ctx.user.id,
+    organizationId: ctx.organization.id,
+  });
+  if (concurrencyBlocked.blocked) {
+    return { error: concurrencyBlocked.reason };
+  }
+
   // 入队(QUEUED):不在这里同步执行 —— 前端轮询 /api/workflow/worker
   // 带用户身份执行(2026-08-12 Worker 化)。Worker 复用 executeWorkflowSteps,
   // 与人工闸门(等待输入/确认)共用同一执行器。
