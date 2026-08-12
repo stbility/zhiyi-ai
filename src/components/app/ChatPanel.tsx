@@ -1067,15 +1067,18 @@ export function ChatPanel({
               没有它中间的反向代理会因为长时间无数据把连接掐断。 */}
         </div>
 
+        {/* 一体式输入框容器(2026-08-12 对齐 Hermes 官方):
+            边框/圆角/背景包住 textarea + 底部工具条(附件/联网/模型/发送),
+            发送按钮在容器右下角 —— 视觉上是一个整体,不再「输入框在上、按钮在下」。 */}
         <form
           onSubmit={send}
-          className="border-divider flex shrink-0 flex-col gap-2 border-t p-3.5"
+          className="border-border-default bg-surface-2 rounded-control border"
         >
           {/* 只说结论,不说规则。
               取用规则那一长段搬到按钮的 title 里 —— 需要时悬停可见,
               不必每次都占掉输入区两行。 */}
           {attachNote && (
-            <div className="border-border-default bg-surface-2 rounded-control flex flex-wrap items-center gap-2 px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2 px-3 pt-2">
               <span className="text-fg-secondary text-label">{attachNote}</span>
               {attachments.length > 0 && (
                 <>
@@ -1094,6 +1097,9 @@ export function ChatPanel({
             </div>
           )}
 
+          {/* 一体式输入框(2026-08-12 对齐 Hermes 官方):
+              背景/边框/圆角由外层容器统一承担,textarea 本身透明无框,
+              发送按钮在容器右下角,视觉上与输入框是一个整体。 */}
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -1107,7 +1113,7 @@ export function ChatPanel({
             rows={3}
             placeholder="输入内容,Enter 发送,Shift+Enter 换行"
             aria-label="对话输入"
-            className="bg-surface-2 border-border-default rounded-control text-fg placeholder:text-fg-tertiary focus:border-border-focus w-full resize-none border px-3 py-2.25 text-[14px] outline-none transition-colors duration-[var(--duration-hover)] ease-standard"
+            className="text-fg placeholder:text-fg-tertiary w-full resize-none bg-transparent px-3 py-2.5 text-[14px] outline-none"
           />
 
           {/* 控件全部用设计系统的原生组件,不自己拼装。
@@ -1133,7 +1139,7 @@ export function ChatPanel({
               Tag 本来就是「可点击的状态标签」(active 填品牌色、
               可点击时渲染成真 button),模式开关正是这个语义;
               添加文件夹是一次性**动作**不是模式,所以用 IconButton。 */}
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="border-border-default flex flex-wrap items-center gap-1.5 border-t px-3 py-2">
             <input
               ref={folderInputRef}
               type="file"
