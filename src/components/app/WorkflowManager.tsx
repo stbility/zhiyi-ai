@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { WorkflowCard } from "@/components/workflow/WorkflowCard";
 import { WorkflowStatusBadge, type WorkflowStatus } from "@/components/workflow/WorkflowStatusBadge";
 import { WorkflowTimeline } from "@/components/workflow/WorkflowTimeline";
-import { Button, Checkbox, Input } from "@/components/primitives";
+import { Button, Checkbox, Input, TextArea } from "@/components/primitives";
 import {
   approveWorkflowStep,
   cancelWorkflow,
@@ -512,15 +512,14 @@ function WorkflowEditor({
                 label="需要人工确认(执行到此处停下等待批准)"
               />
             </div>
-            <textarea
+            <TextArea
               value={step.prompt}
-              onChange={(e) => {
+              onChange={(prompt) => {
                 const next = [...steps];
-                next[index] = { ...step, prompt: e.target.value };
+                next[index] = { ...step, prompt };
                 onSteps(next);
               }}
               rows={3}
-              className="border-border-default bg-surface-1 text-fg text-caption rounded-control font-zh w-full border p-2.5 outline-none"
               placeholder="给智能体的指令,如:读取 /workspace 下的会议记录,输出结构化要点"
             />
           </div>

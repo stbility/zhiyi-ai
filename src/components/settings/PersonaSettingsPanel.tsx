@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 
 import { Button } from "@/components/primitives/Button";
+import { TextArea } from "@/components/primitives/TextArea";
 import { cn } from "@/lib/cn";
 import {
   savePersona,
@@ -49,19 +50,15 @@ export function PersonaSettingsPanel({
 
         <label className="flex flex-col gap-1.5">
           <span className="text-fg font-zh text-label">人格指令</span>
-          <textarea
+          <TextArea
             name="persona"
             value={persona}
-            onChange={(e) => setPersona(e.target.value)}
+            onChange={setPersona}
             rows={8}
             maxLength={2000}
             placeholder={
               "例如:\n你是「某某科技」的品牌助手。\n回答保持简洁专业,使用繁体中文。\n涉及公司数据时一律引用知识库,不要凭记忆作答。"
             }
-            className={cn(
-              "border-border-default bg-surface-1 text-fg font-zh placeholder:text-fg-tertiary",
-              "rounded-panel focus:border-brand w-full resize-y border px-3 py-2 text-sm outline-none",
-            )}
           />
           <span className="text-fg-tertiary font-zh text-caption">
             {persona.length}/2000 字

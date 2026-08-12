@@ -6,6 +6,7 @@ import { StatusLabel } from "@/components/primitives/StatusLabel";
 import { Button } from "@/components/primitives/Button";
 import { SubmitButton } from "@/components/primitives/SubmitButton";
 import { Switch } from "@/components/primitives/Switch";
+import { TextArea } from "@/components/primitives/TextArea";
 import {
   deleteSkill,
   importSkill,
@@ -316,14 +317,19 @@ export function SkillsManager({
           <form action={importAction} className="flex flex-col gap-3">
             <label className="text-fg-secondary text-label">
               SKILL.md 内容
-              <textarea
+              <TextArea
                 name="markdown"
                 value={markdown}
-                onChange={(e) => setMarkdown(e.target.value)}
-                placeholder={`---\nname: weekly-report\ndescription: Use when generating a weekly report.\n---\n\n# 周报\n步骤...`}
+                onChange={setMarkdown}
+                placeholder={`---
+name: weekly-report
+description: Use when generating a weekly report.
+---
+
+# 周报
+步骤...`}
                 rows={8}
                 required
-                className="border-border-default bg-surface-3 text-fg text-caption mt-1 w-full resize-y rounded-control border p-3 font-mono"
               />
             </label>
             <input type="hidden" name="organizationId" value={organizationId} />
