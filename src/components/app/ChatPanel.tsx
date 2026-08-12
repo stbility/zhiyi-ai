@@ -19,6 +19,7 @@ import { LinkButton } from "@/components/primitives/LinkButton";
 import { IconButton } from "@/components/primitives/IconButton";
 import { Select } from "@/components/primitives/Select";
 import { Tag } from "@/components/primitives/Tag";
+import { TextArea } from "@/components/primitives/TextArea";
 import {
   WorkspaceBrowser,
   type WorkspaceFile,
@@ -1097,12 +1098,14 @@ export function ChatPanel({
             </div>
           )}
 
-          {/* 一体式输入框(2026-08-12 对齐 Hermes 官方):
-              背景/边框/圆角由外层容器统一承担,textarea 本身透明无框,
-              发送按钮在容器右下角,视觉上与输入框是一个整体。 */}
-          <textarea
+          {/* 一体式输入框(2026-08-12 对齐 Hermes 官方 + 原生设计系统):
+              背景/边框/圆角由外层容器统一承担,TextArea 透明无框,
+              发送按钮在容器右下角,视觉上与输入框是一个整体。
+              TextArea 是 primitives 原生组件,与 Input/Select 同一套
+              视觉 token —— assistant 与 agent 两页共用,天然统一。 */}
+          <TextArea
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={setDraft}
             onKeyDown={(e) => {
               // Enter 发送,Shift+Enter 换行 —— 对话场景的通行约定
               if (e.key === "Enter" && !e.shiftKey) {
@@ -1113,7 +1116,8 @@ export function ChatPanel({
             rows={3}
             placeholder="输入内容,Enter 发送,Shift+Enter 换行"
             aria-label="对话输入"
-            className="text-fg placeholder:text-fg-tertiary w-full resize-none bg-transparent px-3 py-2.5 text-[14px] outline-none"
+            variant="flush"
+            className="px-3 py-2.5"
           />
 
           {/* 控件全部用设计系统的原生组件,不自己拼装。

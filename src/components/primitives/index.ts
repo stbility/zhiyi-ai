@@ -18,6 +18,7 @@ export {
 } from "./StatusLabel";
 export { SubmitButton } from "./SubmitButton";
 export { Switch, type SwitchProps } from "./Switch";
+export { TextArea, type TextAreaProps } from "./TextArea";
 export {
   SegmentedControl,
   type SegmentedControlProps,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useActionState } from "react";
 
@@ -49,6 +49,8 @@ export function KnowledgeManager({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [pickedName, setPickedName] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [, startTransition] = useTransition();
 
   const [uploadState, uploadAction, uploading] = useActionState(
@@ -84,13 +86,36 @@ export function KnowledgeManager({
             上传文档(pdf / docx / md / txt,≤10MB):
           </label>
           <div className="flex flex-wrap items-center gap-2">
+            {/* 原生 file input 隐藏,由设计系统 Button 触发 ——
+                裸 input 在暗色主题下按钮不可见/难点击,用户报「无法上传」。 */}
             <input
+              ref={fileInputRef}
               type="file"
               name="file"
               accept=".pdf,.docx,.md,.markdown,.txt"
               required
-              className="text-fg-secondary text-caption flex-1"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                setPickedName(f ? f.name : null);
+              }}
+              className="sr-only"
+              aria-hidden="true"
+              tabIndex={-1}
             />
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Icon name="folder" size={14} />
+              选择文件
+            </Button>
+            {pickedName && (
+              <span className="text-fg-secondary text-caption max-w-52 truncate">
+                {pickedName}
+              </span>
+            )}
             <Button size="sm" type="submit" disabled={uploading}>
               {uploading ? "解析中…" : "上传并解析"}
             </Button>
