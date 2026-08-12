@@ -281,6 +281,11 @@ export function GitConnection({
               <Icon name="link" size={14} />
               连接 GitHub
             </LinkButton>
+            <p className="text-fg-tertiary text-label">
+              在 GitHub 安装页上,仓库范围请选「All repositories」或勾选
+              <span className="text-fg-secondary">你自己的仓库</span> ——
+              只有授权范围内的仓库,智能体才能读写与开 PR。
+            </p>
           </div>
         ) : (
           // 自动拿不到安装地址时,给手动入口 —— 不给假按钮,但也不能让
