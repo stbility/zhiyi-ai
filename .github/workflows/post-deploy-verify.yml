@@ -55,14 +55,34 @@ jobs:
             echo "LIVE_URL=${ZHIYI_LIVE_URL:-https://zhiyi-ai.vercel.app}" >> "$GITHUB_ENV"
           fi
 
-      - name: 轮询 /status.json 直到部署 SHA 对齐(最长 ~12 分钟)
+      - name: 轮询 preview 部署就绪(最长 ~8 分钟)
+        if: github.event_name == 'pull_request'
+        run: |
+          ok=0
+          for i in $(seq 1 32); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$LIVE_URL/" || true)
+            if [ "$code" = "200" ]; then
+              echo "✅ preview 部署就绪: $LIVE_URL → 200"
+              ok=1
+              break
+            fi
+            echo "  第 ${i} 次轮询: preview $code,15s 后再试…"
+            sleep 15
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "❌ preview 部署不可达(Vercel 构建失败或队列阻塞)"
+            exit 1
+          fi
+
+      - name: 轮询 /status.json 直到生产部署 SHA 对齐(最长 ~12 分钟,仅 push)
+        if: github.event_name != 'pull_request'
         run: |
           ok=0
           for i in $(seq 1 48); do
             body=$(curl -s --max-time 10 "$LIVE_URL/status.json" || true)
             deployed=$(echo "$body" | jq -r '.deployed_sha // empty' 2>/dev/null || true)
             if [ -n "$deployed" ] && [ "$deployed" = "$TARGET" ]; then
-              echo "✅ 部署对齐: deployed_sha=$deployed == 目标 SHA"
+              echo "✅ 部署对齐: deployed_sha=$deployed == 推送 SHA"
               echo "$body" | jq '{deployed_sha, env_fingerprint}' | sed 's/^/  /'
               ok=1
               break
