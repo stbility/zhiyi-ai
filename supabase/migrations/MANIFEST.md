@@ -90,6 +90,7 @@
 | `0055_entitlements_expand_features.sql` | 待应用 | 权益矩阵扩展:新增 concurrent_tasks / history_days / knowledge_capacity / mcp_servers 四类 feature,五档数值对齐 plans.ts 营销承诺 |
 | `0056_system_logs.sql` | 待应用 | 结构化日志(阶段 8):system_logs 表 + level 分级 + admin 读 RLS;关键事件(工作流/智能体/Worker)排查留痕,系统级事件不暴露前端 |
 | `0057_system_logs_policy_harden.sql` | 待应用 | system_logs 写入策略收紧:with check(true) → is_org_member(修复 Supabase Advisor 告警) |
+| `0058_platform_models_sort_fix.sql` | 待应用 | 平台免费档排序修正:glm-5.2(首 token 70-120s)降序到 40,默认选择永不落慢模型 |
 
 ### 备注 L：0036-0053 已应用(2026-08-11 实证)
 
