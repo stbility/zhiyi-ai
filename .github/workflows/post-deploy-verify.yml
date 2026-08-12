@@ -60,7 +60,9 @@ jobs:
         run: |
           ok=0
           for i in $(seq 1 32); do
-            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$LIVE_URL/" || true)
+            # -L 跟随重定向:Vercel preview 的 / 是 302 → 正式域名,
+            # 不带 -L 会永远拿到 302(实测踩坑)
+            code=$(curl -sL -o /dev/null -w "%{http_code}" --max-time 15 "$LIVE_URL/" || true)
             if [ "$code" = "200" ]; then
               echo "✅ preview 部署就绪: $LIVE_URL → 200"
               ok=1
