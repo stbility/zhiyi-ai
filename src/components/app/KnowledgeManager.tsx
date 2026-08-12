@@ -191,9 +191,14 @@ export function KnowledgeManager({
             updatedAt={new Date(selected.createdAt).toLocaleString("zh-CN")}
           >
             {selected.status === "ready" && selected.contentText ? (
-              <pre className="text-fg-secondary whitespace-pre-wrap text-[13px] leading-[1.7]">
-                {selected.contentText.slice(0, 6000)}
-              </pre>
+              /* 全文展示,不再 slice(0,6000) 截断 —— 用户报「解析不完整」
+                 实为显示层截断:SKILL.md 等长文档被砍掉后半,存储其实完整。
+                 滚动由外层容器承担,超长不溢出页面。 */
+              <div className="max-h-[70vh] overflow-y-auto">
+                <pre className="text-fg-secondary whitespace-pre-wrap text-[13px] leading-[1.7]">
+                  {selected.contentText}
+                </pre>
+              </div>
             ) : selected.status === "failed" ? (
               <p className="text-error text-caption">
                 解析失败:{selected.error ?? "未知错误"}
