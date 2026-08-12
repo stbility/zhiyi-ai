@@ -20,10 +20,10 @@ const CHROME = readFileSync(
 
 describe("侧边导航分组", () => {
   it("每个导航项都有 group 字段且取值合法", () => {
-    const groups = ["workspace", "knowledge", "admin"];
-    // 统计 group 出现次数:14 个导航项都应该有 group 字段
+    // 14 个导航项都应该有 group 字段,取值限于三组
     const navItems = CHROME.match(/group: "(workspace|knowledge|admin)"/g) ?? [];
     expect(navItems.length).toBeGreaterThanOrEqual(14);
+    expect(navItems.every((g) => /workspace|knowledge|admin/.test(g))).toBe(true);
   });
 
   it("导航区独立滚动,底部退出区固定(不挤出视口)", () => {
