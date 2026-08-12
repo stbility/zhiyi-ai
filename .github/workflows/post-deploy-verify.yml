@@ -99,19 +99,21 @@ jobs:
 
       - name: 渲染冒烟(关键路由)
         run: |
+          # -L 跟随重定向:preview 的公开路由是 302 → 正式域名,
+          # 不带 -L 会把 302 当失败(实测踩坑,与「轮询 preview 就绪」同款)
           for path in / /pricing /status; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$LIVE_URL$path")
+            code=$(curl -sL -o /dev/null -w "%{http_code}" --max-time 20 "$LIVE_URL$path")
             if [ "$code" != "200" ]; then
               echo "❌ $path → $code(期望 200)"
               exit 1
             fi
             echo "  ✅ $path → 200"
           done
-          # 登录门禁路由:307 是预期(设计行为),500/404 才是问题
+          # 登录门禁路由:-L 跟随后 200(登录页)是预期;500/404 才是问题
           for path in /agent /workflow /memory /billing; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$LIVE_URL$path")
+            code=$(curl -sL -o /dev/null -w "%{http_code}" --max-time 20 "$LIVE_URL$path")
             case "$code" in
-              200|307) echo "  ✅ $path → $code(200 或登录跳转,预期)" ;;
+              200|307) echo "  ✅ $path → $code(登录页或跳转,预期)" ;;
               *) echo "❌ $path → $code(期望 200/307)"; exit 1 ;;
             esac
           done
