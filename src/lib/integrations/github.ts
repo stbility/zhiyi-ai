@@ -900,6 +900,23 @@ export async function readRepoFile(
     return hit.result;
   }
 
+  // 方案 B(2026-08-12):raw 直链优先 —— raw.githubusercontent.com 走 CDN,
+  // 无 base64 开销,首次读比 contents API 快(实测 api.github.com ≈300ms 不可缓存,
+  // raw CDN 边缘命中)。private 仓库用 ?token= 查询参数(与 GitHub CLI 同款)。
+  // raw 不返回 blob sha —— 读路径(模型看内容)不依赖 sha;覆盖写走 commitFiles
+  // 的 git trees API 独立取,不受影响。
+  const rawResult = await rawRead(installationId, ref, path);
+  if (rawResult.ok) {
+    const result: { ok: true; file: RepoFile } = {
+      ok: true,
+      file: { path, content: rawResult.content, sha: "" },
+    };
+    fileCache.set(key, { at: Date.now(), result });
+    return result;
+  }
+  // raw 404 不代表文件不存在(private 仓库 raw 需要 token 且 404 语义模糊),
+  // 一律 fallback 到 contents API 拿准确结果与真实 sha。
+
   const query = ref.ref ? `?ref=${encodeURIComponent(ref.ref)}` : "";
   const r = await api(
     installationId,
@@ -956,6 +973,47 @@ export async function readRepoFile(
   }
 
   return result;
+}
+
+/**
+ * raw 直链读取(方案 B,2026-08-12)。
+ *
+ * raw.githubusercontent.com 走 CDN 且无 base64 开销 —— 首次读比
+ * contents API 快一个量级(实测 API ≈300ms 每次都要打 api.github.com;
+ * raw 有 CDN 边缘缓存)。private 仓库用 ?token= 查询参数
+ * (GitHub 官方支持的 raw 访问方式)。
+ *
+ * 失败(网络/404/超时)返回 ok:false,由调用方 fallback 到 API ——
+ * raw 的 404 语义模糊(private 仓库未授权也是 404),不能据此判「文件不存在」。
+ */
+async function rawRead(
+  installationId: string,
+  ref: RepoRef,
+  path: string,
+): Promise<{ ok: true; content: string } | { ok: false; error: string }> {
+  const auth = await getInstallationToken(installationId);
+  if (!auth.ok) return { ok: false, error: auth.error };
+
+  try {
+    const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+    const refPart = ref.ref ? encodeURIComponent(ref.ref) : "HEAD";
+    const url = `https://raw.githubusercontent.com/${ref.owner}/${ref.repo}/${refPart}/${encodedPath}?token=${encodeURIComponent(auth.token)}`;
+    const response = await fetch(url, {
+      headers: { "User-Agent": "zhiyi-ai" },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) {
+      return { ok: false, error: `raw HTTP ${response.status}` };
+    }
+    const text = await response.text();
+    // 文本文件才走 raw(二进制/图片会拿到乱码,如实退回 API 判断)
+    if (!text.includes("\u0000")) {
+      return { ok: true, content: text };
+    }
+    return { ok: false, error: "raw 内容疑似二进制,退回 API。" };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "raw 读取失败。" };
+  }
 }
 
 /** 列出某个目录下的条目 —— 让模型先看清结构,而不是凭猜去读文件 */
