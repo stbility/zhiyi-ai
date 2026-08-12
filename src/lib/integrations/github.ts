@@ -34,6 +34,30 @@ const API = "https://api.github.com";
 /** 官方要求带上的版本头,不带的话行为随 GitHub 默认版本漂移 */
 const API_VERSION = "2026-03-10";
 
+/**
+ * readRepoFile 读缓存(2026-08-12 方案 A)。
+ *
+ * 背景:智能体读仓库代码是最高频操作,而每次 readRepoFile 都是
+ * 「客户端 → Vercel → GitHub API」串行链,实测 ~300ms RTT。
+ * 智能体在跑一轮任务时会反复读同一批文件 —— 加 60s 内存缓存后
+ * 重复读直接从内存命中(<10ms),零额外成本。
+ *
+ * 为什么安全:
+ *   · key 含 installationId + owner/repo + ref + path —— 不同仓库/分支/文件互不污染
+ *   · 只缓存成功结果;失败(404/超限)不缓存,下次如实重试
+ *   · 60s TTL:文件内容在这么短窗口内的变更,智能体下一轮任务自然拿到新的
+ *   · Vercel serverless 实例内存是瞬态的 —— 缓存随实例销毁,天然无泄漏
+ */
+const FILE_CACHE_TTL_MS = 60_000;
+const fileCache = new Map<
+  string,
+  { at: number; result: { ok: true; file: RepoFile } }
+>();
+
+function cacheKey(installationId: string, ref: RepoRef, path: string): string {
+  return `${installationId}|${ref.owner}/${ref.repo}|${ref.ref ?? ""}|${path}`;
+}
+
 function headers(token: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
@@ -869,6 +893,13 @@ export async function readRepoFile(
   ref: RepoRef,
   path: string,
 ): Promise<{ ok: true; file: RepoFile } | { ok: false; error: string }> {
+  // 缓存命中:60s 内同一仓库/分支/文件直接返回(方案 A,2026-08-12)
+  const key = cacheKey(installationId, ref, path);
+  const hit = fileCache.get(key);
+  if (hit && Date.now() - hit.at < FILE_CACHE_TTL_MS) {
+    return hit.result;
+  }
+
   const query = ref.ref ? `?ref=${encodeURIComponent(ref.ref)}` : "";
   const r = await api(
     installationId,
@@ -901,7 +932,7 @@ export async function readRepoFile(
     };
   }
 
-  return {
+  const result: { ok: true; file: RepoFile } = {
     ok: true,
     file: {
       path,
@@ -909,6 +940,22 @@ export async function readRepoFile(
       sha: payload.sha,
     },
   };
+
+  // 只缓存成功结果;缓存满 200 条时清最旧的(粗粒度 LRU,防无限增长)
+  fileCache.set(key, { at: Date.now(), result });
+  if (fileCache.size > 200) {
+    let oldestKey: string | null = null;
+    let oldestAt = Infinity;
+    for (const [k, v] of fileCache) {
+      if (v.at < oldestAt) {
+        oldestAt = v.at;
+        oldestKey = k;
+      }
+    }
+    if (oldestKey) fileCache.delete(oldestKey);
+  }
+
+  return result;
 }
 
 /** 列出某个目录下的条目 —— 让模型先看清结构,而不是凭猜去读文件 */

@@ -22,6 +22,13 @@ export default defineConfig({
     // 主门禁必须确定性;它们由 `pnpm test:live` 单独跑,见 ci.yml 的
     // 「真实网络冒烟」job。
     exclude: ["tests/live/**"],
-    maxWorkers: 2,
+    // --- 内存优化配置 ---
+    // 单进程跑(不并行文件),避免 fork 多进程吃光 8GB 内存。
+    // fileParallelism: false 会覆盖 maxWorkers 为 1 —— vitest 4 官方写法
+    // (singleThread 已废弃,TS2769)。
+    // CI 如果需要更高并发,走 vitest.ci.config.ts(单独创建)。
+    pool: "threads",
+    fileParallelism: false,
+    maxWorkers: 1,
   },
 });
