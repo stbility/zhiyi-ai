@@ -10,9 +10,11 @@ import { Switch } from "@/components/primitives/Switch";
 import {
   createMcpServer,
   deleteMcpServer,
+  listMcpServerTools,
   testMcpServer,
   toggleMcpServer,
   type McpServerState,
+  type ToolsListState,
 } from "@/app/(app)/settings/integrations/mcp-servers-actions";
 
 /**
@@ -70,6 +72,11 @@ export function McpServersCard({
     deleteMcpServer,
     {},
   );
+  const [toolsState, toolsAction] = useActionState<ToolsListState, FormData>(
+    listMcpServerTools,
+    {},
+  );
+  const [toolsForId, setToolsForId] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -135,10 +142,48 @@ export function McpServersCard({
                     {s.lastTestError}
                   </p>
                 )}
+                {/* 工具清单(任务 2,2026-08-12):登记后能看到这个 server
+                    到底提供了哪些工具 —— mcp__server__tool 的真实装配结果。
+                    失败/零工具都如实显示,不伪装。 */}
+                {toolsForId === s.id && toolsState && (
+                  <div className="text-fg-secondary text-caption mt-2 flex flex-col gap-1">
+                    {toolsState.error ? (
+                      <p className="text-error break-all">{toolsState.error}</p>
+                    ) : toolsState.ok ? (
+                      <>
+                        <p className="text-success">
+                          {toolsState.prefixedTools?.length
+                            ? `✅ ${toolsState.prefixedTools.length} 个工具已装配:`
+                            : "这个 server 没有暴露任何工具。"}
+                        </p>
+                        {toolsState.prefixedTools?.map((t) => (
+                          <code key={t} className="font-mono break-all">
+                            {t}
+                          </code>
+                        ))}
+                      </>
+                    ) : null}
+                  </div>
+                )}
               </div>
 
               {canManage && (
                 <div className="flex items-center gap-2">
+                  <form
+                    action={toolsAction}
+                    onSubmit={() => setToolsForId(s.id)}
+                  >
+                    <input type="hidden" name="id" value={s.id} />
+                    <input
+                      type="hidden"
+                      name="organizationId"
+                      value={organizationId}
+                    />
+                    <Button type="submit" variant="secondary" size="sm">
+                      查看工具
+                    </Button>
+                  </form>
+
                   <form action={testAction}>
                     <input type="hidden" name="id" value={s.id} />
                     <input
