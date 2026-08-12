@@ -2,6 +2,7 @@ import { parseDefinition, type WorkflowStatus } from "@/lib/workflow/state-machi
 import { readAgentStream } from "@/lib/ai/read-agent-stream";
 import { getSiteUrl } from "@/lib/env/server";
 import { saveWorkflowMemory } from "@/lib/db/memories";
+import { logEventWith } from "@/lib/logging";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /** 运行中一个步骤的结果(含两种人工闸门占位) */
@@ -95,6 +96,14 @@ export async function executeWorkflowSteps(
         output: { steps: stepResults, paused_step_index: i },
       });
       await setWorkflow("WAITING_FOR_INPUT");
+      void logEventWith(ctx.supabase, {
+        level: "info",
+        event: "workflow.paused",
+        message: `工作流「${definition.steps[0]?.title ?? ""}…」在等待输入步骤前暂停`,
+        organizationId: ctx.organizationId,
+        actorId: ctx.userId,
+        meta: { workflowId, runId, stepIndex: i, stepTitle: step.title },
+      });
       return { paused: true, pausedStepTitle: step.title };
     }
 
@@ -160,6 +169,14 @@ export async function executeWorkflowSteps(
         output: { steps: stepResults },
       });
       await setWorkflow("FAILED");
+      void logEventWith(ctx.supabase, {
+        level: "error",
+        event: "workflow.failed",
+        message: `工作流执行失败:${message}`,
+        organizationId: ctx.organizationId,
+        actorId: ctx.userId,
+        meta: { workflowId, runId, stepIndex: i, stepTitle: step.title },
+      });
       return { error: `工作流执行失败:${message}` };
     }
   }
@@ -169,6 +186,14 @@ export async function executeWorkflowSteps(
     output: { steps: stepResults },
   });
   await setWorkflow("READY");
+  void logEventWith(ctx.supabase, {
+    level: "info",
+    event: "workflow.completed",
+    message: `工作流完成 ${definition.steps.length} 个步骤`,
+    organizationId: ctx.organizationId,
+    actorId: ctx.userId,
+    meta: { workflowId, runId, steps: definition.steps.length },
+  });
 
   // 闭环最后一环:最终产物沉淀为记忆(from_workflow)。失败不阻断运行。
   const lastStep = stepResults[stepResults.length - 1];
