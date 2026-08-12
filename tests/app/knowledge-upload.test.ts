@@ -49,4 +49,16 @@ describe("知识库上传按钮", () => {
     // 超长时滚动,不溢出页面
     expect(SRC).toMatch(/max-h-\[70vh\] overflow-y-auto/);
   });
+
+  it("文件行窄屏不叠加(修复「PDF、md 文字叠加在一起」)", () => {
+    const rowSrc = readFileSync(
+      resolve(__dirname, "../../src/components/knowledge/KnowledgeFileRow.tsx"),
+      "utf8",
+    );
+    // 窄屏 3 列(名称/类型/大小),宽屏才恢复 5 列
+    expect(rowSrc).toMatch(/grid-cols-\[1fr_auto_auto\]/);
+    expect(rowSrc).toMatch(/md:grid-cols-\[1fr_90px_110px_130px_110px\]/);
+    // 不再有裸 5 列写法(不带 md: 前缀的)
+    expect(rowSrc).not.toMatch(/(?<!md:)grid-cols-\[1fr_90px_110px_130px_110px\]/);
+  });
 });

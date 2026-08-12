@@ -101,7 +101,11 @@ export function KnowledgeFileRow({
   );
 
   const classes = cn(
-    "border-divider font-zh grid grid-cols-[1fr_90px_110px_130px_110px] items-center gap-3 border-b px-3.5 py-2.5 text-left",
+    "border-divider font-zh grid grid-cols-[1fr_auto_auto] items-center gap-x-3 gap-y-1 border-b px-3.5 py-2.5 text-left",
+    // 窄屏:3 列(名称/类型/大小)放第一行,状态/工作流自动换第二行;
+    // 宽屏:恢复完整 5 列一行。修复窄屏固定 5 列互相叠加(用户报
+    // 「PDF、md 文字叠加在一起」)。
+    "md:grid-cols-[1fr_90px_110px_130px_110px]",
     interactive &&
       "hover:bg-surface-2 cursor-pointer transition-colors duration-[var(--duration-hover)] ease-standard",
     className,

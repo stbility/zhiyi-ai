@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { extractText, truncateKnowledgeText } from "@/lib/knowledge/parse";
@@ -60,5 +63,53 @@ describe("知识库真实解析", () => {
     const long = "x".repeat(100_100);
     const r = truncateKnowledgeText(long);
     expect(r.endsWith("…(截断)")).toBe(true);
+  });
+
+  it("pdf 解析前注入 DOMMatrix polyfill(修复 DOMMatrix is not defined)", async () => {
+    const src = readFileSync(
+      resolve(__dirname, "../../src/lib/knowledge/parse.ts"),
+      "utf8",
+    );
+    // polyfill 定义存在
+    expect(src).toMatch(/function installPdfjsPolyfills/);
+    expect(src).toMatch(/DOMMatrix/);
+    // pdf 分支内调用 installPdfjsPolyfills()(定义在文件前部,调用在分支内)
+    const installDefIdx = src.indexOf("function installPdfjsPolyfills");
+    const pdfIdx = src.indexOf('if (fileType === "pdf")');
+    const callIdx = src.indexOf("installPdfjsPolyfills();");
+    expect(installDefIdx).toBeGreaterThan(-1);
+    expect(pdfIdx).toBeGreaterThan(-1);
+    // 调用点必须在 pdf 分支内(pdfIdx 之后)
+    expect(callIdx).toBeGreaterThan(pdfIdx);
+  });
+
+  it("带字体资源的 PDF 也能解析(触发字体矩阵路径)", async () => {
+    const fontPdf = Buffer.from(
+      `%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1 5 0 R>>>>/Contents 4 0 R>>endobj
+4 0 obj<</Length 60>>stream
+BT /F1 18 Tf 72 720 Td (Polyfill Works) Tj ET
+endstream
+endobj
+5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000268 00000 n 
+0000000348 00000 n 
+trailer<</Size 6/Root 1 0 R>>
+startxref
+402
+%%EOF`,
+      "latin1",
+    );
+    const r = await extractText(new Uint8Array(fontPdf), "pdf");
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.text).toContain("Polyfill Works");
   });
 });
