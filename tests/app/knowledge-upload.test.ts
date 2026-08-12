@@ -74,4 +74,9 @@ describe("知识库上传按钮", () => {
   it("上传 label 用系统惯例 text-label", () => {
     expect(SRC).toMatch(/<label className="text-fg-secondary text-label">/);
   });
+
+  it("预览占主空间,不再是 360px 窄条(修复「解析文件页面很窄」)", () => {
+    expect(SRC).toMatch(/lg:grid-cols-\[320px_1fr\]/);
+    expect(SRC).not.toMatch(/lg:grid-cols-\[1fr_360px\]/);
+  });
 });
