@@ -31,25 +31,34 @@ export interface NavEntry {
   href: string;
   /** 尚未交付的模块:显示但不可点击,并如实说明 */
   available: boolean;
+  /** 导航分组(2026-08-12):工作区 / 知识 / 管理 */
+  group: "workspace" | "knowledge" | "admin";
 }
 
 export const APP_NAV: readonly NavEntry[] = [
-  { key: "today", label: "今日", icon: "today", href: "/today", available: true },
-  { key: "assistant", label: "AI 助手", icon: "assistant", href: "/assistant", available: true },
+  { key: "today", label: "今日", icon: "today", href: "/today", available: true, group: "workspace" },
+  { key: "assistant", label: "AI 助手", icon: "assistant", href: "/assistant", available: true, group: "workspace" },
   // 智能体单独一条通道,不是 AI 助手里的一个开关。
   // 两者的执行形态完全不同:一个只说话,一个动工作区。见 /api/agent。
-  { key: "agent", label: "智能体", icon: "bot", href: "/agent", available: true },
-  { key: "workspace", label: "工作区", icon: "book", href: "/workspace", available: true },
-  { key: "workflow", label: "工作流", icon: "workflow", href: "/workflow", available: true },
-  { key: "knowledge", label: "知识库", icon: "knowledge", href: "/knowledge", available: true },
-  { key: "memory", label: "AI 记忆", icon: "memory", href: "/memory", available: true },
-  { key: "reports", label: "报表", icon: "reports", href: "/reports", available: true },
-  { key: "billing", label: "订阅", icon: "billing", href: "/billing", available: true },
-  { key: "integrations", label: "集成", icon: "link", href: "/settings/integrations", available: true },
-  { key: "members", label: "成员", icon: "today", href: "/settings/members", available: true },
-  { key: "persona", label: "品牌人格", icon: "edit", href: "/settings/persona", available: true },
-  { key: "eval", label: "评测", icon: "reports", href: "/settings/eval", available: true },
-  { key: "settings", label: "模型服务", icon: "settings", href: "/settings/models", available: true },
+  { key: "agent", label: "智能体", icon: "bot", href: "/agent", available: true, group: "workspace" },
+  { key: "workspace", label: "工作区", icon: "book", href: "/workspace", available: true, group: "workspace" },
+  { key: "workflow", label: "工作流", icon: "workflow", href: "/workflow", available: true, group: "workspace" },
+  { key: "knowledge", label: "知识库", icon: "knowledge", href: "/knowledge", available: true, group: "knowledge" },
+  { key: "memory", label: "AI 记忆", icon: "memory", href: "/memory", available: true, group: "knowledge" },
+  { key: "reports", label: "报表", icon: "reports", href: "/reports", available: true, group: "knowledge" },
+  { key: "billing", label: "订阅", icon: "billing", href: "/billing", available: true, group: "admin" },
+  { key: "integrations", label: "集成", icon: "link", href: "/settings/integrations", available: true, group: "admin" },
+  { key: "members", label: "成员", icon: "today", href: "/settings/members", available: true, group: "admin" },
+  { key: "persona", label: "品牌人格", icon: "edit", href: "/settings/persona", available: true, group: "admin" },
+  { key: "eval", label: "评测", icon: "reports", href: "/settings/eval", available: true, group: "admin" },
+  { key: "settings", label: "模型服务", icon: "settings", href: "/settings/models", available: true, group: "admin" },
+];
+
+/** 导航分组标题(渲染分隔行) */
+export const NAV_GROUPS: readonly { id: NavEntry["group"]; label: string }[] = [
+  { id: "workspace", label: "工作区" },
+  { id: "knowledge", label: "知识与数据" },
+  { id: "admin", label: "管理与设置" },
 ];
 
 export interface AppChromeProps {
@@ -95,55 +104,71 @@ export function AppChrome({
   }, [drawerOpen]);
 
   const nav = (
-    <nav aria-label="主导航" className="flex flex-1 flex-col gap-0.5 px-3 py-1">
-      {APP_NAV.map((item) => {
-        const active = pathname === item.href;
-
-        if (!item.available) {
-          return (
-            <span
-              key={item.key}
-              title="该模块尚未交付"
-              className="rounded-control text-fg-disabled flex cursor-not-allowed items-center gap-2.5 px-3 py-2.25 text-[14px]"
-            >
-              <Icon name={item.icon} size={17} className="shrink-0" />
-              <span className="flex-1">{item.label}</span>
-              <span className="text-label border-border-default rounded-tag border px-1.5">
-                建设中
-              </span>
-            </span>
-          );
-        }
-
+    <nav
+      aria-label="主导航"
+      // min-h-0 + overflow-y-auto:导航项变多时导航区独立滚动,
+      // 底部用户区(退出登录)永远固定可见 —— 不把退出挤出视口。
+      className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-1"
+    >
+      {NAV_GROUPS.map((group) => {
+        const items = APP_NAV.filter((item) => item.group === group.id);
+        if (items.length === 0) return null;
         return (
-          // 必须是真正的链接,不能是 button + router.push。
-          //
-          // 这是「导航按钮要点很多下才生效」的根因,有三层:
-          //   1. 水合完成前 <button onClick> 完全是死的 —— 事件还没挂上。
-          //      <Link> 渲染成 <a href>,零 JavaScript 也能跳。
-          //   2. <Link> 会预取目标页面;router.push 是点击那一刻才开始请求。
-          //      这些页面是 force-dynamic,一次要跑好几个数据库查询 ——
-          //      点下去一两秒内屏幕毫无变化,用户当然会再点。
-          //   3. 中键、Cmd+点击、右键「在新标签页打开」在 button 上全部失效。
-          <Link
-            key={item.key}
-            href={item.href}
-            aria-current={active ? "page" : undefined}
-            // 关抽屉发生在用户点击这一刻,而不是「观察到路由变了再补关闭」——
-            // 后者是把用户操作的结果当成需要同步的外部状态,会触发级联渲染
-            onClick={() => setDrawerOpen(false)}
-            className={cn(
-              "rounded-control flex cursor-pointer items-center gap-2.5 px-3 py-2.25 text-left text-[14px]",
-              "transition-colors duration-[var(--duration-hover)] ease-standard",
-              "focus-visible:outline-border-focus focus-visible:outline-2 focus-visible:outline-offset-2",
-              active
-                ? "bg-brand-tint text-brand"
-                : "text-fg-secondary hover:bg-surface-2",
-            )}
-          >
-            <Icon name={item.icon} size={17} className="shrink-0" />
-            {item.label}
-          </Link>
+          <div key={group.id} className="flex flex-col gap-0.5">
+            <p className="text-fg-tertiary font-zh text-caption mt-3 mb-1 px-3">
+              {group.label}
+            </p>
+            {items.map((item) => {
+              const active = pathname === item.href;
+
+              if (!item.available) {
+                return (
+                  <span
+                    key={item.key}
+                    title="该模块尚未交付"
+                    className="rounded-control text-fg-disabled flex cursor-not-allowed items-center gap-2.5 px-3 py-2.25 text-[14px]"
+                  >
+                    <Icon name={item.icon} size={17} className="shrink-0" />
+                    <span className="flex-1">{item.label}</span>
+                    <span className="text-label border-border-default rounded-tag border px-1.5">
+                      建设中
+                    </span>
+                  </span>
+                );
+              }
+
+              return (
+                // 必须是真正的链接,不能是 button + router.push。
+                //
+                // 这是「导航按钮要点很多下才生效」的根因,有三层:
+                //   1. 水合完成前 <button onClick> 完全是死的 —— 事件还没挂上。
+                //      <Link> 渲染成 <a href>,零 JavaScript 也能跳。
+                //   2. <Link> 会预取目标页面;router.push 是点击那一刻才开始请求。
+                //      这些页面是 force-dynamic,一次要跑好几个数据库查询 ——
+                //      点下去一两秒内屏幕毫无变化,用户当然会再点。
+                //   3. 中键、Cmd+点击、右键「在新标签页打开」在 button 上全部失效。
+                <Link
+                  key={item.key}
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  // 关抽屉发生在用户点击这一刻,而不是「观察到路由变了再补关闭」——
+                  // 后者是把用户操作的结果当成需要同步的外部状态,会触发级联渲染
+                  onClick={() => setDrawerOpen(false)}
+                  className={cn(
+                    "rounded-control flex cursor-pointer items-center gap-2.5 px-3 py-2.25 text-left text-[14px]",
+                    "transition-colors duration-[var(--duration-hover)] ease-standard",
+                    "focus-visible:outline-border-focus focus-visible:outline-2 focus-visible:outline-offset-2",
+                    active
+                      ? "bg-brand-tint text-brand"
+                      : "text-fg-secondary hover:bg-surface-2",
+                  )}
+                >
+                  <Icon name={item.icon} size={17} className="shrink-0" />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
         );
       })}
     </nav>
