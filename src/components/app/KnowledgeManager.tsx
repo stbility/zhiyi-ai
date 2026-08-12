@@ -6,7 +6,7 @@ import { useActionState } from "react";
 
 import { KnowledgeFileRow, type KnowledgeFileStatus } from "@/components/knowledge/KnowledgeFileRow";
 import { KnowledgePreview } from "@/components/knowledge/KnowledgePreview";
-import { Button, IconButton } from "@/components/primitives";
+import { Button, IconButton, Input } from "@/components/primitives";
 import { Icon } from "@/components/icons/Icon";
 import { deleteKnowledgeFile, uploadKnowledgeFile } from "@/app/(app)/knowledge/actions";
 import type { KnowledgeFileType } from "@/lib/knowledge/parse";
@@ -82,7 +82,7 @@ export function KnowledgeManager({
           action={uploadAction}
           className="bg-surface-2 border-border-default rounded-card font-zh flex flex-col gap-2 border p-4"
         >
-          <label className="text-fg-secondary text-caption">
+          <label className="text-fg-secondary text-label">
             上传文档(pdf / docx / md / txt,≤10MB):
           </label>
           <div className="flex flex-wrap items-center gap-2">
@@ -130,14 +130,15 @@ export function KnowledgeManager({
 
         {/* 检索 */}
         <div className="flex items-center gap-2">
-          <input
+          <Input
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={setQuery}
             onKeyDown={(e) => {
               if (e.key === "Enter") handleSearch();
             }}
             placeholder="检索文件名称或正文…"
-            className="border-border-default bg-surface-2 text-fg text-caption rounded-control font-zh w-full border px-3 py-2 outline-none"
+            hideLabel
+            className="flex-1"
           />
           <Button size="sm" variant="secondary" onClick={handleSearch}>
             检索
