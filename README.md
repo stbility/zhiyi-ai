@@ -2,7 +2,7 @@
 
 面向个人知识工作的中文 AI 工作流操作系统。
 
-## 当前状态:Phase 4 进行中(智能体与工作流)
+## 当前状态:Phase 4-8 交付完成,进入运维与迭代(2026-08-12)
 
 本项目按阶段交付,每阶段以 `pnpm verify`(lint + typecheck + test + production build)全绿为验收门,
 并由 GitHub Actions 在每次推送时强制执行。
@@ -14,15 +14,21 @@
 已经在生产上真实可用:多协议模型网关与跨厂商降级、智能体循环(步数/时间/失败三重护栏,
 支持检查点续跑突破 300 秒上限)、工作区与产物预览、联网检索、Git 仓库读写与开 PR、
 密钥加密与列级隔离、调用限流、RLS 隔离、记忆沉淀闭环(用户确认 → 落库 + LLM Wiki 同步,
-0028)、MCP 客户端与 SKILL 技能库(0030/0031,产品侧接入外部 MCP 生态,独立于 Hermes)。
+0028)、MCP 客户端与 SKILL 技能库(0030/0031,产品侧接入外部 MCP 生态,独立于 Hermes)、
+五档定价支付全链路(checkout/webhook/plans/billing)、后台 Worker 排队执行 + 人工闸门
+(等待输入/等待确认,断点续跑)、知识库(解析 + 全文检索 + 预览)、记忆管理页与向量召回
+(0040 pgvector,需配 EMBEDDINGS env 生效)、评测集与反馈飞轮(/settings/eval)、
+结构化日志(0056 system_logs + /api/health)、部署门禁(PR 级 preview 验证 + 分支保护)。
 
-**尚未交付,不得对外宣称**:工作流状态机与后台 Worker(续跑是缓解,单次窗口内仍受平台时限约束)、
-知识库与 RAG(解析/向量化/检索)、记忆管理页与记忆召回界面(沉淀闭环已通,界面未建)、
-监控与备份回滚。
+**部署门禁(2026-08-12)**:CI 全绿 ≠ 生产交付 —— main 分支保护强制「部署闭环验证」,
+Vercel 构建失败 → PR 红 → 合不进去;生产 SHA 对齐由 push 后验证兜底。
 
-> 已交付更新(2026-08-11):五档定价支付全链路已生产运行(STRIPE_PRICE_* 6/8 已配,
-> 权益矩阵 0055 已应用 30 行种子);成员管理已上线(/settings/members);组织切换器已上线。
-> 待配:STRIPE_PRICE_ENT_* 2 个(Enterprise 自定义报价可选)、EMBEDDINGS_API_URL/KEY(向量召回)。
+> 已交付更新(2026-08-12):后台 Worker(#95)、权益六项承诺全 gating(#96,并发/历史天数)、
+> 监控日志 + 健康检查 + 备份指南(#97)、知识库预览宽度(#98)、方案 B raw 直链提速(#101)、
+> 部署门禁(#102)、glm 排序修正(#103)。
+> 待配:STRIPE_PRICE_ENT_* 2 个(Enterprise 自定义报价可选)、EMBEDDINGS_API_URL/KEY(向量召回,
+> 建议 OpenAI text-embedding-3-small 或 NVIDIA bge-m3 免费方案,见 docs/env-config-guide.md)、
+> RESEND_API_KEY(事务邮件)。
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|

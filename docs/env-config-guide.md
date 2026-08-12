@@ -22,6 +22,16 @@
 > ⚠️ 代码要求：URL 必须是 OpenAI 兼容格式，POST `{model, input}` 返回 `{data: [{embedding}]}`。
 > 服务商任选（OpenAI / DeepSeek / 本地 ollama 等），只要兼容即可。
 
+### 免费/省钱方案（2026-08-12 调研）
+
+| 方案 | 成本 | 维度 | 说明 |
+|---|---|---|---|
+| **OpenAI text-embedding-3-small**（默认） | ~$0.02/1M tokens（个人用量几乎为 0） | 1536 ✅ 直接匹配 | 零代码，推荐首选 |
+| **NVIDIA bge-m3**（`https://integrate.api.nvidia.com/v1/embeddings`，复用 `PLATFORM_NVIDIA_API_KEY`） | 免费 | **1024 ≠ 1536** | 需迁移把 `memories.embedding` 改 `vector(1024)` + 重建 HNSW 索引，找 Hermes 出 0059 迁移 |
+
+> ⚠️ **EMBEDDINGS 变量不是金额**：`EMBEDDINGS_API_KEY` 填服务商的 API 密钥（`sk-...`），
+> 不是价格数字。费用由服务商按用量计（OpenAI embedding 极便宜），代码里无任何价格字段。
+
 ### 操作步骤
 1. 打开 Vercel → 项目 `zhiyi-ai` → **Settings → Environment Variables**
 2. 添加 3 个变量（Environment 选 **Production**，可同时选 Preview/Development 方便本地测）
