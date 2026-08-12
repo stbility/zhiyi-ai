@@ -7,7 +7,6 @@ import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getMyOrganizations } from "@/lib/db/queries";
 import { getMyEntitlements, quotaOf } from "@/lib/billing/entitlements";
-import { getSiteUrl } from "@/lib/env/server";
 import {
   assertTransition,
   parseDefinition,
@@ -252,124 +251,10 @@ export async function deleteWorkflow(id: string): Promise<WorkflowActionResult> 
   return { ok: "已删除。" };
 }
 
-import { readAgentStream } from "@/lib/ai/read-agent-stream";
-
-/** 运行中一个步骤的结果(含审批闸门占位) */
-interface StepResult {
-  readonly stepId: string;
-  readonly title: string;
-  readonly output?: string;
-  readonly error?: string;
-  readonly agent?: string;
-  /** 显式状态;无则 UI 按位置推断 */
-  readonly status?: "COMPLETED" | "FAILED" | "WAITING_FOR_APPROVAL";
-}
-
-interface RunOutput {
-  readonly steps?: StepResult[];
-  readonly paused_step_index?: number;
-}
-
-type WorkflowCtx = Extract<
-  Awaited<ReturnType<typeof requireWorkflowContext>>,
-  { supabase: unknown }
->;
-
-async function executeSteps(
-  ctx: WorkflowCtx,
-  workflowId: string,
-  runId: string,
-  definition: ReturnType<typeof parseDefinition>,
-  startIndex: number,
-  cookieHeader: string,
-): Promise<{ paused?: boolean; pausedStepTitle?: string; ok?: string; error?: string }> {
-  // 已完成的步骤(暂停恢复时续接)从 run.output 里读
-  const { data: run } = await ctx.supabase
-    .from("workflow_runs")
-    .select("output")
-    .eq("id", runId)
-    .maybeSingle();
-  const output = (run?.output as RunOutput | null) ?? {};
-  const stepResults: StepResult[] = Array.isArray(output.steps)
-    ? (output.steps as StepResult[])
-    : [];
-
-  const setRun = (status: WorkflowStatus, extra: Record<string, unknown> = {}) =>
-    ctx.supabase.from("workflow_runs").update({ status, ...extra }).eq("id", runId);
-  const setWorkflow = (status: WorkflowStatus) =>
-    ctx.supabase.from("workflows").update({ status, updated_at: new Date().toISOString() }).eq("id", workflowId);
-
-  for (let i = startIndex; i < definition.steps.length; i++) {
-    const step = definition.steps[i]!; // parseDefinition 已保证步骤合法且至少 1 个
-
-    // 审批闸门:执行前停下,等用户确认
-    if (step.needsApproval) {
-      stepResults.push({ stepId: step.id, title: step.title, status: "WAITING_FOR_APPROVAL" });
-      await setRun("WAITING_FOR_APPROVAL", {
-        output: { steps: stepResults, paused_step_index: i },
-      });
-      await setWorkflow("WAITING_FOR_APPROVAL");
-      return { paused: true, pausedStepTitle: step.title };
-    }
-
-    try {
-      const res = await fetch(`${getSiteUrl()}/api/agent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Cookie: cookieHeader },
-        body: JSON.stringify({ input: step.prompt }),
-        signal: AbortSignal.timeout(45_000),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? `步骤失败(HTTP ${res.status})`);
-      }
-      const stepOutput = await readAgentStream(res);
-      stepResults.push({
-        stepId: step.id,
-        title: step.title,
-        ...(step.agent ? { agent: step.agent } : {}),
-        output: stepOutput,
-        status: "COMPLETED",
-      });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      stepResults.push({ stepId: step.id, title: step.title, error: message, status: "FAILED" });
-      await setRun("FAILED", {
-        finished_at: new Date().toISOString(),
-        error: message,
-        output: { steps: stepResults },
-      });
-      await setWorkflow("FAILED");
-      return { error: `工作流执行失败:${message}` };
-    }
-  }
-
-  await setRun("COMPLETED", {
-    finished_at: new Date().toISOString(),
-    output: { steps: stepResults },
-  });
-  await setWorkflow("READY");
-
-  // 闭环最后一环:最终产物沉淀为记忆(from_workflow)。失败不阻断运行。
-  const lastStep = stepResults[stepResults.length - 1];
-  if (lastStep?.output && lastStep.output.trim() !== "") {
-    const { saveWorkflowMemory } = await import("@/lib/db/memories");
-    const result = await saveWorkflowMemory(ctx.supabase, {
-      organizationId: ctx.organization.id,
-      createdBy: ctx.user.id,
-      content: lastStep.output,
-    });
-    if (!result.ok) {
-      ctx.supabase.from("workflow_runs").update({
-        output: { steps: stepResults, memory_note: result.error },
-      }).eq("id", runId);
-    }
-  }
-
-  return {
-    ok: `已完成 ${definition.steps.length} 个步骤,最终产物已沉淀为 AI 记忆。`,
-  };
-}
+import {
+  executeWorkflowSteps,
+  type RunOutput,
+} from "@/lib/workflow/execute";
 
 export async function runWorkflow(id: string): Promise<WorkflowActionResult> {
   const ctx = await requireWorkflowContext();
@@ -384,45 +269,37 @@ export async function runWorkflow(id: string): Promise<WorkflowActionResult> {
     .maybeSingle();
   if (!workflow) return { error: "工作流不存在。" };
 
-  let definition;
-  try {
-    definition = parseDefinition(workflow.definition);
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "步骤定义无效。" };
-  }
-  // READY/FAILED/PAUSED → QUEUED(入队)→ RUNNING(同步执行);终态不可重跑
+  // READY/FAILED/PAUSED → QUEUED(入队);终态不可重跑
   try {
     assertTransition(workflow.status as WorkflowStatus, "QUEUED");
   } catch (e) {
     return { error: e instanceof Error ? e.message : "当前状态不可运行。" };
   }
 
-  // 工作流置 RUNNING(QUEUED 入队 → RUNNING 同步执行),建运行记录
-  await ctx.supabase.from("workflows").update({ status: "QUEUED", updated_at: new Date().toISOString() }).eq("id", idParsed.data);
-  await ctx.supabase.from("workflows").update({ status: "RUNNING", updated_at: new Date().toISOString() }).eq("id", idParsed.data);
+  // 入队(QUEUED):不在这里同步执行 —— 前端轮询 /api/workflow/worker
+  // 带用户身份执行(2026-08-12 Worker 化)。Worker 复用 executeWorkflowSteps,
+  // 与人工闸门(等待输入/确认)共用同一执行器。
+  await ctx.supabase
+    .from("workflows")
+    .update({ status: "QUEUED", updated_at: new Date().toISOString() })
+    .eq("id", idParsed.data);
   const { data: run, error: runError } = await ctx.supabase
     .from("workflow_runs")
     .insert({ workflow_id: idParsed.data, status: "QUEUED", trigger_source: "manual" })
     .select("id")
     .single();
   if (runError || !run) {
-    await ctx.supabase.from("workflows").update({ status: "FAILED", updated_at: new Date().toISOString() }).eq("id", idParsed.data);
+    await ctx.supabase
+      .from("workflows")
+      .update({ status: "FAILED", updated_at: new Date().toISOString() })
+      .eq("id", idParsed.data);
     return { error: `无法创建运行记录:${runError?.message ?? "未知错误"}` };
   }
-  await ctx.supabase
-    .from("workflow_runs")
-    .update({ status: "RUNNING", started_at: new Date().toISOString() })
-    .eq("id", run.id);
-
-  const cookieHeader = (await cookies()).toString();
-  const result = await executeSteps(ctx, idParsed.data, run.id, definition, 0, cookieHeader);
 
   revalidatePath("/workflow");
-  if (result.error) return { error: result.error };
-  if (result.paused) {
-    return { ok: `已在「${result.pausedStepTitle ?? "未知步骤"}」前停下,等待你的确认。` };
-  }
-  return { ok: result.ok ?? "完成。" };
+  return { ok: "已排队,正在后台执行…", queuedRunId: run.id } as WorkflowActionResult & {
+    queuedRunId?: string;
+  };
 }
 
 export async function approveWorkflowStep(
@@ -444,8 +321,8 @@ export async function approveWorkflowStep(
     .eq("workflow_id", workflowIdParsed.data)
     .maybeSingle();
   if (!run) return { error: "运行记录不存在。" };
-  if (run.status !== "WAITING_FOR_APPROVAL") {
-    return { error: "该运行不在等待确认状态。" };
+  if (!["WAITING_FOR_APPROVAL", "WAITING_FOR_INPUT"].includes(run.status)) {
+    return { error: "该运行不在等待确认/输入状态。" };
   }
   const output = (run.output as RunOutput | null) ?? {};
   const pausedIndex = output.paused_step_index;
@@ -495,8 +372,12 @@ export async function approveWorkflowStep(
     .eq("id", workflowIdParsed.data);
 
   const cookieHeader = (await cookies()).toString();
-  const result = await executeSteps(
-    ctx,
+  const result = await executeWorkflowSteps(
+    {
+      supabase: ctx.supabase as never,
+      organizationId: ctx.organization.id,
+      userId: ctx.user.id,
+    },
     workflowIdParsed.data,
     runIdParsed.data,
     definition,
@@ -508,6 +389,84 @@ export async function approveWorkflowStep(
   if (result.error) return { error: result.error };
   if (result.paused) {
     return { ok: `已在「${result.pausedStepTitle ?? "未知步骤"}」前停下,等待你的确认。` };
+  }
+  return { ok: result.ok ?? "完成。" };
+}
+
+/** 等待输入闸门:提交输入后从暂停点继续执行(2026-08-12 补全状态机承诺)。 */
+export async function submitWorkflowInput(
+  workflowId: string,
+  runId: string,
+  input: string,
+): Promise<WorkflowActionResult> {
+  const ctx = await requireWorkflowContext();
+  if ("error" in ctx) return { error: ctx.error };
+  const workflowIdParsed = idSchema.safeParse(workflowId);
+  if (!workflowIdParsed.success) return { error: "工作流标识无效。" };
+  const runIdParsed = idSchema.safeParse(runId);
+  if (!runIdParsed.success) return { error: "运行标识无效。" };
+  const inputTrimmed = input.trim();
+  if (inputTrimmed.length === 0 || inputTrimmed.length > 4000) {
+    return { error: "输入需为 1-4000 字。" };
+  }
+
+  const { data: run } = await ctx.supabase
+    .from("workflow_runs")
+    .select("status, output")
+    .eq("id", runIdParsed.data)
+    .eq("workflow_id", workflowIdParsed.data)
+    .maybeSingle();
+  if (!run) return { error: "运行记录不存在。" };
+  if (run.status !== "WAITING_FOR_INPUT") {
+    return { error: "该运行不在等待输入状态。" };
+  }
+  const output = (run.output as RunOutput | null) ?? {};
+  const pausedIndex = output.paused_step_index;
+  if (typeof pausedIndex !== "number" || pausedIndex < 0) {
+    return { error: "运行缺少暂停位置。" };
+  }
+
+  const { data: workflow } = await ctx.supabase
+    .from("workflows")
+    .select("definition")
+    .eq("id", workflowIdParsed.data)
+    .maybeSingle();
+  if (!workflow) return { error: "工作流不存在。" };
+  let definition;
+  try {
+    definition = parseDefinition(workflow.definition);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "步骤定义无效。" };
+  }
+
+  // 提交的输入写入 run.output.pending_input,续跑时拼进步骤指令
+  await ctx.supabase
+    .from("workflow_runs")
+    .update({ status: "RUNNING", output: { ...output, pending_input: inputTrimmed } })
+    .eq("id", runIdParsed.data);
+  await ctx.supabase
+    .from("workflows")
+    .update({ status: "RUNNING", updated_at: new Date().toISOString() })
+    .eq("id", workflowIdParsed.data);
+
+  const cookieHeader = (await cookies()).toString();
+  const result = await executeWorkflowSteps(
+    {
+      supabase: ctx.supabase as never,
+      organizationId: ctx.organization.id,
+      userId: ctx.user.id,
+    },
+    workflowIdParsed.data,
+    runIdParsed.data,
+    definition,
+    pausedIndex + 1,
+    cookieHeader,
+  );
+
+  revalidatePath("/workflow");
+  if (result.error) return { error: result.error };
+  if (result.paused) {
+    return { ok: `已在「${result.pausedStepTitle ?? "未知步骤"}」前停下,等待输入/确认。` };
   }
   return { ok: result.ok ?? "完成。" };
 }

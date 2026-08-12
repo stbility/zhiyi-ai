@@ -44,6 +44,10 @@ export interface WorkflowStep {
   readonly agent?: string | undefined;
   /** 需要人工确认闸门:执行到该步骤前停下,等用户批准后才继续 */
   readonly needsApproval?: boolean | undefined;
+  /** 需要人工输入闸门:执行到该步骤前停下,等用户提交输入后才继续。
+   *   inputLabel 描述要什么(如「粘贴本月销售数据」)。 */
+  readonly needsInput?: boolean | undefined;
+  readonly inputLabel?: string | undefined;
 }
 
 export interface WorkflowDefinition {
@@ -72,6 +76,8 @@ export function parseDefinition(raw: unknown): WorkflowDefinition {
       prompt?: unknown;
       agent?: unknown;
       needsApproval?: unknown;
+      needsInput?: unknown;
+      inputLabel?: unknown;
     };
     if (typeof step.id !== "string" || step.id.length === 0 || step.id.length > 40) {
       throw new Error("步骤 id 无效。");
@@ -88,12 +94,17 @@ export function parseDefinition(raw: unknown): WorkflowDefinition {
     if (agent.length > 30) {
       throw new Error("Agent 名最多 30 字。");
     }
+    const inputLabel = typeof step.inputLabel === "string" ? step.inputLabel.trim() : "";
+    if (inputLabel.length > 200) {
+      throw new Error("输入说明最多 200 字。");
+    }
     steps.push({
       id: step.id,
       title,
       prompt,
       ...(agent ? { agent } : {}),
       ...(step.needsApproval === true ? { needsApproval: true } : {}),
+      ...(step.needsInput === true ? { needsInput: true, ...(inputLabel ? { inputLabel } : {}) } : {}),
     });
   }
   if (steps.length === 0) {

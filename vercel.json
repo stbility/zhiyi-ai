@@ -3,5 +3,11 @@
   "framework": "nextjs",
   "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "next build",
-  "regions": ["sin1"]
+  "regions": ["sin1"],
+  "cron": [
+    {
+      "path": "/api/workflow/worker",
+      "schedule": "0 6,18 * * *"
+    }
+  ]
 }
