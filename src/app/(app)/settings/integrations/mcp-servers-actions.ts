@@ -343,3 +343,84 @@ async function decryptCipher(cipher: string): Promise<string> {
   const { decryptSecret } = await import("@/lib/crypto/secret-box");
   return decryptSecret(cipher);
 }
+
+/** 工具清单查询结果:成功返回工具名数组,失败带错误信息 */
+export interface ToolsListState {
+  error?: string;
+  ok?: boolean;
+  /** 拉取到的远程工具原始名(mcp__<server>__<tool> 的 <tool> 部分) */
+  tools?: string[];
+  /** 实际装配名(含 mcp__ 前缀 + 清洗后的名字) */
+  prefixedTools?: string[];
+  fetchedAt?: string;
+}
+
+/**
+ * 拉取一个已登记 MCP server 的工具清单(任务 2,2026-08-12)。
+ *
+ * 集成页此前只显示「测试连接」状态,登记后看不到这个 server 到底
+ * 提供了哪些工具 —— 用户无法确认 mcp__<server>__<tool> 是否已挂上。
+ * 这里复用 testMcpServer 的授权/解密流程,把 tools/list 的真实结果
+ * 展示在页面上:连接失败/零工具都如实显示,不伪装。
+ */
+export async function listMcpServerTools(
+  _prev: ToolsListState,
+  formData: FormData,
+): Promise<ToolsListState> {
+  const parsed = idSchema.safeParse({
+    id: formData.get("id"),
+    organizationId: formData.get("organizationId"),
+  });
+  if (!parsed.success) return { error: "标识无效" };
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { error: "认证服务未配置。" };
+
+  // 授权:用户身份读可见列,RLS 认可才算有权限
+  const { data: row } = await supabase
+    .from("mcp_servers")
+    .select("name, url, timeout_ms")
+    .eq("id", parsed.data.id)
+    .eq("organization_id", parsed.data.organizationId)
+    .maybeSingle();
+  if (!row) return { error: "找不到这个 server,或你没有权限访问它。" };
+
+  const admin = createSupabaseAdminClient();
+  if (!admin) {
+    return { error: "服务端密钥未配置,无法读取令牌密文。" };
+  }
+  const { data: secret } = await admin
+    .from("mcp_servers")
+    .select("auth_token_cipher")
+    .eq("id", parsed.data.id)
+    .eq("organization_id", parsed.data.organizationId)
+    .maybeSingle();
+  if (!secret?.auth_token_cipher) {
+    return { error: "令牌解密失败。请删除后重新登记。" };
+  }
+
+  let token: string;
+  try {
+    token = await decryptCipher(secret.auth_token_cipher as string);
+  } catch {
+    return { error: "令牌解密失败。请删除后重新登记。" };
+  }
+
+  const listed = await mcpListTools({
+    id: parsed.data.id,
+    name: row.name,
+    url: row.url,
+    authToken: token,
+    timeoutMs: row.timeout_ms ?? 15_000,
+  });
+  if (!listed.ok) {
+    return { error: `工具拉取失败:${listed.message}` };
+  }
+
+  return {
+    ok: true,
+    tools: listed.tools.map((t) => t.name),
+    prefixedTools: listed.tools.map((t) => `mcp__${row.name}__${t.name}`),
+    fetchedAt: new Date().toISOString(),
+  };
+}

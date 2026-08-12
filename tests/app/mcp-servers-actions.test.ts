@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { mcpListTools } from "@/lib/mcp/client";
+
 /**
  * MCP Server 登记 Server Actions(mcp-servers-actions.ts)。
  *
@@ -274,4 +276,40 @@ describe("toggleMcpServer / deleteMcpServer", () => {
     const out = await deleteMcpServer({}, idForm());
     expect(out.ok).toContain("已删除");
   });
+
+  it("listMcpServerTools 拉取工具清单(mcp__server__tool 装配结果)", async () => {
+    mockSupabase = fakeSupabase(
+      { count: 1, data: { name: "github", url: "https://mcp.example.com", timeout_ms: 15000 } },
+      userSelectLog,
+    );
+    mockAdmin = fakeSupabase(
+      { count: 1, data: { auth_token_cipher: "cipher:token" } },
+      adminSelectLog,
+    );
+    const { listMcpServerTools } = await load();
+    const out = await listMcpServerTools({}, idForm());
+    expect(out.ok).toBe(true);
+    // mcpListTools mock 返回 tool_a/tool_b → 装配名带 mcp__<server>__ 前缀
+    expect(out.prefixedTools).toEqual(["mcp__github__tool_a", "mcp__github__tool_b"]);
+  });
+
+  it("listMcpServerTools 连接失败如实报错(不伪装成功)", async () => {
+    mockSupabase = fakeSupabase(
+      { count: 1, data: { name: "github", url: "https://mcp.example.com", timeout_ms: 15000 } },
+      userSelectLog,
+    );
+    mockAdmin = fakeSupabase(
+      { count: 1, data: { auth_token_cipher: "cipher:token" } },
+      adminSelectLog,
+    );
+    vi.mocked(mcpListTools).mockResolvedValueOnce({
+      ok: false,
+      message: "连接超时",
+      tools: [],
+    });
+    const { listMcpServerTools } = await load();
+    const out = await listMcpServerTools({}, idForm());
+    expect(out.error).toContain("工具拉取失败");
+  });
 });
+
