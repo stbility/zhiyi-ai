@@ -135,7 +135,11 @@ async function rpc(
   cfg: McpServerConfig,
   method: string,
   params: unknown,
-): Promise<{ ok: true; result: unknown } | { ok: false; message: string }> {
+  sessionId?: string,
+): Promise<
+  | { ok: true; result: unknown; sessionId?: string }
+  | { ok: false; message: string }
+> {
   // P2-8:SSRF 守卫 —— 请求发出前校验 server 地址。validateServerUrl
   // 只拦协议(http 非 localhost),拦不住 https 指向私网 IP / 内网域名 /
   // DNS rebinding。base-url-guard 做运行时 DNS 解析 + 私网段判定,
@@ -161,6 +165,10 @@ async function rpc(
         "Content-Type": "application/json",
         Authorization: `Bearer ${cfg.authToken}`,
         Accept: "application/json, text/event-stream",
+        // MCP streamable HTTP 必需:缺协议头/会话 id 时 server 会 400
+        // (实证:Supabase MCP 的 tools/list 无会话 → HTTP 400)
+        "MCP-Protocol-Version": "2025-03-26",
+        ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}),
       },
       body: JSON.stringify(body),
       // 外部 server 可能很慢,但 agent 的预算有限。超时宁可失败,不烧预算
@@ -209,7 +217,14 @@ async function rpc(
       message: `server 返回错误:${msg.error.message ?? "未知错误"}(code ${msg.error.code ?? "?"})`,
     };
   }
-  return { ok: true, result: msg.result };
+  // streamable HTTP 会话:initialize 响应头带 Mcp-Session-Id,
+  // 后续请求必须回传,否则严格 server(Supabase MCP 实证)返回 400
+  const sessionHeader = res.headers.get("Mcp-Session-Id") ?? undefined;
+  return {
+    ok: true,
+    result: msg.result,
+    ...(sessionHeader ? { sessionId: sessionHeader } : {}),
+  };
 }
 
 /**
@@ -246,6 +261,8 @@ export async function mcpInitialize(cfg: McpServerConfig): Promise<{
   ok: boolean;
   message: string;
   serverInfo?: unknown;
+  /** streamable HTTP 会话 id:后续请求必须回传(Mcp-Session-Id) */
+  sessionId?: string;
 }> {
   const out = await rpc(cfg, "initialize", {
     protocolVersion: "2025-06-18",
@@ -279,6 +296,7 @@ export async function mcpInitialize(cfg: McpServerConfig): Promise<{
     ok: true,
     message: "连接成功",
     serverInfo: result?.serverInfo,
+    ...(out.sessionId ? { sessionId: out.sessionId } : {}),
   };
 }
 
@@ -286,7 +304,14 @@ export async function mcpInitialize(cfg: McpServerConfig): Promise<{
 export async function mcpListTools(
   cfg: McpServerConfig,
 ): Promise<{ ok: boolean; message: string; tools: McpRemoteTool[] }> {
-  const out = await rpc(cfg, "tools/list", {});
+  // streamable HTTP 会话纪律(2026-08-12 修复,实证):
+  // tools/list 必须在 initialize 之后、带 Mcp-Session-Id 回传 ——
+  // 否则严格 server(Supabase MCP)返回 HTTP 400「no session」。
+  // 此前直接裸调 tools/list,initialize 成功但 list 必失败。
+  const init = await mcpInitialize(cfg);
+  if (!init.ok) return { ok: false, message: init.message, tools: [] };
+
+  const out = await rpc(cfg, "tools/list", {}, init.sessionId);
   if (!out.ok) return { ok: false, message: out.message, tools: [] };
 
   const result = out.result as { tools?: unknown } | undefined;
