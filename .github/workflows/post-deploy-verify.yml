@@ -1,16 +1,22 @@
 name: post-deploy-verify
 
-# 部署后闭环验证(2026-08-10 开发治理 P0-2):
-#   main 推送 → Vercel 自动部署 → 本工作流轮询 /status.json 直到
-#   deployed_sha == 本次推送 SHA → 渲染冒烟关键路由 → 结果作为 commit check。
-# 「本地全绿 ≠ 生产交付」从此有机器闭环:部署滞后/渲染阻断 = check 红。
+# 部署后闭环验证(2026-08-10 开发治理 P0-2,2026-08-12 升级):
+#   · main 推送 → Vercel 自动部署 → 轮询生产 /status.json 直到
+#     deployed_sha == 推送 SHA → 渲染冒烟关键路由 → 结果作为 commit check。
+#   · pull_request → Vercel 自动 preview 部署 → 轮询 preview /status.json
+#     直到 deployed_sha == PR 头 SHA → 渲染冒烟 → 结果作为 PR required check。
+#     (2026-08-12 教训:#95-#99 GitHub CI 5/5 全绿但 Vercel 构建失败
+#      【vercel.json cron schema】——事后才暴露,合入没被拦。从此部署
+#      验证前置到 PR,配合 branch protection required check 真正阻断带病合入。)
 #
-# 零密钥依赖:只访问公开端点 https://zhiyi-ai.vercel.app/status.json。
+# 零密钥依赖:生产验证只访问公开端点;PR 验证用 GITHUB_TOKEN 查
+# preview deployment 的公开 URL(都是公开站点的 /status.json)。
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:
+  pull_request:
+    branches: [main]
 
 jobs:
   verify:
@@ -18,19 +24,49 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: 目标 SHA
-        run: echo "TARGET=${{ github.sha }}" >> "$GITHUB_ENV"
+      - name: 目标 SHA 与 LIVE_URL(PR=preview, push=生产)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "TARGET=${{ github.head_ref == '' && github.event.pull_request.head.sha || github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
+            # 从 deployments API 找本 PR 分支最新的 Preview deployment URL
+            URL=""
+            for i in $(seq 1 12); do
+              body=$(curl -s --max-time 10 \
+                -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/deployments?ref=${{ github.head_ref }}&per_page=5" || true)
+              URL=$(echo "$body" | jq -r 'map(select(.environment == "Preview")) | .[0].id // empty' 2>/dev/null || true)
+              if [ -n "$URL" ]; then
+                # 拿该 deployment 的 status → environment_url
+                URL=$(curl -s --max-time 10 \
+                  -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                  "https://api.github.com/repos/${{ github.repository }}/deployments/$URL/statuses" \
+                  | jq -r 'map(select(.environment_url != null)) | .[0].environment_url // empty' 2>/dev/null || true)
+                [ -n "$URL" ] && break
+              fi
+              echo "  preview deployment 未就绪,5s 后再试…"
+              sleep 5
+            done
+            if [ -z "$URL" ]; then
+              echo "❌ 拿不到 preview deployment URL(Vercel 未部署或部署失败)"
+              exit 1
+            fi
+            echo "LIVE_URL=$URL" >> "$GITHUB_ENV"
+            echo "✅ preview URL: $URL"
+          else
+            echo "TARGET=${{ github.sha }}" >> "$GITHUB_ENV"
+            echo "LIVE_URL=${ZHIYI_LIVE_URL:-https://zhiyi-ai.vercel.app}" >> "$GITHUB_ENV"
+          fi
 
       - name: 轮询 /status.json 直到部署 SHA 对齐(最长 ~12 分钟)
         run: |
-          LIVE_URL="${ZHIYI_LIVE_URL:-https://zhiyi-ai.vercel.app}"
           ok=0
           for i in $(seq 1 48); do
             body=$(curl -s --max-time 10 "$LIVE_URL/status.json" || true)
             deployed=$(echo "$body" | jq -r '.deployed_sha // empty' 2>/dev/null || true)
             if [ -n "$deployed" ] && [ "$deployed" = "$TARGET" ]; then
-              echo "✅ 部署对齐: deployed_sha=$deployed == 推送 SHA"
-              echo "$body" | jq '{deployed_sha, commit_ref, env_fingerprint}' | sed 's/^/  /'
+              echo "✅ 部署对齐: deployed_sha=$deployed == 目标 SHA"
+              echo "$body" | jq '{deployed_sha, env_fingerprint}' | sed 's/^/  /'
               ok=1
               break
             fi
@@ -38,13 +74,12 @@ jobs:
             sleep 15
           done
           if [ "$ok" -ne 1 ]; then
-            echo "❌ 部署未对齐:12 分钟内 /status.json 未报告本次 SHA(部署失败/队列/滞后)"
+            echo "❌ 部署未对齐:12 分钟内 /status.json 未报告目标 SHA(部署失败/队列/滞后)"
             exit 1
           fi
 
       - name: 渲染冒烟(关键路由)
         run: |
-          LIVE_URL="${ZHIYI_LIVE_URL:-https://zhiyi-ai.vercel.app}"
           for path in / /pricing /status; do
             code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$LIVE_URL$path")
             if [ "$code" != "200" ]; then
