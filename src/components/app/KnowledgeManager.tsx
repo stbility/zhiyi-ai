@@ -194,9 +194,11 @@ export function KnowledgeManager({
             {selected.status === "ready" && selected.contentText ? (
               /* 全文展示,不再 slice(0,6000) 截断 —— 用户报「解析不完整」
                  实为显示层截断:SKILL.md 等长文档被砍掉后半,存储其实完整。
-                 滚动由外层容器承担,超长不溢出页面。 */
+                 滚动由外层容器承担,超长不溢出页面。
+                 前景色用 paper token:预览是浅色纸张,text-fg-secondary
+                 (深色主题前景)会在白纸上「叠加/看不清」。 */
               <div className="max-h-[70vh] overflow-y-auto">
-                <pre className="text-fg-secondary whitespace-pre-wrap text-[13px] leading-[1.7]">
+                <pre className="text-paper-fg whitespace-pre-wrap text-[13px] leading-[1.7]">
                   {selected.contentText}
                 </pre>
               </div>
