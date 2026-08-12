@@ -42,4 +42,11 @@ describe("知识库上传按钮", () => {
   it("accept 限定 pdf/docx/md/txt", () => {
     expect(SRC).toMatch(/accept="\.pdf,\.docx,\.md,\.markdown,\.txt"/);
   });
+
+  it("预览全文展示,不再 slice 截断(修复「解析不完整」误报)", () => {
+    expect(SRC).not.toMatch(/contentText\.slice\(/);
+    expect(SRC).toMatch(/\{selected\.contentText\}/);
+    // 超长时滚动,不溢出页面
+    expect(SRC).toMatch(/max-h-\[70vh\] overflow-y-auto/);
+  });
 });
