@@ -16,6 +16,7 @@ import {
   pauseWorkflow,
   resumeWorkflow,
   runWorkflow,
+  submitWorkflowInput,
   updateWorkflow,
 } from "@/app/(app)/workflow/actions";
 import type { WorkflowStep } from "@/lib/workflow/state-machine";
@@ -154,6 +155,7 @@ function WorkflowDetailPanel({
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+  const [waitingInput, setWaitingInput] = useState("");
   const [, startTransition] = useTransition();
 
   const editing = canEdit && (detail.status === "DRAFT" || detail.status === "READY");
@@ -167,6 +169,60 @@ function WorkflowDetailPanel({
     else setOk(result.ok ?? "完成。");
     setPending(null);
     startTransition(() => router.refresh());
+  }
+
+  /** 运行(Worker 化):入队后带用户身份调 worker 执行,直到完成或暂停 */
+  async function runQueued(): Promise<{ ok?: string; error?: string }> {
+    setPending("run");
+    setError(null);
+    setOk(null);
+    const result = await runWorkflow(detail.id);
+    if (result.error) {
+      setError(result.error);
+      setPending(null);
+      return { error: result.error };
+    }
+    const queuedRunId = (result as { queuedRunId?: string }).queuedRunId;
+    if (!queuedRunId) {
+      setOk(result.ok ?? "已排队。");
+      setPending(null);
+      startTransition(() => router.refresh());
+      return { ok: result.ok ?? "已排队。" };
+    }
+    setOk("已排队,正在执行…");
+    // 轮询 worker:最多等 5 分钟(与 /api/agent 300s 时限一致)。
+    // worker 以用户 cookie 执行步骤;到达人工闸门/完成/失败即停。
+    try {
+      const res = await fetch(`/api/workflow/worker?runId=${queuedRunId}`, {
+        method: "GET",
+        cache: "no-store",
+        signal: AbortSignal.timeout(310_000),
+      });
+      const body = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        paused?: boolean;
+        step?: string;
+        message?: string;
+        error?: string;
+        nothing?: boolean;
+      } | null;
+      if (!res.ok) {
+        setError(body?.error ?? `执行失败(HTTP ${res.status})`);
+      } else if (body?.paused) {
+        setOk(`已在「${body.step ?? "某步骤"}」前停下,等待输入/确认。`);
+      } else if (body?.message) {
+        setOk(body.message);
+      } else if (!body?.nothing) {
+        setOk("执行完成。");
+      }
+    } catch {
+      // 前端请求中断(页面切换/网络)不代表 worker 停 —— run 状态在库,
+      // 刷新页面即可看到最新进度;超 10 分钟无人认领由 cron 兜底清理。
+      setOk("已排队,执行进行中(可刷新查看进度)。");
+    }
+    setPending(null);
+    startTransition(() => router.refresh());
+    return {};
   }
 
   async function save() {
@@ -191,7 +247,7 @@ function WorkflowDetailPanel({
     [];
   if (detail.status === "DRAFT") actions.push({ key: "ready", label: "就绪", run: () => markReady(detail.id) });
   if (detail.status === "READY") {
-    actions.push({ key: "run", label: "运行", run: () => runWorkflow(detail.id) });
+    actions.push({ key: "run", label: "运行", run: () => runQueued() });
     actions.push({ key: "pause", label: "暂停", run: () => pauseWorkflow(detail.id) });
   }
   if (detail.status === "PAUSED") {
@@ -199,7 +255,7 @@ function WorkflowDetailPanel({
     actions.push({ key: "cancel", label: "取消", run: () => cancelWorkflow(detail.id) });
   }
   if (detail.status === "FAILED") {
-    actions.push({ key: "run", label: "重试", run: () => runWorkflow(detail.id) });
+    actions.push({ key: "run", label: "重试", run: () => runQueued() });
     actions.push({ key: "cancel", label: "取消", run: () => cancelWorkflow(detail.id) });
   }
   if (!["RUNNING", "COMPLETED"].includes(detail.status)) {
@@ -310,6 +366,45 @@ function WorkflowDetailPanel({
                 <p className="border-error-tint bg-error-tint text-error rounded-control text-caption p-3">
                   {selectedRun.error}
                 </p>
+              )}
+
+              {selectedRun.status === "WAITING_FOR_INPUT" && (
+                <div className="flex flex-col gap-2">
+                  <p className="text-fg-secondary text-caption">
+                    该步骤需要你提供输入(如数据、文档片段),提交后继续执行。
+                  </p>
+                  <TextArea
+                    value={waitingInput}
+                    onChange={setWaitingInput}
+                    rows={3}
+                    placeholder="粘贴需要提供给智能体的输入…"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      disabled={pending !== null || waitingInput.trim() === ""}
+                      onClick={() =>
+                        void act("submit-input", () =>
+                          submitWorkflowInput(detail.id, selectedRun.id, waitingInput),
+                        )
+                      }
+                    >
+                      {pending === "submit-input" ? "处理中…" : "提交并继续执行"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={pending !== null}
+                      onClick={() =>
+                        void act("cancel-input", () =>
+                          approveWorkflowStep(detail.id, selectedRun.id, false),
+                        )
+                      }
+                    >
+                      取消本次运行
+                    </Button>
+                  </div>
+                </div>
               )}
 
               {selectedRun.status === "WAITING_FOR_APPROVAL" && (
@@ -501,7 +596,7 @@ function WorkflowEditor({
                 删除
               </Button>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
               <Checkbox
                 checked={step.needsApproval === true}
                 onChange={(checked) => {
@@ -511,7 +606,28 @@ function WorkflowEditor({
                 }}
                 label="需要人工确认(执行到此处停下等待批准)"
               />
+              <Checkbox
+                checked={step.needsInput === true}
+                onChange={(checked) => {
+                  const next = [...steps];
+                  next[index] = { ...step, needsInput: checked || undefined };
+                  onSteps(next);
+                }}
+                label="需要人工输入(执行到此处停下等待资料)"
+              />
             </div>
+            {step.needsInput && (
+              <Input
+                value={step.inputLabel ?? ""}
+                onChange={(inputLabel) => {
+                  const next = [...steps];
+                  next[index] = { ...step, inputLabel };
+                  onSteps(next);
+                }}
+                placeholder="要什么输入?如:粘贴本月销售数据(可选)"
+                hideLabel
+              />
+            )}
             <TextArea
               value={step.prompt}
               onChange={(prompt) => {
