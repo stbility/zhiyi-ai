@@ -27,6 +27,20 @@ describe("readRepoFile 读缓存", () => {
     expect(SRC).toMatch(/\$\{path\}/);
   });
 
+  it("方案 B:raw 直链优先(CDN 提速首次读),API fallback 保留", () => {
+    // raw 直链存在且先于 API 调用
+    expect(SRC).toMatch(/async function rawRead/);
+    expect(SRC).toMatch(/raw\.githubusercontent\.com/);
+    const rawIdx = SRC.indexOf("rawResult = await rawRead");
+    const apiIdx = SRC.indexOf("const r = await api(");
+    expect(rawIdx).toBeGreaterThan(-1);
+    expect(apiIdx).toBeGreaterThan(rawIdx);
+    // private 仓库带 token 查询参数
+    expect(SRC).toMatch(/\?token=\$\{encodeURIComponent\(auth\.token\)\}/);
+    // 二进制内容退回 API(不把乱码给模型)
+    expect(SRC).toMatch(/\\u0000/);
+  });
+
   it("TTL 60s(过期后重新请求)", () => {
     expect(SRC).toMatch(/FILE_CACHE_TTL_MS = 60_000/);
     expect(SRC).toMatch(/Date\.now\(\) - hit\.at < FILE_CACHE_TTL_MS/);
