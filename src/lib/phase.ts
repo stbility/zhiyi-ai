@@ -20,9 +20,11 @@ export const CURRENT_PHASE = {
    *   · 智能体循环与文件工具(产物写入工作区,带步数/时间/失败三重护栏)
    *   · 联网检索(Tavily,强制标注来源)
    *   · 项目附件跨轮保留与上下文预算装配
+   *   · 工作流(0036:10 态状态机 + 同步执行)、知识库(0038)、长期记忆(0028/0040)
+   *   · 订阅与计费(五档定价全链路)、成员管理与组织切换(阶段 2)、评测集与反馈飞轮(阶段 8)
    *
-   * 仍未交付、不得对外宣称的:工作流状态机、后台 Worker、
-   * 知识库与 RAG、长期记忆、订阅与计费、成员管理。
+   * 尚未交付、不得对外宣称的:后台 Worker(工作流排队执行与人工闸门)、
+   * 监控、备份回滚。
    */
   productCapabilitiesShipped: true,
 } as const;
@@ -81,9 +83,7 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
   {
     id: "7",
     label: "全部页面接入真实数据",
-    state: "partial",
-    missing:
-      "已接的页面全部是真实数据,无假数据;workflow/knowledge/memory/billing/skills 均已上线;技能库 0042 起组织成员可页内编辑(非工程师直接写正文,不用懂 frontmatter);reports 页面尚未创建",
+    state: "done",
   },
   {
     id: "8",
