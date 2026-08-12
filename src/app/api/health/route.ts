@@ -37,7 +37,9 @@ export async function GET() {
   );
   checks.stripe_secret = Boolean(process.env.STRIPE_SECRET_KEY);
   checks.stripe_webhook = Boolean(process.env.STRIPE_WEBHOOK_SECRET);
-  checks.cron_secret = Boolean(process.env.CRON_SECRET);
+  // cron 已移除(#100 部署失败修复:vercel.json cron 不被当前计划接受),
+  // 不再作为健康依赖检查 —— 之前 cron_secret 缺失拖累整体 503 误报。
+  checks.cron_secret = true;
 
   const allOk = Object.values(checks).every(Boolean);
   return NextResponse.json(
