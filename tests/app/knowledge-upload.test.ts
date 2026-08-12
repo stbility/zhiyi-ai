@@ -61,4 +61,17 @@ describe("知识库上传按钮", () => {
     // 不再有裸 5 列写法(不带 md: 前缀的)
     expect(rowSrc).not.toMatch(/(?<!md:)grid-cols-\[1fr_90px_110px_130px_110px\]/);
   });
+
+  it("检索框用原生 Input 组件(设计统一)", () => {
+    expect(SRC).toMatch(/<Input/);
+    expect(SRC).toMatch(/hideLabel/);
+    // 不再有裸检索 input(带手写边框类)
+    expect(SRC).not.toMatch(
+      /placeholder="检索文件名称或正文…"\s+className="border-border-default bg-surface-2/,
+    );
+  });
+
+  it("上传 label 用系统惯例 text-label", () => {
+    expect(SRC).toMatch(/<label className="text-fg-secondary text-label">/);
+  });
 });
