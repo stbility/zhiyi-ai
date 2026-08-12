@@ -27,32 +27,29 @@ jobs:
       - name: 目标 SHA 与 LIVE_URL(PR=preview, push=生产)
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "TARGET=${{ github.head_ref == '' && github.event.pull_request.head.sha || github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
-            # 从 deployments API 找本 PR 分支最新的 Preview deployment URL
+            TARGET="${{ github.event.pull_request.head.sha }}"
+            echo "TARGET=$TARGET" >> "$GITHUB_ENV"
+            # Vercel 的 preview deployment 不写 GitHub Deployments API,
+            # 也不在 comment 里留明文 —— 但「Vercel Preview Comments」
+            # check 的 summary 里有 preview 域名(zhiyi-ai-git-<branch>-<hash>.vercel.app)。
+            # 轮询 check-runs 直到出现,提取域名。
             URL=""
-            for i in $(seq 1 12); do
-              body=$(curl -s --max-time 10 \
+            for i in $(seq 1 24); do
+              BODY=$(curl -s --max-time 10 \
                 -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
                 -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${{ github.repository }}/deployments?ref=${{ github.head_ref }}&per_page=5" || true)
-              URL=$(echo "$body" | jq -r 'map(select(.environment == "Preview")) | .[0].id // empty' 2>/dev/null || true)
-              if [ -n "$URL" ]; then
-                # 拿该 deployment 的 status → environment_url
-                URL=$(curl -s --max-time 10 \
-                  -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                  "https://api.github.com/repos/${{ github.repository }}/deployments/$URL/statuses" \
-                  | jq -r 'map(select(.environment_url != null)) | .[0].environment_url // empty' 2>/dev/null || true)
-                [ -n "$URL" ] && break
-              fi
-              echo "  preview deployment 未就绪,5s 后再试…"
+                "https://api.github.com/repos/${{ github.repository }}/commits/$TARGET/check-runs" || true)
+              URL=$(echo "$BODY" | jq -r '.check_runs[]? | select((.name // "") | contains("Vercel")) | .output.summary // empty' 2>/dev/null | grep -oE '[a-zA-Z0-9-]+\.vercel\.app' | head -1)
+              [ -n "$URL" ] && break
+              echo "  Vercel check 未就绪,5s 后再试…"
               sleep 5
             done
             if [ -z "$URL" ]; then
-              echo "❌ 拿不到 preview deployment URL(Vercel 未部署或部署失败)"
+              echo "❌ 拿不到 Vercel preview URL(构建失败或 check 缺失)"
               exit 1
             fi
-            echo "LIVE_URL=$URL" >> "$GITHUB_ENV"
-            echo "✅ preview URL: $URL"
+            echo "LIVE_URL=https://$URL" >> "$GITHUB_ENV"
+            echo "✅ preview URL: https://$URL"
           else
             echo "TARGET=${{ github.sha }}" >> "$GITHUB_ENV"
             echo "LIVE_URL=${ZHIYI_LIVE_URL:-https://zhiyi-ai.vercel.app}" >> "$GITHUB_ENV"
