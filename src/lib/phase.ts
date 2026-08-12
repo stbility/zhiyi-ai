@@ -62,9 +62,8 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
   {
     id: "4",
     label: "Tool Registry、Agent、工作流状态机、Worker",
-    state: "partial",
-    missing:
-      "工具注册与智能体循环已完成;续跑(检查点摘要恢复,突破 300s 上限)已实现;工作流已上线(0036:10 态状态机 + 定义/步骤编辑 + 同步执行,单次最多 5 步,运行历史留痕);后台 Worker 排队执行与人工闸门(等待输入/等待确认)后续上线",
+    state: "done",
+    missing: "工具注册与智能体循环已完成;续跑(检查点摘要恢复,突破 300s 上限)已实现;工作流已上线(0036:10 态状态机 + 定义/步骤编辑 + 运行历史留痕);后台 Worker 已上线(2026-08-12:runWorkflow 入队化 + /api/workflow/worker 用户触发执行 + Vercel Cron 兜底清僵尸;人工闸门双通道:等待输入 needsInput / 等待确认 needsApproval,断点续跑);并发数权益(0055 concurrent_tasks)已在 agent 入口与 workflow 入队双检查",
   },
   {
     id: "5",
@@ -78,7 +77,7 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
     label: "Entitlement Service、Stripe 订阅",
     state: "partial",
     missing:
-      "权益判断(0034 get_entitlements)与用量计量(0035)已就位;五档定价(Free/128/198/388/自定义)全链路生产运行:checkout/webhook/plans/billing 已上线,STRIPE_PRICE_* 6/8 已配;权益矩阵已扩展(0055:concurrent_tasks/history_days/knowledge_capacity/mcp_servers 四类 feature,生产 30 行种子实证);MCP 登记与知识库上传已按档位 gating;待配 STRIPE_PRICE_ENT_* 2 个(Enterprise 自定义报价可选)",
+      "权益判断(0034 get_entitlements)与用量计量(0035)已就位;五档定价(Free/128/198/388/自定义)全链路生产运行:checkout/webhook/plans/billing 已上线,STRIPE_PRICE_* 6/8 已配;权益矩阵已扩展(0055:concurrent_tasks/history_days/knowledge_capacity/mcp_servers 四类 feature,生产 30 行种子实证);六项营销承诺全部 gating:MCP 登记、知识库上传、并发任务数(agent+workflow 双入口,2026-08-12)、历史保留天数(会话列表过滤,2026-08-12)、工作流数量、月度智能体额度;待配 STRIPE_PRICE_ENT_* 2 个(Enterprise 自定义报价可选)",
   },
   {
     id: "7",
@@ -89,6 +88,6 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
     id: "8",
     label: "安全、监控、部署、备份回滚",
     state: "partial",
-    missing: "部署、密钥加密、限流已完成;评测集(20 内置用例 + 反馈沉淀用例)与 runner 已上线(/settings/eval,结果落 eval_runs,可同版本连跑对比);反馈飞轮消费端已通(改写反馈一键同步为评测用例,message_feedback.edited → eval_cases);结构化日志、监控、备份回滚未做",
+    missing: "部署、密钥加密、限流已完成;评测集(20 内置用例 + 反馈沉淀用例)与 runner 已上线(/settings/eval,结果落 eval_runs,可同版本连跑对比);反馈飞轮消费端已通(改写反馈一键同步为评测用例,message_feedback.edited → eval_cases);结构化日志已上线(0056 system_logs + lib/logging,工作流完成/失败/暂停/僵尸清理埋点,2026-08-12);健康检查已上线(/api/health:Supabase 连通 + 依赖指纹,200/503);备份回滚指南已交付(docs/backup-restore.md:Supabase 平台备份 + 迁移回滚姿势 + 季度演练清单);监控(告警/指标面板)与备份演练未做",
   },
 ];

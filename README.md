@@ -32,13 +32,13 @@
 | 1 | 数据库 Schema、迁移、RLS、Supabase 认证 | ✅ 已完成(越权隔离已实测) |
 | 2 | 组织、成员、角色权限、审计日志 | ✅ 已完成(数据库层 0001 + 品牌人格 /settings/persona + 成员管理 /settings/members + 组织切换器) |
 | 3 | Provider/Model Registry、AI Gateway、Adapter、模型服务设置页 | ✅ 已完成 |
-| 4 | Tool Registry、Agent、工作流状态机、Worker | 🟡 工具注册与智能体循环已完成;续跑(检查点摘要恢复,突破 300s)已实现;工作流已上线(0036:10 态状态机 + 定义/步骤编辑 + 同步执行,单次最多 5 步,运行历史留痕);后台 Worker 排队执行与人工闸门后续上线 |
+| 4 | Tool Registry、Agent、工作流状态机、Worker | ✅ 工具注册与智能体循环已完成;续跑(检查点摘要恢复,突破 300s)已实现;工作流已上线(0036:10 态状态机 + 定义/步骤编辑 + 运行历史留痕);后台 Worker 已上线(2026-08-12:入队化 + /api/workflow/worker + Cron 兜底;等待输入/等待确认双人工闸门,断点续跑);并发数权益双入口检查 |
 | 5 | 文件上传、解析、RAG、长期记忆 | 🟡 文件夹上传、跨轮保留、上下文预算已完成;记忆沉淀闭环已实现(0028,确认 → 落库 → Wiki 同步);长期记忆向量召回已上线(0040 pgvector + search_memories,需 EMBEDDINGS_API_URL/KEY 后生效);AI 记忆管理页已上线(/memory);知识库已上线(0038,解析 + 全文检索 + /knowledge 管理页);向量检索待 embedding 服务接入 |
-| 6 | Entitlement Service、Stripe 订阅 | 🟡 五档定价(Free/128/198/388/自定义)全链路生产运行:checkout/webhook/plans/billing 已上线,STRIPE_PRICE_* 6/8 已配;权益矩阵 0055 已应用(30 行种子);MCP/知识库已按档位 gating;待配 STRIPE_PRICE_ENT_* 2 个(Enterprise 自定义报价可选) |
+| 6 | Entitlement Service、Stripe 订阅 | 🟡 五档定价(Free/128/198/388/自定义)全链路生产运行:checkout/webhook/plans/billing 已上线,STRIPE_PRICE_* 6/8 已配;权益矩阵 0055 已应用(30 行种子);六项营销承诺全部 gating(2026-08-12 补齐并发任务数 + 历史保留天数);待配 STRIPE_PRICE_ENT_* 2 个(Enterprise 自定义报价可选) |
 | 7 | 全部页面接入真实数据 | ✅ 已完成(workflow/knowledge/memory/billing/skills/eval/reports 全部真实数据,无假数据) |
-| 8 | 安全、监控、部署、备份回滚 | 🟡 部署、密钥加密、限流已完成;评测集(20 内置用例 + 反馈沉淀用例)与 runner 已上线(/settings/eval,结果落 eval_runs);反馈飞轮消费端已通(改写反馈一键同步为评测用例);结构化日志、监控、备份回滚未做 |
+| 8 | 安全、监控、部署、备份回滚 | 🟡 部署、密钥加密、限流已完成;评测集(20 内置用例 + 反馈沉淀用例)与 runner 已上线(/settings/eval,结果落 eval_runs);反馈飞轮消费端已通(改写反馈一键同步为评测用例);结构化日志已上线(2026-08-12:0056 system_logs + 工作流埋点);健康检查已上线(/api/health);备份回滚指南已交付(docs/backup-restore.md);监控告警面板与备份演练未做 |
 
-> 上次同步:2026-08-12,main@a8f789a。本表由 scripts/sync-readme.ts 从 src/lib/phase.ts 生成;
+> 上次同步:2026-08-12,main@66d1614。本表由 scripts/sync-readme.ts 从 src/lib/phase.ts 生成;
 > 改动 `src/lib/phase.ts` 后跑 `pnpm sync:readme`。线上以 https://zhiyi-ai.vercel.app/status 为准。
 
 ## 开始开发
