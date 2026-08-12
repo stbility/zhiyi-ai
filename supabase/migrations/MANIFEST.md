@@ -88,6 +88,7 @@
 | `0053_platform_models_refresh.sql` | 0053 | 平台免费档模型池刷新:下线 EOL 的 deepseek-v4-flash/pro(410 Gone),保留 glm-5.2(用户点名长期免费),加入实测快的 minimax-m3 / gpt-oss-20b(详见备注 K) |
 | `0054_organization_persona.sql` | 待应用 | 品牌人格层(P3):organizations 表加 persona 列(可空,≤2000 字)。RLS 沿用组织既有策略(成员可读/admin 可改) |
 | `0055_entitlements_expand_features.sql` | 待应用 | 权益矩阵扩展:新增 concurrent_tasks / history_days / knowledge_capacity / mcp_servers 四类 feature,五档数值对齐 plans.ts 营销承诺 |
+| `0056_system_logs.sql` | 待应用 | 结构化日志(阶段 8):system_logs 表 + level 分级 + admin 读 RLS;关键事件(工作流/智能体/Worker)排查留痕,系统级事件不暴露前端 |
 
 ### 备注 L：0036-0053 已应用(2026-08-11 实证)
 
