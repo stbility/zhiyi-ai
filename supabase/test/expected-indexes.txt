@@ -55,6 +55,8 @@ skill_files_skill_idx
 skills_created_by_idx
 skills_organization_idx
 subscriptions_user_idx
+system_logs_level_created_idx
+system_logs_org_created_idx
 workflow_runs_workflow_idx
 workflows_created_by_idx
 workflows_org_idx
