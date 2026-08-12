@@ -75,7 +75,10 @@ export function KnowledgeManager({
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+    /* 布局:左侧列表固定 320px,右侧预览撑满剩余 —— 此前是 [1fr_360px],
+       预览区只有 360px 窄条,长文档挤成一竖条,这就是用户报的
+       「解析文件页面很窄」。改成 [320px_1fr] 后预览占主空间。 */
+    <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
       <div className="flex min-w-0 flex-col gap-4">
         {/* 上传 */}
         <form
