@@ -263,6 +263,18 @@ export function AppChrome({
           <h1 className="text-fg text-body min-w-0 flex-1 truncate font-medium">
             {title}
           </h1>
+
+          {/* 返回主页(仪表盘):用户反馈「只有退出按钮,找不到回主页的入口」。
+              桌面侧栏有「今日」链接,但移动端抽屉收着/或被滚动挤出时,
+              顶栏这个常驻链接保证随时能回主页。 */}
+          <Link
+            href="/today"
+            aria-label="返回主页"
+            title="返回主页"
+            className="text-fg-tertiary hover:bg-surface-2 hover:text-fg-secondary rounded-control flex size-8 shrink-0 items-center justify-center transition-colors duration-[var(--duration-hover)] ease-standard"
+          >
+            <Icon name="today" size={17} />
+          </Link>
           <ThemeToggle />
         </header>
 

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { CreateOrganizationForm } from "@/components/app/CreateOrganizationForm";
 import { Icon } from "@/components/icons/Icon";
@@ -107,11 +108,40 @@ export default async function TodayPage() {
         </section>
       )}
 
-      {/* 未交付模块 —— 如实说明,不用占位数据充数 */}
-      <section className="border-border-default rounded-card font-zh border border-dashed p-5">
-        <h3 className="text-fg-tertiary text-label mb-2">尚未交付的模块</h3>
-        <p className="text-fg-tertiary text-caption">
-          AI 摘要、工作流、知识库与长期记忆的数据层尚未建立,因此这里不展示任何相关内容。产品不会用占位数据填充未完成的能力。
+      {/* 已交付模块导航 —— 2026-08-12 修复:此前的「尚未交付」文案
+          把工作流/知识库/长期记忆标成未建立,与生产实况脱节
+          (0036 工作流、0038 知识库、0028/0040 记忆均已上线)。如实改为
+          已交付入口 + 真正未交付项。 */}
+      <section className="border-border-default rounded-card font-zh border p-5">
+        <h3 className="text-fg-tertiary text-label mb-2">快捷入口</h3>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/workflow"
+            className="text-fg-secondary hover:bg-surface-2 rounded-tag border-border-default border px-3 py-1.5 text-label"
+          >
+            工作流
+          </Link>
+          <Link
+            href="/knowledge"
+            className="text-fg-secondary hover:bg-surface-2 rounded-tag border-border-default border px-3 py-1.5 text-label"
+          >
+            知识库
+          </Link>
+          <Link
+            href="/memory"
+            className="text-fg-secondary hover:bg-surface-2 rounded-tag border-border-default border px-3 py-1.5 text-label"
+          >
+            AI 记忆
+          </Link>
+          <Link
+            href="/reports"
+            className="text-fg-secondary hover:bg-surface-2 rounded-tag border-border-default border px-3 py-1.5 text-label"
+          >
+            报表
+          </Link>
+        </div>
+        <p className="text-fg-tertiary text-caption mt-3">
+          尚未交付:后台 Worker(工作流排队执行)、监控与备份回滚。其余模块均已在生产运行。
         </p>
       </section>
     </div>
