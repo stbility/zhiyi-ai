@@ -77,7 +77,7 @@ skills_select_member
 skills_update_member
 stripe_customers_select_own
 subscriptions_select_own
-system_logs_insert_authenticated
+system_logs_insert_member
 system_logs_select_admin
 usage_metering_insert_own
 usage_metering_select_own

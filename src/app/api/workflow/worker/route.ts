@@ -52,10 +52,18 @@ export async function GET(request: NextRequest) {
         .from("workflows")
         .update({ status: "READY", updated_at: new Date().toISOString() })
         .eq("id", run.workflow_id as string);
+            // 系统日志写入需属于用户组织(0057 收紧);僵尸 run 的 workflow 带 org
+      const { data: wf } = await supabase
+        .from("workflows")
+        .select("organization_id")
+        .eq("id", run.workflow_id as string)
+        .maybeSingle();
+      const zombieOrgId = wf?.organization_id as string | null | undefined;
       await logEventWith(supabase, {
         level: "warn",
         event: "workflow.zombie_cleared",
         message: "清理超时未认领的排队运行",
+        ...(zombieOrgId ? { organizationId: zombieOrgId } : {}),
         meta: { runId: run.id, workflowId: run.workflow_id },
       });
       cleared += 1;

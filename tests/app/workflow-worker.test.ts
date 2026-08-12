@@ -72,9 +72,10 @@ describe("后台 Worker 与人工闸门", () => {
     expect(MANAGER).toMatch(/需要人工输入/);
   });
 
-  it("vercel.json 配置了 cron 兜底", () => {
+  it("vercel.json 不含 cron(#100 部署失败排查后移除;僵尸清理靠用户触发兜底)", () => {
     const vercel = readFileSync(resolve(__dirname, "../../vercel.json"), "utf8");
-    expect(vercel).toMatch(/api\/workflow\/worker/);
-    expect(vercel).toMatch(/cron/);
+    // 2026-08-12:#95 引入 cron 后 5 个 production 部署全失败,
+    // 先移除 cron 验证根因 —— cron 非关键路径(前端轮询 worker 已覆盖)。
+    expect(vercel).not.toMatch(/"cron"/);
   });
 });
