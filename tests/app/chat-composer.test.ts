@@ -47,4 +47,14 @@ describe("一体式输入框", () => {
     const sendIdx = SRC.indexOf('aria-label="发送"');
     expect(sendIdx).toBeGreaterThan(selectIdx);
   });
+
+  it("会话删除按钮手机端可见(无 hover 设备)", () => {
+    // 默认(含手机)可见,桌面端才 hover 显示
+    expect(SRC).toMatch(/opacity-100 transition-opacity/);
+    expect(SRC).toMatch(/md:opacity-0 md:group-hover:opacity-100/);
+    // 不再有裸 opacity-0(全端隐藏)
+    expect(SRC).not.toMatch(
+      /className="text-fg-tertiary hover:text-error rounded-control cursor-pointer p-1 opacity-0/,
+    );
+  });
 });

@@ -724,8 +724,10 @@ export function ChatPanel({
                     type="submit"
                     aria-label={`删除对话「${c.title}」`}
                     title="删除这条对话"
-                    // 常态隐藏,免得列表被一排叉号淹没;悬停或键盘聚焦时出现
-                    className="text-fg-tertiary hover:text-error rounded-control cursor-pointer p-1 opacity-0 transition-opacity duration-[var(--duration-hover)] ease-standard group-hover:opacity-100 focus-visible:opacity-100"
+                    // 手机端没有 hover —— 常态隐藏的删除按钮在手机上永远看不见
+                    // (用户报「删除路径被挤出边框看不到」)。默认可见(手机端),
+                    // 桌面端(md+)才保持「悬停/聚焦时出现」避免列表被叉号淹没。
+                    className="text-fg-tertiary hover:text-error rounded-control cursor-pointer p-1 opacity-100 transition-opacity duration-[var(--duration-hover)] ease-standard md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
                   >
                     <Icon name="x" size={13} />
                   </button>
