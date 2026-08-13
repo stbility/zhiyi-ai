@@ -181,11 +181,14 @@ export function BillingManager({
         <section className="bg-surface-2 border-border-default rounded-card font-zh border p-4">
           <h3 className="text-fg text-body font-medium mb-2">本月用量</h3>
           <UsageMeter
-            label="智能体轮次 (agent_turns)"
+            label="智能体步骤 (agent_turns)"
             used={usageUsed}
             total={usageQuota}
-            unit=" 轮"
+            unit=" 步"
           />
+          <p className="text-fg-tertiary font-zh text-caption mt-1">
+            按实际完成的智能体步骤计次:中断/失败只计已完成步骤,一步未完成不计费。
+          </p>
         </section>
       )}
     </div>
