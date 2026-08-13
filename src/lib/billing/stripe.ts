@@ -68,6 +68,24 @@ export function priceEnvKey(
   return `STRIPE_PRICE_${code}${interval === "year" ? "_YEAR" : "_MONTH"}`;
 }
 
+/**
+ * Payment Link 环境变量名(STRIPE_PAYMENT_LINK_<CODE>_<MONTH|YEAR>)。
+ *
+ * 与 priceEnvKey 共用 PLAN_ENV_CODE —— 任何需要「把 plan 拼成 env key」的
+ * 地方(错误提示、诊断、文档)都必须走这里,不许再手写 toUpperCase 拼接:
+ * 2026-08-13 排查发现 checkout/route.ts 与 actions/checkout.ts 用
+ * planId.toUpperCase() 直接拼,professional→PROFESSIONAL、enterprise→
+ * ENTERPRISE,与真实变量名(PRO/ENT)不符,用户照提示配置必然配错。
+ */
+export function paymentLinkEnvKey(
+  planId: string,
+  interval: "month" | "year" = "month",
+): string | null {
+  const code = PLAN_ENV_CODE[planId];
+  if (!code) return null;
+  return `STRIPE_PAYMENT_LINK_${code}${interval === "year" ? "_YEAR" : "_MONTH"}`;
+}
+
 export function getPriceIdForPlan(
   planId: string,
   interval: "month" | "year" = "month",
