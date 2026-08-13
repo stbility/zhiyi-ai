@@ -11,6 +11,10 @@ on:
     branches: [main]
   pull_request:
 
+# 最小权限:CI 只读仓库内容与依赖缓存,不写任何资源(CodeQL 告警修复)
+permissions:
+  contents: read
+
 jobs:
   verify:
     name: 类型 · 规范 · 测试 · 构建

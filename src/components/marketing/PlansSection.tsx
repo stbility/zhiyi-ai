@@ -46,21 +46,19 @@ function PlanCard({
   const isFree = plan.id === "free";
   const isYear = interval === "year";
 
-  const shownPrice =
-    isFree || !isYear ? plan.price : (plan.annualPrice?.split("/")[0] ?? plan.price);
-  const shownPeriod = isFree || !isYear ? plan.period : "年";
-  const ctaLabel = isFree
-    ? "免费开始"
-    : plan.id === "enterprise"
-      ? "联系销售"
-      : "立即订阅";
+  // 传给 PricingCard 的必须是「纯金额 + 纯周期」两段:
+  // plan.price 形如 "HK$128/月"(金额+周期一体),若原样传入,卡片内部
+  // 再拼一次 "/{period}" 就会渲染成 "HK$128/月/月"(2026-08-13 修复)。
+  // 这里拆出金额段,周期按当前切换状态给 "月"/"年"(free 无年付,恒为月)。
+  const shownPrice = (isFree || !isYear ? plan.price : plan.annualPrice)
+    ?.split("/")[0] ?? plan.price;
+  const shownPeriod = isFree || !isYear ? "月" : "年";
+  const ctaLabel = isFree ? "免费开始" : "立即订阅";
 
   // 免费档没有订阅动作,CTA 就是注册链接。
-  // Enterprise:站内询价页(P0-3 修正)——「联系销售」必须是人能填的表单,
-  // 而不是一个硬编码的 Stripe 付款链接(此前与 Team 共用同一 Payment Link,
-  // 且付款邮箱≠注册邮箱时订阅会静默丢失)。
-  if (isFree || plan.id === "enterprise") {
-    const enterpriseHref = isFree ? "/register" : "/contact";
+  // (Enterprise 2026-08-13 起有标准定价 HK$2,888/月 + Payment Link,
+  //  与其他付费档一样走 SubscribeButton;「联系销售」入口保留在 /contact 页。)
+  if (isFree) {
     return (
       <PricingCard
         name={plan.name}
@@ -69,19 +67,19 @@ function PlanCard({
         features={plan.features}
         highlighted={plan.highlighted}
         ctaLabel={ctaLabel}
-        href={enterpriseHref}
+        href="/register"
       />
     );
   }
 
-  // 付费档(专业版/进阶版/团队版):走服务端 Checkout。
+  // 付费档(专业版/进阶版/团队版/企业版):走服务端 Checkout,降级 Payment Link。
   const fallbackUrl = withPrefilledEmail(
     isYear ? plan.paymentLinkYear : plan.paymentLinkMonth,
     email,
   );
 
-  // Plan id is narrowed by the above conditionals: free|enterprise handled, rest fall through.
-  const paidPlanId = plan.id as "professional" | "professional_plus" | "team";
+  // Plan id is narrowed by the above conditionals: free handled, rest fall through.
+  const paidPlanId = plan.id as "professional" | "professional_plus" | "team" | "enterprise";
 
   return (
     <PricingCard

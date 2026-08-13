@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -41,10 +42,18 @@ const FIXTURE = JSON.parse(
   ),
 ) as Record<string, unknown>;
 
-const WEBHOOK_SECRET = "whsec_dGVzdHNlY3JldGZvcnNpZ25hdHVyZXRlc3Rpbmc";
+// Webhook 验签密钥。
+//
+// 签名与验签只要求「同一个值」,Stripe SDK 不校验密钥格式 —— 所以测试
+// 用运行期生成的随机串,源码里不出现任何形如 whsec_ / sk_ 的字符串
+// (写死的「看起来像密钥」的值会被 Secret scanning 当作泄露告警)。
+// 若需要复现线上验签(比如抓了生产事件调试),用
+//   STRIPE_WEBHOOK_SECRET=whsec_... pnpm test -- tests/app/billing-webhook-signature.test.ts
+// 从环境变量注入,而不是写进文件。
+const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET ?? randomUUID();
 
 /** 只用它的 webhooks 模块 —— constructEvent / generateTestHeaderString 不需要有效密钥 */
-const realStripe = new Stripe("sk_test_placeholder_not_used_for_network", {
+const realStripe = new Stripe(randomUUID(), {
   apiVersion: "2026-06-24.dahlia",
 });
 
@@ -73,7 +82,7 @@ vi.mock("@/lib/billing/stripe", () => ({
     customers: { retrieve: async () => ({ deleted: true }) },
   }),
   getStripeConfig: () => ({
-    secretKey: "sk_test_placeholder",
+    secretKey: randomUUID(),
     publishableKey: "",
     webhookSecret: WEBHOOK_SECRET,
   }),
@@ -162,7 +171,7 @@ describe("真实 HMAC 签名校验(不 mock 密码学)", () => {
   it("用错误的 secret 签名 → 400", async () => {
     const body = eventBody("customer.subscription.created", FIXTURE);
     const POST = await handler();
-    const res = await POST(signedPost(body, { secret: "whsec_wrong_secret" }));
+    const res = await POST(signedPost(body, { secret: randomUUID() }));
 
     expect(res.status).toBe(400);
     expect(db.subscriptions).toHaveLength(0);

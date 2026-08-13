@@ -36,7 +36,11 @@ describe("外部字体不得阻塞首屏", () => {
 
   it("layout 里的外部字体样式表必须是非阻塞的", () => {
     const layout = readFileSync(LAYOUT, "utf8");
-    if (!layout.includes("fonts.googleapis.com")) return; // 不用外部字体也可以
+    // 精确匹配 fonts.googleapis.com 的样式表引用,而不是任何包含该
+    // 子串的 URL —— `https://fonts.googleapis.com.evil.com/...` 会绕过
+    // 裸 includes 检查(CodeQL js/incomplete-url-substring-sanitization)
+    const fontRef = /(?:https?:)?\/\/fonts\.googleapis\.com\//i.exec(layout);
+    if (!fontRef) return; // 不用外部字体也可以
 
     // 关键:media="print" 的样式表不参与首屏渲染,永远不会阻塞
     expect(layout).toMatch(/media="print"/);

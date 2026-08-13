@@ -75,15 +75,94 @@ function embed(value: unknown): string {
 }
 
 /**
+ * 从 <tag 起点向后找「引号配对后的 >」;找不到返回 -1。
+ *
+ * 线性扫描、无正则回溯 —— CodeQL 对「正则式 HTML 清理」一律判为不完整
+ * (js/incomplete-multi-character-sanitization,PR 实测复报),标签解析
+ * 改为手写状态机,属性值内的 > / 引号变体不会提前截断标签。
+ */
+function scanTagEnd(html: string, start: number): number {
+  let quote: string | null = null;
+  for (let i = start; i < html.length; i++) {
+    const ch = html[i]!;
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === ">") {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
  * 去掉原 HTML 里指向工作区本地文件的 script / link。
  *
  * 它们的路径在 iframe 里解析不到(srcdoc 没有基地址),留着只会产生
  * 一串 404。页面骨架(比如 <div id="root">)必须保留 —— 那是挂载点。
+ *
+ * 2026-08-13:由正则改为确定性线性扫描(scanTagEnd)。
+ * 正则版在 CodeQL 看来「无法证明清理完整」(js/incomplete-multi-character-
+ * sanitization);扫描版逐标签解析,src="a>b.js"、嵌套引号等变体都
+ * 不会提前截断,闭合标签也接受 </script > 尾随空白变体。
  */
 function stripLocalRefs(html: string): string {
-  return html
-    .replace(/<script\b[^>]*\bsrc=["'](?!https?:|\/\/)[^"']*["'][^>]*>\s*<\/script>/gi, "")
-    .replace(/<link\b[^>]*\bhref=["'](?!https?:|\/\/)[^"']*["'][^>]*>/gi, "");
+  let out = "";
+  let i = 0;
+  while (i < html.length) {
+    // 找下一个 <script / <link 标签起点(词边界,排除 <scripture 之类)
+    const sRe = /<script\b/gi;
+    const lRe = /<link\b/gi;
+    sRe.lastIndex = i;
+    lRe.lastIndex = i;
+    const s = sRe.exec(html);
+    const l = lRe.exec(html);
+    let next = -1;
+    let isScript = false;
+    if (s && (!l || s.index < l.index)) {
+      next = s.index;
+      isScript = true;
+    } else if (l) {
+      next = l.index;
+    }
+    if (next === -1) {
+      out += html.slice(i);
+      break;
+    }
+    out += html.slice(i, next);
+
+    const tagEnd = scanTagEnd(html, next);
+    if (tagEnd === -1) {
+      out += html.slice(next);
+      break;
+    }
+    const tag = html.slice(next, tagEnd + 1);
+
+    // 取 src / href 属性值(引号配对);CDN 地址(https?:// 或 //)保留
+    const ref = /(?:src|href)\s*=\s*(["'])((?:\\.|(?!\1).)*)\1/i.exec(tag);
+    const url = ref?.[2] ?? "";
+    const isLocal =
+      ref !== null &&
+      !/^(https?:)?\/\//i.test(url) &&
+      !/^[a-z][a-z0-9+.-]*:/i.test(url);
+
+    if (isLocal) {
+      if (isScript) {
+        // 连同闭合标签一起丢弃(闭合接受尾随空白);无合法闭合只丢开标签
+        const closeRe = /<\/script\s*>/gi;
+        closeRe.lastIndex = tagEnd + 1;
+        const close = closeRe.exec(html);
+        i = close ? close.index + close[0].length : tagEnd + 1;
+      } else {
+        i = tagEnd + 1;
+      }
+      continue;
+    }
+    out += tag;
+    i = tagEnd + 1;
+  }
+  return out;
 }
 
 /**

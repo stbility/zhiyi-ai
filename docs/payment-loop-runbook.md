@@ -191,3 +191,53 @@
 对照基准:生产库当前 `subscriptions=0` / `stripe_customers=0`。
 体检第 5 节若有订阅或事件 → 钱收到了但没落库(投递或归属问题);
 若是 0 → 从来没人付过款,闭环还没被走过一次。
+
+## 十、归属失败账外表人工认领(P0-6,2026-08-13)
+
+**背景**:webhook 三条归属路(metadata.userId → stripe_customers → 邮箱反查)
+全部失败且订阅行不存在时,此前 throw 让 Stripe 重试到放弃 —— 付款与权益
+永久丢失且无人知晓。现在事件落 `unattributed_subscriptions` 表(仅 service_role
+可读写),返回 200,人工凭付款邮箱补录。
+
+**什么时候该看这张表**:
+- 收到 webhook error 日志「订阅归属失败,已入账外表待人工认领」
+- 用户反馈「付了钱但没开通」(排查路径:先查这张表,再查 Stripe 事件)
+
+**认领流程**:
+1. 查账外表(在 Supabase SQL Editor 用 service_role 或 psql):
+   ```sql
+   select stripe_subscription_id, customer_email, plan_id, status, attempts, created_at
+   from public.unattributed_subscriptions
+   order by created_at desc;
+   ```
+2. 用付款邮箱在 auth.users 里找到对应用户(邮箱不一致时先与用户确认身份):
+   ```sql
+   select id, email from auth.users where lower(email) = lower('<付款邮箱>');
+   ```
+3. 补录订阅(以 Stripe 侧真实状态为准,先 `stripe.subscriptions.retrieve` 核对):
+   ```sql
+   insert into public.subscriptions
+     (user_id, stripe_subscription_id, status, plan_id, current_period_end)
+   values
+     ('<user_id>', '<stripe_subscription_id>', '<status>', '<plan_id>', '<period_end>')
+   on conflict (stripe_subscription_id) do update
+     set status = excluded.status, plan_id = excluded.plan_id;
+   ```
+4. 补录客户映射(后续事件可直接归户):
+   ```sql
+   insert into public.stripe_customers (user_id, customer_id)
+   values ('<user_id>', '<customer_id>')
+   on conflict (user_id) do update set customer_id = excluded.customer_id;
+   ```
+5. 标记已认领(删除该行,或人工记一笔):
+   ```sql
+   delete from public.unattributed_subscriptions
+   where stripe_subscription_id = '<stripe_subscription_id>';
+   ```
+6. 在 system_logs 留痕:`insert into public.system_logs (organization_id, actor_id, level, event, message) ...`
+   (或至少记一笔人工日志)。
+
+**提醒**:补录是**人工豁免路径**,写者纪律(0033:subscriptions 唯一写入方 =
+webhook)在此被人工操作豁免 —— 每次补录必须在日志留痕,并在每周体检时
+复盘「为什么又出现归属失败」(通常是 Payment Link 邮箱与注册邮箱不一致,
+根治方向是引导用户走登录态 checkout)。

@@ -281,3 +281,4 @@ CI 的真实重放已经覆盖它。0044 已把 0005 连同基线 0001-0027 一�
 未配置时界面如实显示「未配置」。
 | `0059_sales_leads.sql` | 待应用 | Enterprise 销售线索表(P0-3):「联系销售」由硬编码 Stripe Payment Link 改为站内询价表单,提交落 sales_leads;RLS 仅本人读写 |
 | `0060_entitlements_history_days_free.sql` | 待应用 | P0-5 权益倒挂修正:free.history_days 由 null(实现为永久)改为 7 天,权益随档位单调;纯数据更新,不动表结构 | 
+| `0061_unattributed_subscriptions.sql` | 待应用 | P0-6 付款归属账外表:webhook 归属失败落表留痕(含付款邮箱)返回 200,不再死循环重试;仅 service_role 可访问 | 

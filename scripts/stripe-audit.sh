@@ -54,15 +54,17 @@ print('  可收款 :', d.get('charges_enabled'), '| 可打款:', d.get('payouts_
 "
 
 echo
-echo "── 2. 价格目录(应有 4 条 HKD:4900/49000/22900/229000)──────────"
+echo "── 2. 价格目录(应有 6 条 HKD:12800/128000/19800/198000/38800/388000)──────"
 get "prices?active=true&limit=100&expand[]=data.product" | py "
 import sys,json
 d=json.load(sys.stdin)
 if 'error' in d: print('  ERR:', d['error'].get('message')); sys.exit()
 rows=d.get('data',[])
 print(f'  active 价格共 {len(rows)} 条')
-want={4900:'STRIPE_PRICE_PROFESSIONAL',49000:'STRIPE_PRICE_PROFESSIONAL_YEAR',
-      22900:'STRIPE_PRICE_ENTERPRISE',229000:'STRIPE_PRICE_ENTERPRISE_YEAR'}
+# 2026-08-13 定价:Pro 128/1280、Pro+ 198/1980、Ent 388/3880(HKD 分)
+want={12800:'STRIPE_PRICE_PRO_MONTH',128000:'STRIPE_PRICE_PRO_YEAR',
+      19800:'STRIPE_PRICE_PRO_PLUS_MONTH',198000:'STRIPE_PRICE_PRO_PLUS_YEAR',
+      38800:'STRIPE_PRICE_ENT_MONTH',388000:'STRIPE_PRICE_ENT_YEAR'}
 hit={}
 for p in rows:
     prod=p.get('product') or {}

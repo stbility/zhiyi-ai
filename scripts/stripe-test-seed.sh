@@ -72,20 +72,40 @@ def call(path, data=None, method=None):
         raise SystemExit(f"❌ Stripe API 报错 {e.code}: {detail.get('error', {}).get('message')}")
 
 
-# 产品名必须含 price-catalog.ts 认的关键字(professional/专业、enterprise/企业),
-# 否则目录自解析认不出套餐。
+# 产品名必须能被认成套餐(webhook 按 Price 上的 metadata.plan_id 判定,
+# 不依赖产品名关键字;2026-08-10 已删除目录自解析)。
+# 2026-08-13 定价(HKD,单位:分):
+#   Pro 128/1280、Pro+ 198/1980、Team 388/3880、Ent 2888/28880。
 PLANS = [
     {
         "plan_id": "professional",
         "product_name": "Professional 专业版",
-        "prices": [("month", 4900), ("year", 49000)],
+        "prices": [("month", 12800), ("year", 128000)],
+    },
+    {
+        "plan_id": "professional_plus",
+        "product_name": "Professional 进阶版",
+        "prices": [("month", 19800), ("year", 198000)],
+    },
+    {
+        "plan_id": "team",
+        "product_name": "Team 团队版",
+        "prices": [("month", 38800), ("year", 388000)],
     },
     {
         "plan_id": "enterprise",
         "product_name": "Enterprise 企业版",
-        "prices": [("month", 22900), ("year", 229000)],
+        "prices": [("month", 288800), ("year", 2888000)],
     },
 ]
+
+# 与 src/lib/billing/stripe.ts 的 PLAN_ENV_CODE 保持一致(正向/反向共用)
+PLAN_ENV_CODE = {
+    "professional": "PRO",
+    "professional_plus": "PRO_PLUS",
+    "team": "TEAM",
+    "enterprise": "ENT",
+}
 
 existing_products = {p["name"]: p for p in call("products?active=true&limit=100").get("data", [])}
 existing_prices = call("prices?active=true&limit=100").get("data", [])
@@ -135,16 +155,22 @@ for plan in PLANS:
             print(f"  {interval:5} HKD {amount:>6} 已创建 → {price['id']}")
 
         suffix = "" if interval == "month" else "_YEAR"
-        resolved[f"STRIPE_PRICE_{plan['plan_id'].upper()}{suffix}"] = price["id"]
+        code = PLAN_ENV_CODE.get(plan["plan_id"])
+        if code:
+            resolved[f"STRIPE_PRICE_{code}{suffix}"] = price["id"]
 
 print("\n=============================================================="
-      "\n可写入 .env.local(可选 —— 不写也能跑,price-catalog 会按产品名自解析)"
+      "\n可写入 .env.local(可选 —— 未配则 checkout 如实 503,前端降级 Payment Link)"
       "\n==============================================================")
 for k in (
-    "STRIPE_PRICE_PROFESSIONAL",
-    "STRIPE_PRICE_PROFESSIONAL_YEAR",
-    "STRIPE_PRICE_ENTERPRISE",
-    "STRIPE_PRICE_ENTERPRISE_YEAR",
+    "STRIPE_PRICE_PRO_MONTH",
+    "STRIPE_PRICE_PRO_YEAR",
+    "STRIPE_PRICE_PRO_PLUS_MONTH",
+    "STRIPE_PRICE_PRO_PLUS_YEAR",
+    "STRIPE_PRICE_TEAM_MONTH",
+    "STRIPE_PRICE_TEAM_YEAR",
+    "STRIPE_PRICE_ENT_MONTH",
+    "STRIPE_PRICE_ENT_YEAR",
 ):
     print(f"{k}={resolved.get(k, '(未解析出)')}")
 PY

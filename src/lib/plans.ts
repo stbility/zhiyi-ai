@@ -7,18 +7,20 @@
  * 环境变量说明:
  *   STRIPE_PRICE_PRO_MONTH           = price_xxx  Professional 月付
  *   STRIPE_PRICE_PRO_YEAR            = price_xxx  Professional 年付
- *   STRIPE_PRICE_PRO_PLUS_MONTH     = price_xxx  Professional+ 月付
- *   STRIPE_PRICE_PRO_PLUS_YEAR      = price_xxx  Professional+ 年付
- *   STRIPE_PRICE_TEAM_MONTH         = price_xxx  Team 月付
- *   STRIPE_PRICE_TEAM_YEAR          = price_xxx  Team 年付
+ *   STRIPE_PRICE_PRO_PLUS_MONTH      = price_xxx  Professional+ 月付
+ *   STRIPE_PRICE_PRO_PLUS_YEAR       = price_xxx  Professional+ 年付
+ *   STRIPE_PRICE_TEAM_MONTH          = price_xxx  Team 月付
+ *   STRIPE_PRICE_TEAM_YEAR           = price_xxx  Team 年付
+ *   STRIPE_PRICE_ENT_MONTH           = price_xxx  Enterprise 月付
+ *   STRIPE_PRICE_ENT_YEAR            = price_xxx  Enterprise 年付
  *   STRIPE_PAYMENT_LINK_PRO_MONTH    = https://buy.stripe.com/xxx  Professional 月付
  *   STRIPE_PAYMENT_LINK_PRO_YEAR     = https://buy.stripe.com/xxx  Professional 年付
- *   STRIPE_PAYMENT_LINK_PRO_PLUS_MONTH  = https://buy.stripe.com/xxx  Professional+ 月付
- *   STRIPE_PAYMENT_LINK_PRO_PLUS_YEAR   = https://buy.stripe.com/xxx  Professional+ 年付
- *   STRIPE_PAYMENT_LINK_ENT_MONTH   = https://buy.stripe.com/xxx  Enterprise 月付
- *   STRIPE_PAYMENT_LINK_ENT_YEAR    = https://buy.stripe.com/xxx  Enterprise 年付
- *   STRIPE_PAYMENT_LINK_TEAM_MONTH  = https://buy.stripe.com/xxx  Team 月付
- *   STRIPE_PAYMENT_LINK_TEAM_YEAR   = https://buy.stripe.com/xxx  Team 年付
+ *   STRIPE_PAYMENT_LINK_PRO_PLUS_MONTH = https://buy.stripe.com/xxx  Professional+ 月付
+ *   STRIPE_PAYMENT_LINK_PRO_PLUS_YEAR  = https://buy.stripe.com/xxx  Professional+ 年付
+ *   STRIPE_PAYMENT_LINK_TEAM_MONTH   = https://buy.stripe.com/xxx  Team 月付
+ *   STRIPE_PAYMENT_LINK_TEAM_YEAR    = https://buy.stripe.com/xxx  Team 年付
+ *   STRIPE_PAYMENT_LINK_ENT_MONTH    = https://buy.stripe.com/xxx  Enterprise 月付
+ *   STRIPE_PAYMENT_LINK_ENT_YEAR     = https://buy.stripe.com/xxx  Enterprise 年付
  *
  * 【Agent 运行计次定义】(2026-08-13 P0-4 修正,口径如实化)
  * 计量粒度为**实际完成的步骤数**:每完成一步(record 落库)计 1 次
@@ -55,10 +57,17 @@ const STRIPE_PRICE_PRO_PLUS_YEAR = process.env.STRIPE_PRICE_PRO_PLUS_YEAR;
 const STRIPE_PRICE_TEAM_MONTH = process.env.STRIPE_PRICE_TEAM_MONTH;
 const STRIPE_PRICE_TEAM_YEAR = process.env.STRIPE_PRICE_TEAM_YEAR;
 
-const STRIPE_PAYMENT_LINK_PRO_MONTH = process.env.STRIPE_PAYMENT_LINK_PRO_MONTH ?? "https://buy.stripe.com/aFa28setlcAHaM28u25AQ00";
-const STRIPE_PAYMENT_LINK_PRO_YEAR = process.env.STRIPE_PAYMENT_LINK_PRO_YEAR ?? "https://buy.stripe.com/3cI4gAad5gQX8DU5hQ5AQ03";
-const STRIPE_PAYMENT_LINK_PRO_PLUS_MONTH = process.env.STRIPE_PAYMENT_LINK_PRO_PLUS_MONTH ?? "https://buy.stripe.com/00wfZi84XfMT1bs5hQ5AQ01";
-const STRIPE_PAYMENT_LINK_PRO_PLUS_YEAR = process.env.STRIPE_PAYMENT_LINK_PRO_PLUS_YEAR ?? "https://buy.stripe.com/00wcN6ad50RZ9HYaCa5AQ04";
+// Payment Link 一律只从环境变量读取(值 = buy.stripe.com 完整 URL)。
+// 2026-08-13 修:此前 PRO/PRO_PLUS 四个把 URL 硬编码成 ?? 兜底 ——
+// 与 ENT/TEAM 的「未配如实缺失」不一致,且 Stripe 侧链接一旦更换
+// (本次就是全新链接),硬编码旧值会静默跳到失效页。未配置时返回
+// undefined,由 SubscribeButton 的降级逻辑如实提示。
+const STRIPE_PAYMENT_LINK_PRO_MONTH = process.env.STRIPE_PAYMENT_LINK_PRO_MONTH;
+const STRIPE_PAYMENT_LINK_PRO_YEAR = process.env.STRIPE_PAYMENT_LINK_PRO_YEAR;
+const STRIPE_PAYMENT_LINK_PRO_PLUS_MONTH =
+  process.env.STRIPE_PAYMENT_LINK_PRO_PLUS_MONTH;
+const STRIPE_PAYMENT_LINK_PRO_PLUS_YEAR =
+  process.env.STRIPE_PAYMENT_LINK_PRO_PLUS_YEAR;
 const STRIPE_PAYMENT_LINK_ENT_MONTH: string | undefined =
   process.env.STRIPE_PAYMENT_LINK_ENT_MONTH;
 const STRIPE_PAYMENT_LINK_ENT_YEAR: string | undefined =
@@ -163,10 +172,13 @@ export const PLANS: readonly Plan[] = [
   {
     id: "enterprise",
     name: "Enterprise 企业版",
-    price: undefined, // 自定义报价，不展示固定价格
+    // 2026-08-13 定价实化:中大型企业标准价 HK$2,888/月、HK$28,880/年。
+    // 此前是「自定义报价」不展示价格(P0-3 时代),现在有标准定价,
+    // Payment Link 待配(STRIPE_PAYMENT_LINK_ENT_MONTH/_YEAR)。
+    price: "HK$2,888/月",
     period: "月",
-    annualPrice: undefined,
-    annualNote: undefined,
+    annualPrice: "HK$28,880/年",
+    annualNote: "年付约省 2 个月",
     features: [
       "SSO/SAML 与自动成员管理",
       "私有模型网关或专属部署",

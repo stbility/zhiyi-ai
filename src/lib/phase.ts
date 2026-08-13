@@ -77,7 +77,7 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
     label: "Entitlement Service、Stripe 订阅",
     state: "partial",
     missing:
-      "权益判断(0034 get_entitlements)与用量计量(0035)已就位;五档定价(Free/128/198/388/自定义)全链路生产运行:checkout/webhook/plans/billing 已上线,STRIPE_PRICE_* 6/8 已配;权益矩阵已扩展(0055:concurrent_tasks/history_days/knowledge_capacity/mcp_servers 四类 feature,生产 30 行种子实证);六项营销承诺全部 gating:MCP 登记、知识库上传、并发任务数(agent+workflow 双入口,2026-08-12)、历史保留天数(会话列表过滤,2026-08-12)、工作流数量、月度智能体额度;待配 STRIPE_PRICE_ENT_* 2 个(Enterprise 自定义报价可选)",
+      "权益判断(0034 get_entitlements)与用量计量(0035)已就位;五档定价(Free/128/198/388/2888)全链路生产运行:checkout/webhook/plans/billing 已上线;Payment Link 8 个已对齐(2026-08-13:PRO/PRO_PLUS/TEAM/ENT × 月付/年付,见 .env.example);权益矩阵已扩展(0055:concurrent_tasks/history_days/knowledge_capacity/mcp_servers 四类 feature,生产 30 行种子实证);六项营销承诺全部 gating:MCP 登记、知识库上传、并发任务数(agent+workflow 双入口,2026-08-12)、历史保留天数(会话列表过滤,2026-08-12)、工作流数量、月度智能体额度;待配 STRIPE_PRICE_* 8 个 Price ID(未配时 checkout 如实 503 降级 Payment Link)",
   },
   {
     id: "7",

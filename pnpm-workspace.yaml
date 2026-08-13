@@ -5,3 +5,15 @@ allowBuilds:
 ignoredBuiltDependencies:
   - sharp
   - unrs-resolver
+
+# 安全加固:强制传递依赖升级到修复版本(2026-08-13,安全告警清零)
+# 详见 docs/security 相关记录;升级直接依赖后若锁文件漂移,可逐步移除
+overrides:
+  brace-expansion@<2: 1.1.18
+  brace-expansion@2: 2.1.4
+  brace-expansion@>=4: 5.0.9
+  js-yaml@4: 4.3.1
+  lodash@<4: 4.18.1
+  nanoid@<4: 3.3.18
+  postcss@8.4: 8.5.26
+  sharp@0.34: 0.35.3
