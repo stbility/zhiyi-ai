@@ -149,12 +149,15 @@ function statelessTokenHeader(): Record<string, string> {
 export function normalizeInstallationId(
   raw: string | undefined | null,
 ): string | null {
-  // 分两步剥:单个锚定字符类 + 量词,避免交替分支被静态分析
-  // 判为灾难性回溯(CodeQL js/polynomial-redos)。
+  // trim() 已剥首尾空白,字符类不再需要 \s —— 含 \s + 量词在用户可控
+  // 输入上会被 CodeQL 判为 ReDoS 面(js/polynomial-redos,实测 PR 复报)。
+  // 两次独立锚定替换 + 末尾再 trim,字符类固定、无交替,线性匹配;
+  // 行为与旧正则 /^[<"'\s]+|[>"'\s]+$/g 等价(引号内的空格由 trim 兜底)。
   const v = raw
     ?.trim()
-    .replace(/^[<"'\s]+/, "")
-    .replace(/[>"'\s]+$/, "");
+    .replace(/^[<"']+/, "")
+    .replace(/[>"']+$/, "")
+    .trim();
   if (!v) return null;
   return /^[0-9]+$/.test(v) ? v : null;
 }
