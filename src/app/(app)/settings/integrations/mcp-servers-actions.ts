@@ -7,6 +7,7 @@ import { encryptSecret, maskApiKey } from "@/lib/crypto/secret-box";
 import { validateServerUrl, mcpInitialize, mcpListTools } from "@/lib/mcp/client";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger } from "@/lib/log";
 
 /**
@@ -45,6 +46,32 @@ const createSchema = z.object({
     .min(1, "超时至少 1 秒")
     .max(60, "超时最多 60 秒"),
 });
+
+/**
+ * 单人组织 owner bypass：成员数 ≤ 1 的组织 owner 跳过 MCP server 配额限制。
+ * 适用于创始人个人组织（只有自己一个成员）。
+ */
+async function isSingleOrgOwner(
+  supabase: SupabaseClient,
+  userId: string,
+  organizationId: string,
+): Promise<boolean> {
+  const { data: membership } = await supabase
+    .from("memberships")
+    .select("role")
+    .eq("organization_id", organizationId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (membership?.role !== "owner") return false;
+
+  const { count: memberCount } = await supabase
+    .from("memberships")
+    .select("user_id", { count: "exact" })
+    .eq("organization_id", organizationId);
+
+  return (memberCount ?? 0) <= 1;
+}
 
 export async function createMcpServer(
   _prev: McpServerState,
@@ -100,7 +127,10 @@ export async function createMcpServer(
     ? quotaOf(entitlements, "mcp_servers")
     : 0;
 
-  if (mcpQuota !== null) {
+  // 单人组织 owner bypass（适用于创始人）
+  if (await isSingleOrgOwner(supabase, user.id, parsed.data.organizationId)) {
+    // founder bypass: 跳过配额检查
+  } else if (mcpQuota !== null) {
     const { count: existingCount, error: countError } = await supabase
       .from("mcp_servers")
       .select("id", { count: "exact", head: true })
