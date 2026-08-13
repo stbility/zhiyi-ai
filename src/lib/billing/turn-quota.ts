@@ -105,7 +105,7 @@ export async function checkTurnQuota(input: {
   return {
     reason:
       `${reason}${通道}与智能体共用同一份月度额度。` +
-      `升级 Professional(月付 HK$128)可提升到每月 2,000 次,` +
+      `升级 Professional(月付 HK128)可提升到每月 2,000 次,` +
       `Enterprise 每月 5,000 次。`,
     used,
     quota: quota ?? 0,

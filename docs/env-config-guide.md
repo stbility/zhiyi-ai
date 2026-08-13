@@ -47,11 +47,11 @@
 配置后：checkout 走服务端 Checkout（与 Pro/Team 同链路），webhook 正确映射 price → enterprise → 权益解锁。
 
 ### 价格（推荐复用 Stripe 现有 388/3880 产品）
-Enterprise 定价锚定 Team 上浮，**月付 HK$388 / 年付 HK$3,880**（Stripe 侧已有该产品，
-链接 `cNi00kgBt3078DUaCa5AQ02` 实测显示 ¥346.93/月≈HK$388、年付 ¥3,460≈HK$3,880）。
+Enterprise 定价锚定 Team 上浮，**月付 HK388 / 年付 HK3,880**（Stripe 侧已有该产品，
+链接 `cNi00kgBt3078DUaCa5AQ02` 实测显示 ¥346.93/月≈HK388、年付 ¥3,460≈HK3,880）。
 配额在权益矩阵 0055 中 **全部 null（不限）** —— 与「企业自定义额度」定位一致。
 
-> 💡 若想调整 Enterprise 价格：在 Stripe Dashboard 新建 Price（金额 HK$388 起，可按企业客户单独报价），
+> 💡 若想调整 Enterprise 价格：在 Stripe Dashboard 新建 Price（金额 HK388 起，可按企业客户单独报价），
 > 用新 Price ID 填 env 即可，无需改代码。
 
 ### 需要的 2 个变量
