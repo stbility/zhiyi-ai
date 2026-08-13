@@ -121,7 +121,6 @@ async function upsertSubscription(
   if (!userId) {
     // 归属认不出时,若该订阅**已在库**,仍必须把状态落下去 ——
     // 否则「取消」这类事件会因为归属查不到而整条丢失,用户已退订却仍有权益。
-    // 行不存在才是真的无从下手,抛错吃 5xx 让 Stripe 重试。
     const affected = await setSubscriptionStatus(
       admin,
       subscription.id,
@@ -134,7 +133,11 @@ async function upsertSubscription(
       );
       return;
     }
-    throw new Error(`无法确定订阅 ${subscription.id} 所属用户`);
+    // 行不存在 → 入账外表(P0-6),返回 200 不再死循环重试:
+    // 此前 throw 让 Stripe 重试到放弃,付款与权益永久丢失且无人知晓。
+    // 事件已留痕(含付款邮箱),人工可按 docs/payment-loop-runbook.md 补录。
+    await recordUnattributed(admin, stripe, subscription, "unknown");
+    return;
   }
 
   // v22:current_period_end 不在 Subscription 顶层,在 items.data[0] 上。
@@ -148,13 +151,12 @@ async function upsertSubscription(
       ? pricePlan
       : await resolvePlanIdForPrice(stripe, item?.price.id ?? "");
   if (!planId) {
-    // 官方做法:metadata 与 env 都判不出套餐 → 如实失败(500,Stripe 重试),
-    // 绝不静默降级 free —— 静默降级 = 付了钱权益不升,是断链根因。
-    logger.error(
-      { priceId: item?.price.id ?? "?" },
-      "无法判定订阅套餐(metadata.plan_id 与 STRIPE_PRICE_* 均无)——拒绝落库",
-    );
-    throw new Error(`无法判定订阅套餐: price=${item?.price.id ?? "?"}`);
+    // metadata 与 env 都判不出套餐 → 入账外表(plan_id='unknown')并返回 200:
+    // 绝不静默降级 free(静默降级 = 付了钱权益不升,是断链根因),
+    // 也绝不 throw 死循环重试(重试到放弃 = 事件永久丢失)。
+    // 价格 metadata 缺失是配置问题,账外表比 5xx 重试更有诊断价值。
+    await recordUnattributed(admin, stripe, subscription, "unknown");
+    return;
   }
 
   const { error } = await admin.from("subscriptions").upsert(
@@ -196,6 +198,73 @@ async function setSubscriptionStatus(
     throw new Error(`订阅状态更新失败:${error.message}`);
   }
   return data?.length ?? 0;
+}
+
+/**
+ * 归属失败入账外表(P0-6):事件留痕,返回 200,人工凭付款邮箱补录。
+ *
+ * 幂等:以 stripe_subscription_id 为主键 upsert,attempts 递增记录重试次数。
+ * 附带读取 Stripe customer 的邮箱 —— 人工认领的唯一线索,读不到也不阻断。
+ * 账外表写入本身失败 → 仍然抛出吃 5xx 让 Stripe 重试(极端情况下
+ * 留痕优先于吞掉事件)。
+ */
+async function recordUnattributed(
+  admin: SupabaseClient,
+  stripe: Stripe,
+  subscription: Stripe.Subscription,
+  planId: string,
+): Promise<void> {
+  let customerEmail: string | null = null;
+  try {
+    const customer = await stripe.customers.retrieve(
+      subscription.customer as string,
+    );
+    if (!customer.deleted) {
+      customerEmail = (customer as Stripe.Customer).email ?? null;
+    }
+  } catch (e) {
+    logger.warn(
+      { customerId: subscription.customer, error: e instanceof Error ? e.message : String(e) },
+      "账外表:读取 customer 邮箱失败(不影响留痕)",
+    );
+  }
+
+  const { data: existing } = await admin
+    .from("unattributed_subscriptions")
+    .select("attempts")
+    .eq("stripe_subscription_id", subscription.id)
+    .maybeSingle();
+  const attempts = ((existing?.attempts as number | null) ?? 0) + 1;
+
+  const { error } = await admin.from("unattributed_subscriptions").upsert(
+    {
+      stripe_subscription_id: subscription.id,
+      customer_id: subscription.customer as string,
+      customer_email: customerEmail,
+      plan_id: planId,
+      status: subscription.status,
+      last_event: "webhook",
+      attempts,
+    },
+    { onConflict: "stripe_subscription_id" },
+  );
+  if (error) {
+    logger.error(
+      { subscriptionId: subscription.id, dbError: error.message },
+      "账外表写入失败(将 5xx 让 Stripe 重试)",
+    );
+    throw error;
+  }
+  logger.error(
+    {
+      subscriptionId: subscription.id,
+      customerId: subscription.customer,
+      email: customerEmail,
+      planId,
+      attempts,
+    },
+    "订阅归属失败,已入账外表待人工认领(见 docs/payment-loop-runbook.md)",
+  );
 }
 
 export async function POST(request: NextRequest) {
