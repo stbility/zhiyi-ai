@@ -74,7 +74,7 @@ const STRIPE_PAYMENT_LINK_ENT_YEAR: string | undefined =
   process.env.STRIPE_PAYMENT_LINK_ENT_YEAR;
 // Team Payment Links:仅从环境变量读取,不再回退到 Enterprise 链接 ——
 // 2026-08-13(P0-3)修正:此前 Team 回退到 ENT URL,而该 URL 在 Stripe 侧
-// 实际指向 HK$388 产品(命名错位),点「联系销售」会直接打开付款页。
+// 实际指向 HK388 产品(命名错位),点「联系销售」会直接打开付款页。
 // Team 主路径走 /api/billing/checkout(STRIPE_PRICE_TEAM_* 已配),
 // Payment Link 只作为 checkout 不可用时的备用,未配时如实缺失。
 const STRIPE_PAYMENT_LINK_TEAM_MONTH: string | undefined =
@@ -86,7 +86,7 @@ export const PLANS: readonly Plan[] = [
   {
     id: "free",
     name: "Free",
-    price: "HK$0/月",
+    price: "HK0/月",
     period: "月",
     annualPrice: undefined,
     annualNote: undefined,
@@ -106,9 +106,9 @@ export const PLANS: readonly Plan[] = [
   {
     id: "professional",
     name: "Professional 专业版",
-    price: "HK$128/月",
+    price: "HK128/月",
     period: "月",
-    annualPrice: "HK$1,280/年",
+    annualPrice: "HK1,280/年",
     annualNote: "年付约省 2 个月",
     features: [
       "5 个启用中的工作流",
@@ -128,9 +128,9 @@ export const PLANS: readonly Plan[] = [
   {
     id: "professional_plus",
     name: "Professional 进阶版",
-    price: "HK$198/月",
+    price: "HK198/月",
     period: "月",
-    annualPrice: "HK$1,980/年",
+    annualPrice: "HK1,980/年",
     annualNote: "年付约省 2 个月",
     features: [
       "10 个启用中的工作流",
@@ -151,9 +151,9 @@ export const PLANS: readonly Plan[] = [
   {
     id: "team",
     name: "Team 团队版",
-    price: "HK$388/月",
+    price: "HK388/月",
     period: "月",
-    annualPrice: "HK$3,880/年",
+    annualPrice: "HK3,880/年",
     annualNote: "包含 3 名成员，年付约省 2 个月",
     features: [
       "组织、成员与角色权限",
@@ -172,12 +172,12 @@ export const PLANS: readonly Plan[] = [
   {
     id: "enterprise",
     name: "Enterprise 企业版",
-    // 2026-08-13 定价实化:中大型企业标准价 HK$2,888/月、HK$28,880/年。
+    // 2026-08-13 定价实化:中大型企业标准价 HK2,888/月、HK28,880/年。
     // 此前是「自定义报价」不展示价格(P0-3 时代),现在有标准定价,
     // Payment Link 待配(STRIPE_PAYMENT_LINK_ENT_MONTH/_YEAR)。
-    price: "HK$2,888/月",
+    price: "HK2,888/月",
     period: "月",
-    annualPrice: "HK$28,880/年",
+    annualPrice: "HK28,880/年",
     annualNote: "年付约省 2 个月",
     features: [
       "SSO/SAML 与自动成员管理",

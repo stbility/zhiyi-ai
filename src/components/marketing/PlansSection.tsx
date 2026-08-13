@@ -47,8 +47,8 @@ function PlanCard({
   const isYear = interval === "year";
 
   // 传给 PricingCard 的必须是「纯金额 + 纯周期」两段:
-  // plan.price 形如 "HK$128/月"(金额+周期一体),若原样传入,卡片内部
-  // 再拼一次 "/{period}" 就会渲染成 "HK$128/月/月"(2026-08-13 修复)。
+  // plan.price 形如 "HK128/月"(金额+周期一体),若原样传入,卡片内部
+  // 再拼一次 "/{period}" 就会渲染成 "HK128/月/月"(2026-08-13 修复)。
   // 这里拆出金额段,周期按当前切换状态给 "月"/"年"(free 无年付,恒为月)。
   const shownPrice = (isFree || !isYear ? plan.price : plan.annualPrice)
     ?.split("/")[0] ?? plan.price;
@@ -56,7 +56,7 @@ function PlanCard({
   const ctaLabel = isFree ? "免费开始" : "立即订阅";
 
   // 免费档没有订阅动作,CTA 就是注册链接。
-  // (Enterprise 2026-08-13 起有标准定价 HK$2,888/月 + Payment Link,
+  // (Enterprise 2026-08-13 起有标准定价 HK2,888/月 + Payment Link,
   //  与其他付费档一样走 SubscribeButton;「联系销售」入口保留在 /contact 页。)
   if (isFree) {
     return (
