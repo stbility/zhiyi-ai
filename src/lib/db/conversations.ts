@@ -122,9 +122,11 @@ export async function loadConversations(
   const supabase = await createSupabaseServerClient();
   if (!supabase) return [];
 
-  // history_days 权益:按档位过滤历史可见范围(0055)。
-  //   quota=null(Free/Team/Enterprise)→ 永久保留,不额外过滤;
-  //   quota=N(Professional 90 天 / Plus 365 天)→ 只返回最近 N 天。
+  // history_days 权益:按档位过滤历史可见范围(0055 + 0060 修正)。
+  //   quota=null → 永久保留,不额外过滤(仅 Team/Enterprise)
+  //   quota=N(Free 7 天 / Professional 90 天 / Plus 365 天)→ 只返回最近 N 天。
+  //   0060(P0-5)把 free 从 null(实现为永久)改为 7 天 —— 此前 free 的
+  //   可见范围反而大于 Professional,权益随档位不单调。
   // getMyEntitlements 失败时按 0 天处理(异常不等于放行,与智能体通道同一纪律)。
   const entitlements = await getMyEntitlements();
   const historyDays = entitlements ? quotaOf(entitlements, "history_days") : 0;
