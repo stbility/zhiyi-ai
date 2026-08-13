@@ -56,14 +56,11 @@ function PlanCard({
       : "立即订阅";
 
   // 免费档没有订阅动作,CTA 就是注册链接。
-  // 付费档(非 enterprise):走服务端 Checkout。Payment Link 只作为 checkout 不可用时的备用。
+  // Enterprise:站内询价页(P0-3 修正)——「联系销售」必须是人能填的表单,
+  // 而不是一个硬编码的 Stripe 付款链接(此前与 Team 共用同一 Payment Link,
+  // 且付款邮箱≠注册邮箱时订阅会静默丢失)。
   if (isFree || plan.id === "enterprise") {
-    const enterpriseHref = isFree
-      ? "/register"
-      : withPrefilledEmail(
-          isYear ? plan.paymentLinkYear : plan.paymentLinkMonth,
-          email,
-        );
+    const enterpriseHref = isFree ? "/register" : "/contact";
     return (
       <PricingCard
         name={plan.name}
