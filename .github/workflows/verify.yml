@@ -18,6 +18,10 @@ concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
 
+# 最小权限:只读仓库内容,不需要写任何东西(CodeQL 告警修复)
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -33,9 +35,13 @@ vi.mock("server-only", () => ({}));
 /** 内存版 Supabase —— 见 tests/helpers/supabase-memory.ts */
 let db: MemoryDb = createMemoryDb();
 
+// 测试密钥一律运行期生成(node:crypto randomUUID):签名算法只要求
+// 「签名与验签用同一个值」,不校验格式。刻意不在源码里写任何形如
+// whsec_ / sk_ 的字符串 —— 写死的「看起来像密钥」的值会被 Secret
+// scanning 当作泄露告警(2026-08-13 清理)。
 const stripeState = {
   configured: true,
-  webhookSecret: "whsec_test",
+  webhookSecret: randomUUID(),
   /** false 时 constructEvent 抛错,模拟伪造/篡改的请求 */
   signatureValid: true,
   /** Stripe 侧的**权威状态** —— 与事件载荷刻意分开,才能测出「信谁」 */
@@ -78,7 +84,7 @@ vi.mock("@/lib/billing/stripe", () => ({
   getStripeConfig: () =>
     stripeState.configured
       ? {
-          secretKey: "sk_test_x",
+          secretKey: randomUUID(),
           publishableKey: "",
           webhookSecret: stripeState.webhookSecret,
         }

@@ -79,10 +79,14 @@ function embed(value: unknown): string {
  *
  * 它们的路径在 iframe 里解析不到(srcdoc 没有基地址),留着只会产生
  * 一串 404。页面骨架(比如 <div id="root">)必须保留 —— 那是挂载点。
+ *
+ * 闭合标签写成 `<\/script\s*>` 而非 `<\/script>`:HTML5 解析器对
+ * `</script >`(尾随空白)同样视为闭合,只匹配无空白形式会让这种
+ * 变体残留,CodeQL js/incomplete-multi-character-sanitization 报的就是它。
  */
 function stripLocalRefs(html: string): string {
   return html
-    .replace(/<script\b[^>]*\bsrc=["'](?!https?:|\/\/)[^"']*["'][^>]*>\s*<\/script>/gi, "")
+    .replace(/<script\b[^>]*\bsrc=["'](?!https?:|\/\/)[^"']*["'][^>]*>\s*<\/script\s*>/gi, "")
     .replace(/<link\b[^>]*\bhref=["'](?!https?:|\/\/)[^"']*["'][^>]*>/gi, "");
 }
 

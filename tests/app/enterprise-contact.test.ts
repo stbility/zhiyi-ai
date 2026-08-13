@@ -4,16 +4,20 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * P0-3 Enterprise「联系销售」行为契约(2026-08-13 修复)。
+ * Enterprise 订阅入口契约。
  *
- * 背景:定价页 Enterprise CTA 此前直接跳硬编码 Stripe Payment Link
- * (buy.stripe.com/cNi00kgBt3078DUaCa5AQ02),与 Team 档共用同一 URL;
- * STRIPE_PRICE_ENT_* 未配置不影响跳转;付款邮箱≠注册邮箱时订阅静默丢失。
+ * 背景:
+ *   P0-3(2026-08-13 上午):定价页 Enterprise CTA 此前直接跳硬编码 Stripe
+ *   Payment Link(buy.stripe.com/cNi00kgBt3078DUaCa5AQ02),与 Team 档共用
+ *   同一 URL;STRIPE_PRICE_ENT_* 未配置不影响跳转;付款邮箱≠注册邮箱时
+ *   订阅静默丢失。当时改为站内 /contact 询价表单。
  *
- * 修复:
- *   1. Enterprise CTA → 站内 /contact 询价表单(不再出现任何 Stripe 付款链接)
- *   2. plans.ts 删除 Team 对 ENT URL 的回退与 ENT/TEAM 的硬编码默认链接
- *   3. 表单提交落 sales_leads 表(迁移 0063,RLS 只允许本人读写)
+ *   2026-08-13 下午(本轮):产品决策变更 —— Enterprise 有标准定价
+ *   HK$2,888/月、HK$28,880/年(中大型企业),独立 Payment Link
+ *   (ENT_MONTH/ENT_YEAR,与 Team 的 HK$388/3,880 链接区分开)。
+ *   Enterprise 恢复为与其他付费档一致的「立即订阅」按钮(SubscribeButton),
+ *   /contact 询价页保留为独立入口。ENT/TEAM Payment Link 一律 env-only,
+ *   不硬编码、不互相回退。
  */
 const PLANS = readFileSync(resolve(__dirname, "../../src/lib/plans.ts"), "utf8");
 const SECTION = readFileSync(
@@ -33,15 +37,21 @@ const MIGRATION = readFileSync(
   "utf8",
 );
 
-describe("P0-3 Enterprise 联系销售 = 站内询价表单", () => {
-  it("Enterprise CTA 指向站内 /contact,不再指向 Stripe 付款链接", () => {
-    expect(SECTION).toMatch(/enterpriseHref = isFree \? "\/register" : "\/contact"/);
-    // 不再用 paymentLink 拼 enterprise 跳转
-    const enterpriseBlock = SECTION.slice(
-      SECTION.indexOf("plan.id === \"enterprise\""),
-      SECTION.indexOf("return (\n      <PricingCard"),
+describe("Enterprise 订阅入口(2026-08-13 标准定价,取代 P0-3 联系销售 CTA)", () => {
+  it("Enterprise 与其他付费档一致走 SubscribeButton,不再强制跳 /contact", () => {
+    // 付费档统一渲染 SubscribeButton(planId 收窄包含 enterprise),
+    // enterprise 不再是「联系销售」特殊分支
+    expect(SECTION).toMatch(
+      /const paidPlanId = plan\.id as "professional" \| "professional_plus" \| "team" \| "enterprise";/,
     );
-    expect(enterpriseBlock).not.toMatch(/paymentLink/);
+    // 已无 enterpriseHref(旧 P0-3 分支)
+    expect(SECTION).not.toMatch(/enterpriseHref/);
+  });
+
+  it("Enterprise 定价已实化(HK$2,888/月、HK$28,880/年)", () => {
+    expect(PLANS).toContain('name: "Enterprise 企业版"');
+    expect(PLANS).toContain('price: "HK$2,888/月"');
+    expect(PLANS).toContain('annualPrice: "HK$28,880/年"');
   });
 
   it("plans.ts 的 ENT/TEAM Payment Link 不再硬编码、不再互相回退(Pro/Pro+ 的 503 降级链接保留)", () => {
@@ -57,13 +67,13 @@ describe("P0-3 Enterprise 联系销售 = 站内询价表单", () => {
     );
   });
 
-  it("/contact 询价页与提交 action 存在", () => {
+  it("/contact 询价页与提交 action 仍存在(独立入口)", () => {
     expect(CONTACT_PAGE).toMatch(/联系销售/);
     expect(CONTACT_ACTIONS).toMatch(/export async function submitSalesLead/);
     expect(CONTACT_ACTIONS).toMatch(/sales_leads/);
   });
 
-  it("迁移 0063:线索表 + 本人读写 RLS", () => {
+  it("迁移 0059:线索表 + 本人读写 RLS", () => {
     expect(MIGRATION).toMatch(/create table if not exists public\.sales_leads/);
     expect(MIGRATION).toMatch(/sales_leads_select_self/);
     expect(MIGRATION).toMatch(/created_by = \(select auth\.uid\(\)\)/);

@@ -41,18 +41,39 @@ export function getStripe(): Stripe | null {
  * 套餐对应的 Stripe Price ID,来自环境变量。
  *
  * 价格实体以 Stripe 为准(plans.ts 只放展示文案),Price 上必须带
- * metadata.plan_id ∈ {professional, enterprise} —— webhook 据此判定
- * 套餐,绝不信任客户端传来的 plan 字段。
+ * metadata.plan_id ∈ {professional, professional_plus, team, enterprise}
+ * —— webhook 据此判定套餐,绝不信任客户端传来的 plan 字段。
  *
- * interval:month(默认)读 STRIPE_PRICE_<PLAN>,year 读 STRIPE_PRICE_<PLAN>_YEAR。
+ * interval:month(默认)读 STRIPE_PRICE_<CODE>_MONTH,year 读
+ * STRIPE_PRICE_<CODE>_YEAR。CODE 见 PLAN_ENV_CODE —— 正向(checkout)
+ * 与反向(webhook)必须用同一张表,任何一处另写一份 key 都会分叉
+ * (2026-08-13 修:此前正向生成 STRIPE_PRICE_ENTERPRISE_*、反向查
+ * STRIPE_PRICE_ENT_*,配置 STRIPE_PRICE_ENT_MONTH 后 checkout 依旧报
+ * 「价格未配置」503)。
  * 未配置返回 null,由调用方如实降级(503 + 提示),绝不伪造成功路径。
  */
+const PLAN_ENV_CODE: Readonly<Record<string, string>> = {
+  professional: "PRO",
+  professional_plus: "PRO_PLUS",
+  team: "TEAM",
+  enterprise: "ENT",
+};
+
+export function priceEnvKey(
+  planId: string,
+  interval: "month" | "year" = "month",
+): string | null {
+  const code = PLAN_ENV_CODE[planId];
+  if (!code) return null;
+  return `STRIPE_PRICE_${code}${interval === "year" ? "_YEAR" : "_MONTH"}`;
+}
+
 export function getPriceIdForPlan(
   planId: string,
   interval: "month" | "year" = "month",
 ): string | null {
-  const year = interval === "year" ? "_YEAR" : "_MONTH";
-  const key = `STRIPE_PRICE_${planId.toUpperCase()}${year}`.replace("PROFESSIONAL_PLUS", "PRO_PLUS").replace("PROFESSIONAL", "PRO");
+  const key = priceEnvKey(planId, interval);
+  if (!key) return null;
   return process.env[key]?.trim() ?? null;
 }
 
@@ -63,20 +84,15 @@ export function getPriceIdForPlan(
  * webhook 只认 price.metadata.plan_id 会把所有订阅静默降级成 free ——
  * 用户付了钱权益不变。这里用环境变量里的 Price ID 兜底映射,
  * metadata 缺失时也能判对套餐;两处都配齐时以 metadata 为准。
+ *
+ * 候选 key 与正向(getPriceIdForPlan)共用 PLAN_ENV_CODE,
+ * 保证 checkout 配什么、webhook 就认什么。
  */
 export function getPlanIdForPrice(priceId: string): string | null {
-  const candidates: ReadonlyArray<readonly [string | undefined, string]> = [
-    [process.env["STRIPE_PRICE_PRO_MONTH"], "professional"],
-    [process.env["STRIPE_PRICE_PRO_YEAR"], "professional"],
-    [process.env["STRIPE_PRICE_PRO_PLUS_MONTH"], "professional_plus"],
-    [process.env["STRIPE_PRICE_PRO_PLUS_YEAR"], "professional_plus"],
-    [process.env["STRIPE_PRICE_TEAM_MONTH"], "team"],
-    [process.env["STRIPE_PRICE_TEAM_YEAR"], "team"],
-    [process.env["STRIPE_PRICE_ENT_MONTH"], "enterprise"],
-    [process.env["STRIPE_PRICE_ENT_YEAR"], "enterprise"],
-  ];
-  for (const [id, plan] of candidates) {
-    if (id && id === priceId) return plan;
+  for (const [planId, code] of Object.entries(PLAN_ENV_CODE)) {
+    const month = process.env[`STRIPE_PRICE_${code}_MONTH`]?.trim();
+    const year = process.env[`STRIPE_PRICE_${code}_YEAR`]?.trim();
+    if (month === priceId || year === priceId) return planId;
   }
   return null;
 }

@@ -18,6 +18,12 @@ on:
   pull_request:
     branches: [main]
 
+# 最小权限:只读仓库内容;PR 路径读取 Vercel check 的 summary 需要
+# checks: read(GitHub API /repos/.../commits/.../check-runs)(CodeQL 告警修复)
+permissions:
+  contents: read
+  checks: read
+
 jobs:
   verify:
     name: 部署闭环验证(/status.json)

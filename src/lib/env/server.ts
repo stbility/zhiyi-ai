@@ -63,10 +63,24 @@ const serverEnvSchema = z.object({
   STRIPE_SECRET_KEY: optionalString,
   STRIPE_PUBLISHABLE_KEY: optionalString,
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: optionalString,
-  STRIPE_PRICE_PROFESSIONAL: optionalString,
-  STRIPE_PRICE_PROFESSIONAL_YEAR: optionalString,
-  STRIPE_PRICE_ENTERPRISE: optionalString,
-  STRIPE_PRICE_ENTERPRISE_YEAR: optionalString,
+  // Price ID(正向/反向映射见 src/lib/billing/stripe.ts 的 PLAN_ENV_CODE)
+  STRIPE_PRICE_PRO_MONTH: optionalString,
+  STRIPE_PRICE_PRO_YEAR: optionalString,
+  STRIPE_PRICE_PRO_PLUS_MONTH: optionalString,
+  STRIPE_PRICE_PRO_PLUS_YEAR: optionalString,
+  STRIPE_PRICE_TEAM_MONTH: optionalString,
+  STRIPE_PRICE_TEAM_YEAR: optionalString,
+  STRIPE_PRICE_ENT_MONTH: optionalString,
+  STRIPE_PRICE_ENT_YEAR: optionalString,
+  // Payment Link(备用收款路径,值 = buy.stripe.com 完整 URL)
+  STRIPE_PAYMENT_LINK_PRO_MONTH: optionalString,
+  STRIPE_PAYMENT_LINK_PRO_YEAR: optionalString,
+  STRIPE_PAYMENT_LINK_PRO_PLUS_MONTH: optionalString,
+  STRIPE_PAYMENT_LINK_PRO_PLUS_YEAR: optionalString,
+  STRIPE_PAYMENT_LINK_TEAM_MONTH: optionalString,
+  STRIPE_PAYMENT_LINK_TEAM_YEAR: optionalString,
+  STRIPE_PAYMENT_LINK_ENT_MONTH: optionalString,
+  STRIPE_PAYMENT_LINK_ENT_YEAR: optionalString,
   STRIPE_WEBHOOK_SECRET: optionalString,
 
   // --- GitHub App(仓库集成)---------------------------------------------

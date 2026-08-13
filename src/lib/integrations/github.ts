@@ -149,7 +149,12 @@ function statelessTokenHeader(): Record<string, string> {
 export function normalizeInstallationId(
   raw: string | undefined | null,
 ): string | null {
-  const v = raw?.trim().replace(/^[<"'\s]+|[>"'\s]+$/g, "");
+  // 分两步剥:单个锚定字符类 + 量词,避免交替分支被静态分析
+  // 判为灾难性回溯(CodeQL js/polynomial-redos)。
+  const v = raw
+    ?.trim()
+    .replace(/^[<"'\s]+/, "")
+    .replace(/[>"'\s]+$/, "");
   if (!v) return null;
   return /^[0-9]+$/.test(v) ? v : null;
 }
