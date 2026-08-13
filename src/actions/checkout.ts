@@ -1,6 +1,14 @@
 'use server'
 
 import { PLANS, type PlanId } from '@/lib/plans'
+import { paymentLinkEnvKey } from '@/lib/billing/stripe'
+
+/**
+ * ⚠️ 遗留 server action(2026-08-13 排查):CheckoutButton 组件全仓库无挂载,
+ * startCheckout 无 userId 归属(创建的 Session 不带 metadata.userId,订阅
+ * 无法落到账号),策略也与主路径相反(它优先 Payment Link,主路径
+ * /api/billing/checkout 优先 Checkout Session)。保留仅为对照,不要再接入。
+ */
 
 export interface CheckoutResult {
   success: true
@@ -37,9 +45,13 @@ export async function startCheckout(
 
   // 降级:服务端创建 Checkout Session
   if (!priceId) {
+    // 变量名走 paymentLinkEnvKey(PLAN_ENV_CODE)生成 —— 手写 toUpperCase
+    // 会拼出 STRIPE_PAYMENT_LINK_PROFESSIONAL_PLUS_MONTH 这种不存在的名字
+    // (2026-08-13 排查修复)。
+    const key = paymentLinkEnvKey(planId, interval)
     return {
       success: false,
-      error: `Payment link not configured for ${plan.name} ${interval}. Set STRIPE_PAYMENT_LINK_${plan.id.toUpperCase()}_${interval.toUpperCase()} in Vercel env.`,
+      error: `Payment link not configured for ${plan.name} ${interval}. Set ${key ?? 'STRIPE_PAYMENT_LINK_<CODE>_<MONTH|YEAR>'} in Vercel env.`,
     }
   }
 

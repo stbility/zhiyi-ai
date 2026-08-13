@@ -56,6 +56,8 @@ const STRIPE_PRICE_PRO_PLUS_MONTH = process.env.STRIPE_PRICE_PRO_PLUS_MONTH;
 const STRIPE_PRICE_PRO_PLUS_YEAR = process.env.STRIPE_PRICE_PRO_PLUS_YEAR;
 const STRIPE_PRICE_TEAM_MONTH = process.env.STRIPE_PRICE_TEAM_MONTH;
 const STRIPE_PRICE_TEAM_YEAR = process.env.STRIPE_PRICE_TEAM_YEAR;
+const STRIPE_PRICE_ENT_MONTH = process.env.STRIPE_PRICE_ENT_MONTH;
+const STRIPE_PRICE_ENT_YEAR = process.env.STRIPE_PRICE_ENT_YEAR;
 
 // Payment Link 一律只从环境变量读取(值 = buy.stripe.com 完整 URL)。
 // 2026-08-13 修:此前 PRO/PRO_PLUS 四个把 URL 硬编码成 ?? 兜底 ——
@@ -173,8 +175,9 @@ export const PLANS: readonly Plan[] = [
     id: "enterprise",
     name: "Enterprise 企业版",
     // 2026-08-13 定价实化:中大型企业标准价 HK2,888/月、HK28,880/年。
-    // 此前是「自定义报价」不展示价格(P0-3 时代),现在有标准定价,
-    // Payment Link 待配(STRIPE_PAYMENT_LINK_ENT_MONTH/_YEAR)。
+    // 2026-08-13(排查修复):此前 priceIdMonth/priceIdYear 留 undefined ——
+    // getPlanByPriceId 按 Price ID 找不到 enterprise 档(其他档都绑了),
+    // 补上与 STRIPE_PRICE_ENT_* 的绑定,与 webhook 的 env 映射保持一致。
     price: "HK2,888/月",
     period: "月",
     annualPrice: "HK28,880/年",
@@ -189,8 +192,8 @@ export const PLANS: readonly Plan[] = [
       "专属技术支持",
     ],
     highlighted: false,
-    priceIdMonth: undefined,
-    priceIdYear: undefined,
+    priceIdMonth: STRIPE_PRICE_ENT_MONTH,
+    priceIdYear: STRIPE_PRICE_ENT_YEAR,
     paymentLinkMonth: STRIPE_PAYMENT_LINK_ENT_MONTH,
     paymentLinkYear: STRIPE_PAYMENT_LINK_ENT_YEAR,
   },

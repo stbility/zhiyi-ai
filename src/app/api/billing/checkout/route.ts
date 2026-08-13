@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { getSiteUrl } from "@/lib/env/server";
 import { logger } from "@/lib/log";
-import { resolvePriceIdForPlan, getStripe } from "@/lib/billing/stripe";
+import { resolvePriceIdForPlan, getStripe, priceEnvKey } from "@/lib/billing/stripe";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
@@ -69,13 +69,15 @@ export async function POST(request: NextRequest) {
     // 运维第一眼就该看出「当前密钥是 TEST 模式/不是本账号」。
     const keyPrefix = process.env["STRIPE_SECRET_KEY"]?.slice(0, 8) ?? "?";
     const diag = `当前 STRIPE_SECRET_KEY 前缀 ${keyPrefix}(期望 sk_live_;sk_test_ 测试密钥查的是空测试目录)。`;
+    // 变量名必须走 priceEnvKey(PLAN_ENV_CODE)生成 —— 手写 toUpperCase
+    // 会拼出 STRIPE_PRICE_PROFESSIONAL / STRIPE_PRICE_ENTERPRISE 这种
+    // 不存在的名字,用户照提示配置必然配错(2026-08-13 排查修复)。
+    const missingKey = priceEnvKey(planId, intervalOrMonth);
     return NextResponse.json(
       {
         error: `套餐 ${planId}(${intervalOrMonth})的价格未配置。`,
         hint:
-          `${diag}STRIPE_PRICE_` +
-          planId.toUpperCase() +
-          (intervalOrMonth === "year" ? "_YEAR" : "") +
+          `${diag}${missingKey ?? "STRIPE_PRICE_<CODE>_<MONTH|YEAR>"}` +
           " 未配置(官方做法:显式配置 Price ID;缺失时如实 503,前端降级 Payment Link)。",
       },
       { status: 503 },
