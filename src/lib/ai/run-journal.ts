@@ -78,6 +78,21 @@ export async function openRunJournal(
 
   const runId = data.id as string;
 
+  // 计量所需的 user_id 在这里一次查好缓存 —— 每步 record 都要用,
+  // 不能每步都回库查一次(P0-4 起计量从 finish 移到 record,频率升高)。
+  const { data: convRow } = await supabase
+    .from("conversations")
+    .select("user_id")
+    .eq("id", input.conversationId)
+    .single();
+  const convUserId = convRow?.user_id as string | undefined;
+  if (!convUserId) {
+    logger.warn(
+      { runId, conversationId: input.conversationId },
+      "openRunJournal: 找不到 conversation 的 user_id,本运行不计费",
+    );
+  }
+
   return {
     runId,
 
@@ -136,6 +151,27 @@ export async function openRunJournal(
         );
       }
 
+      // 计量:每完成一步计 1 次 agent_turns(P0-4 从 finish 一次性扣改为按步扣)。
+      // 中断/失败时只计已完成步骤;平台故障且一步未完成时计 0 ——
+      // 「自动返还额度」由计量时机天然实现,无需显式减量。
+      // 失败不阻断运行:计量漏记比整轮失败危害小。
+      if (convUserId) {
+        await supabase
+          .rpc("bump_usage", {
+            p_user_id: convUserId,
+            p_category: "agent_turns",
+            p_units: 1,
+          })
+          .then(({ error: rpcErr }) => {
+            if (rpcErr) {
+              logger.warn(
+                { runId, userId: convUserId, rpcErr: rpcErr.message },
+                "record: bump_usage 失败,本步用量未记录",
+              );
+            }
+          });
+      }
+
       // 进度单独更新。它是恢复的起点,比步骤明细更要紧 ——
       // 明细写失败还能从 messages 里勉强重建,进度丢了就不知道从哪续
       const { error: runError } = await supabase
@@ -170,42 +206,9 @@ export async function openRunJournal(
         return;
       }
 
-      // 【Bug 4 修复】用量计量:统计本轮 agent_turns 写入 usage_metering
-      // agent_runs 表没有 user_id,通过 conversations 查到
-      const { data: conv } = await supabase
-        .from("conversations")
-        .select("user_id")
-        .eq("id", input.conversationId)
-        .single();
-
-      if (!conv?.user_id) {
-        logger.warn({ runId, conversationId: input.conversationId }, "finish: 找不到 conversation 的 user_id,跳过用量记录");
-        return;
-      }
-
-      // agent_steps 表的 step_index 是 step*100+tool_index,最大步数 = Math.ceil(max_index/100)
-      const { data: stepRow } = await supabase
-        .from("agent_steps")
-        .select("step_index")
-        .eq("run_id", runId)
-        .order("step_index", { ascending: false })
-        .limit(1)
-        .single();
-
-      const stepCount = stepRow ? Math.ceil(Number(stepRow.step_index) / 100) : 0;
-      const units = Math.max(1, stepCount);
-
-      // bump_usage 失败不阻断:计量漏记比整轮失败危害小
-      await supabase.rpc("bump_usage", {
-        p_user_id: conv.user_id,
-        p_category: "agent_turns",
-        p_units: units,
-      }).then(({ error: rpcErr }) => {
-        if (rpcErr) {
-          logger.warn({ runId, userId: conv.user_id, units, rpcErr: rpcErr.message },
-            "finish: bump_usage 失败,用量未记录");
-        }
-      });
+      // 用量计量已由 record() 按完成步骤逐笔完成(P0-4):
+      //   中断/失败只计已完成步骤;一步未完成计 0(自动返还语义)。
+      // finish 只负责状态收尾,不再做一次性 bump。
     },
   };
 }

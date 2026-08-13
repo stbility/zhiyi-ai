@@ -20,10 +20,12 @@
  *   STRIPE_PAYMENT_LINK_TEAM_MONTH  = https://buy.stripe.com/xxx  Team 月付
  *   STRIPE_PAYMENT_LINK_TEAM_YEAR   = https://buy.stripe.com/xxx  Team 年付
  *
- * 【Agent 运行计次定义】
- * 用户主动启动一次 Agent 任务计为一次运行。任务内部的模型调用、
- * 工具调用、系统重试和检查点续跑不重复计次。因平台故障且未产生
- * 有效结果的运行自动返还额度。
+ * 【Agent 运行计次定义】(2026-08-13 P0-4 修正,口径如实化)
+ * 计量粒度为**实际完成的步骤数**:每完成一步(record 落库)计 1 次
+ * agent_turns。运行被中断/失败时只计已完成步骤;平台故障且一步未完成
+ * 时计 0(自动返还语义,无需显式减量)。工作流每个步骤是一次独立的
+ * /api/agent 运行,按各自完成步骤计。
+ * 用户主动启动一次 Agent 任务 = 一次运行,运行内部按步计费。
  */
 
 export type PlanId = "free" | "professional" | "professional_plus" | "team" | "enterprise";
