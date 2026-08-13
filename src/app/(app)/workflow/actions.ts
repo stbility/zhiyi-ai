@@ -384,6 +384,8 @@ export async function approveWorkflowStep(
     .eq("id", workflowIdParsed.data);
 
   const cookieHeader = (await cookies()).toString();
+  // 从 pausedIndex 恢复,并传入 resolvedGateIndex:
+  // 被闸门保护的步骤本身在批准后必须真正执行(state-machine.ts 语义)。
   const result = await executeWorkflowSteps(
     {
       supabase: ctx.supabase as never,
@@ -393,8 +395,9 @@ export async function approveWorkflowStep(
     workflowIdParsed.data,
     runIdParsed.data,
     definition,
-    pausedIndex + 1,
+    pausedIndex,
     cookieHeader,
+    pausedIndex,
   );
 
   revalidatePath("/workflow");
@@ -462,6 +465,8 @@ export async function submitWorkflowInput(
     .eq("id", workflowIdParsed.data);
 
   const cookieHeader = (await cookies()).toString();
+  // 同 approveWorkflowStep:从 pausedIndex 恢复,被闸门保护的步骤携带
+  // 用户输入真正执行一次,而不是被跳过。
   const result = await executeWorkflowSteps(
     {
       supabase: ctx.supabase as never,
@@ -471,8 +476,9 @@ export async function submitWorkflowInput(
     workflowIdParsed.data,
     runIdParsed.data,
     definition,
-    pausedIndex + 1,
+    pausedIndex,
     cookieHeader,
+    pausedIndex,
   );
 
   revalidatePath("/workflow");

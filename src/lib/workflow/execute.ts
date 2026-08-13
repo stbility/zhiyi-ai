@@ -60,6 +60,16 @@ export async function executeWorkflowSteps(
   definition: ReturnType<typeof parseDefinition>,
   startIndex: number,
   cookieHeader: string,
+  /**
+   * 恢复执行时被闸门保护的步骤下标。
+   *
+   * 语义:该步骤命中 needsInput/needsApproval 暂停后,用户提交输入/批准,
+   * 恢复时**必须真正执行这个步骤本身**(state-machine.ts 注释:「执行到该
+   * 步骤前停下,等用户批准后才继续」)——而不是跳过它从下一步开始。
+   * 传了它,循环里对这一步跳过闸门早退,正常走执行分支;
+   * 未传(首次执行 / Worker 触发)行为与从前完全一致。
+   */
+  resolvedGateIndex: number | null = null,
 ): Promise<ExecuteResult> {
   const { data: run } = await ctx.supabase
     .from("workflow_runs")
@@ -67,9 +77,26 @@ export async function executeWorkflowSteps(
     .eq("id", runId)
     .maybeSingle();
   const output = (run?.output as RunOutput | null) ?? {};
-  const stepResults: StepResult[] = Array.isArray(output.steps)
+  const rawSteps: StepResult[] = Array.isArray(output.steps)
     ? (output.steps as StepResult[])
     : [];
+
+  // 恢复执行被闸门保护的步骤时,去掉上一次暂停写入的**同一步骤**的
+  // 闸门占位记录(WAITING_FOR_INPUT / WAITING_FOR_APPROVAL),否则
+  // output.steps 里会出现同 stepId 的占位与真实结果双记录。
+  // 只按「被保护步骤的 stepId」过滤,不影响其它步骤的历史记录。
+  const stepResults: StepResult[] =
+    resolvedGateIndex === null
+      ? rawSteps
+      : rawSteps.filter((s) => {
+          const gateStep = definition.steps[resolvedGateIndex];
+          return !(
+            gateStep &&
+            s.stepId === gateStep.id &&
+            (s.status === "WAITING_FOR_INPUT" ||
+              s.status === "WAITING_FOR_APPROVAL")
+          );
+        });
 
   const setRun = (status: WorkflowStatus, extra: Record<string, unknown> = {}) =>
     ctx.supabase
@@ -85,8 +112,9 @@ export async function executeWorkflowSteps(
   for (let i = startIndex; i < definition.steps.length; i++) {
     const step = definition.steps[i]!; // parseDefinition 已保证步骤合法且至少 1 个
 
-    // 输入闸门:执行前停下,等用户提交输入(用户输入在续跑时拼进 prompt)
-    if (step.needsInput) {
+    // 输入闸门:执行前停下,等用户提交输入(用户输入在续跑时拼进 prompt)。
+    // resolvedGateIndex 命中的那一步不暂停 —— 恢复时它要被真正执行。
+    if (step.needsInput && i !== resolvedGateIndex) {
       stepResults.push({
         stepId: step.id,
         title: step.title,
@@ -107,8 +135,8 @@ export async function executeWorkflowSteps(
       return { paused: true, pausedStepTitle: step.title };
     }
 
-    // 审批闸门:执行前停下,等用户确认
-    if (step.needsApproval) {
+    // 审批闸门:执行前停下,等用户确认。同上:恢复执行的那一步不暂停。
+    if (step.needsApproval && i !== resolvedGateIndex) {
       stepResults.push({
         stepId: step.id,
         title: step.title,
@@ -122,10 +150,13 @@ export async function executeWorkflowSteps(
     }
 
     try {
-      // 暂停恢复时,若该步骤等待过输入,把用户提交的输入拼进指令
+      // 暂停恢复时,用户提交的输入只拼给**被闸门保护的那一步**本身
+      // (startIndex === resolvedGateIndex),不污染后续步骤的 prompt。
       const pendingInput = output.pending_input;
       const effectivePrompt =
-        startIndex > 0 && pendingInput && pendingInput.trim() !== ""
+        startIndex === resolvedGateIndex &&
+        pendingInput &&
+        pendingInput.trim() !== ""
           ? `${step.prompt}\n\n[用户补充输入]\n${pendingInput}`
           : step.prompt;
 
