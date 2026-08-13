@@ -67,6 +67,8 @@ profiles_insert_self
 profiles_select_visible
 profiles_update_self
 rate_limits_no_direct_access
+sales_leads_insert_self
+sales_leads_select_self
 skill_files_delete_admin
 skill_files_insert_admin
 skill_files_select_member

@@ -57,14 +57,19 @@ const STRIPE_PAYMENT_LINK_PRO_MONTH = process.env.STRIPE_PAYMENT_LINK_PRO_MONTH 
 const STRIPE_PAYMENT_LINK_PRO_YEAR = process.env.STRIPE_PAYMENT_LINK_PRO_YEAR ?? "https://buy.stripe.com/3cI4gAad5gQX8DU5hQ5AQ03";
 const STRIPE_PAYMENT_LINK_PRO_PLUS_MONTH = process.env.STRIPE_PAYMENT_LINK_PRO_PLUS_MONTH ?? "https://buy.stripe.com/00wfZi84XfMT1bs5hQ5AQ01";
 const STRIPE_PAYMENT_LINK_PRO_PLUS_YEAR = process.env.STRIPE_PAYMENT_LINK_PRO_PLUS_YEAR ?? "https://buy.stripe.com/00wcN6ad50RZ9HYaCa5AQ04";
-const STRIPE_PAYMENT_LINK_ENT_MONTH = process.env.STRIPE_PAYMENT_LINK_ENT_MONTH ?? "https://buy.stripe.com/cNi00kgBt3078DUaCa5AQ02";
-const STRIPE_PAYMENT_LINK_ENT_YEAR = process.env.STRIPE_PAYMENT_LINK_ENT_YEAR ?? "https://buy.stripe.com/fZu4gA1GzaszcUaeSq5AQ05";
-// Team Payment Links:用户 Stripe 侧 HK$388 产品(2026-08-11 配置),
-// 与 ENTERPRISE 同 URL(Stripe 产品命名与代码档位错位,以产品结构为准:388 = Team)
+const STRIPE_PAYMENT_LINK_ENT_MONTH: string | undefined =
+  process.env.STRIPE_PAYMENT_LINK_ENT_MONTH;
+const STRIPE_PAYMENT_LINK_ENT_YEAR: string | undefined =
+  process.env.STRIPE_PAYMENT_LINK_ENT_YEAR;
+// Team Payment Links:仅从环境变量读取,不再回退到 Enterprise 链接 ——
+// 2026-08-13(P0-3)修正:此前 Team 回退到 ENT URL,而该 URL 在 Stripe 侧
+// 实际指向 HK$388 产品(命名错位),点「联系销售」会直接打开付款页。
+// Team 主路径走 /api/billing/checkout(STRIPE_PRICE_TEAM_* 已配),
+// Payment Link 只作为 checkout 不可用时的备用,未配时如实缺失。
 const STRIPE_PAYMENT_LINK_TEAM_MONTH: string | undefined =
-  process.env.STRIPE_PAYMENT_LINK_TEAM_MONTH ?? STRIPE_PAYMENT_LINK_ENT_MONTH;
+  process.env.STRIPE_PAYMENT_LINK_TEAM_MONTH;
 const STRIPE_PAYMENT_LINK_TEAM_YEAR: string | undefined =
-  process.env.STRIPE_PAYMENT_LINK_TEAM_YEAR ?? STRIPE_PAYMENT_LINK_ENT_YEAR;
+  process.env.STRIPE_PAYMENT_LINK_TEAM_YEAR;
 
 export const PLANS: readonly Plan[] = [
   {

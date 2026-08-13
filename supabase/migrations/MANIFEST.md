@@ -279,3 +279,4 @@ CI 的真实重放已经覆盖它。0044 已把 0005 连同基线 0001-0027 一�
 (用户点名长期免费)、加入生产实测快的 minimax-m3(≈4s)与 gpt-oss-20b(即时),
 让免费档降级链真正可用。密钥仍走 PLATFORM_NVIDIA_API_KEY 环境变量,
 未配置时界面如实显示「未配置」。
+| `0059_sales_leads.sql` | 待应用 | Enterprise 销售线索表(P0-3):「联系销售」由硬编码 Stripe Payment Link 改为站内询价表单,提交落 sales_leads;RLS 仅本人读写 |
