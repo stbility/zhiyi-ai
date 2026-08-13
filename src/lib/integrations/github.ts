@@ -149,15 +149,25 @@ function statelessTokenHeader(): Record<string, string> {
 export function normalizeInstallationId(
   raw: string | undefined | null,
 ): string | null {
-  // trim() 已剥首尾空白,字符类不再需要 \s —— 含 \s + 量词在用户可控
-  // 输入上会被 CodeQL 判为 ReDoS 面(js/polynomial-redos,实测 PR 复报)。
-  // 两次独立锚定替换 + 末尾再 trim,字符类固定、无交替,线性匹配;
-  // 行为与旧正则 /^[<"'\s]+|[>"'\s]+$/g 等价(引号内的空格由 trim 兜底)。
-  const v = raw
-    ?.trim()
-    .replace(/^[<"']+/, "")
-    .replace(/[>"']+$/, "")
-    .trim();
+  // 手工剥首尾装饰符(< > " '),不用正则 —— CodeQL 对任何「字符类 + 量词
+  // 作用于用户输入」的正则都判 ReDoS 面(js/polynomial-redos,PR 实测连
+  // [>"']+$ 这种锚定线性匹配也报),纯线性循环无此问题。
+  // trim() 已处理空白,这里只处理占位符包装。
+  const t = raw?.trim();
+  if (!t) return null;
+  let start = 0;
+  let end = t.length;
+  while (start < end) {
+    const ch = t[start]!;
+    if (ch === "<" || ch === '"' || ch === "'") start++;
+    else break;
+  }
+  while (end > start) {
+    const ch = t[end - 1]!;
+    if (ch === ">" || ch === '"' || ch === "'") end--;
+    else break;
+  }
+  const v = t.slice(start, end).trim();
   if (!v) return null;
   return /^[0-9]+$/.test(v) ? v : null;
 }
