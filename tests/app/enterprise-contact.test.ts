@@ -12,9 +12,9 @@ import { describe, expect, it } from "vitest";
  *   同一 URL;STRIPE_PRICE_ENT_* 未配置不影响跳转;付款邮箱≠注册邮箱时
  *   订阅静默丢失。当时改为站内 /contact 询价表单。
  *
- *   2026-08-13 下午(本轮):产品决策变更 —— Enterprise 有标准定价
- *   HK2,888/月、HK28,880/年(中大型企业),独立 Payment Link
- *   (ENT_MONTH/ENT_YEAR,与 Team 的 HK388/3,880 链接区分开)。
+ *   2026-08-13(定价 v2):Enterprise 标准定价 HK1,999/月、HK19,990/年
+ *   (中大型企业),独立 Payment Link(ENT_MONTH/ENT_YEAR,与 Team 的
+ *   HK499/4,990 链接区分开)。
  *   Enterprise 恢复为与其他付费档一致的「立即订阅」按钮(SubscribeButton),
  *   /contact 询价页保留为独立入口。ENT/TEAM Payment Link 一律 env-only,
  *   不硬编码、不互相回退。
@@ -48,10 +48,10 @@ describe("Enterprise 订阅入口(2026-08-13 标准定价,取代 P0-3 联系销�
     expect(SECTION).not.toMatch(/enterpriseHref/);
   });
 
-  it("Enterprise 定价已实化(HK2,888/月、HK28,880/年)", () => {
+  it("Enterprise 定价已实化(定价 v2:HK1,999/月、HK19,990/年)", () => {
     expect(PLANS).toContain('name: "Enterprise 企业版"');
-    expect(PLANS).toContain('price: "HK2,888/月"');
-    expect(PLANS).toContain('annualPrice: "HK28,880/年"');
+    expect(PLANS).toContain('price: "HK1,999/月"');
+    expect(PLANS).toContain('annualPrice: "HK19,990/年"');
   });
 
   it("plans.ts 的 ENT/TEAM Payment Link 不再硬编码、不再互相回退(Pro/Pro+ 的 503 降级链接保留)", () => {

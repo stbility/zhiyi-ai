@@ -79,19 +79,26 @@ const fakeStripe = {
   },
 };
 
-vi.mock("@/lib/billing/stripe", () => ({
-  getStripe: () => (stripeState.configured ? fakeStripe : null),
-  getStripeConfig: () =>
-    stripeState.configured
-      ? {
-          secretKey: randomUUID(),
-          publishableKey: "",
-          webhookSecret: stripeState.webhookSecret,
-        }
-      : null,
-  resolvePlanIdForPrice: async (_s: unknown, priceId: string) =>
-    stripeState.planByPrice[priceId] ?? null,
-}));
+vi.mock("@/lib/billing/stripe", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/lib/billing/stripe")
+  >("@/lib/billing/stripe");
+  return {
+    getStripe: () => (stripeState.configured ? fakeStripe : null),
+    getStripeConfig: () =>
+      stripeState.configured
+        ? {
+            secretKey: randomUUID(),
+            publishableKey: "",
+            webhookSecret: stripeState.webhookSecret,
+          }
+        : null,
+    resolvePlanIdForPrice: async (_s: unknown, priceId: string) =>
+      stripeState.planByPrice[priceId] ?? null,
+    // 用真实映射表 —— plink 兜底判定必须测真值(定价 v2 新增)
+    PLINK_TO_PLAN: actual.PLINK_TO_PLAN,
+  };
+});
 
 vi.mock("@/lib/log", () => ({
   logger: { warn: () => {}, error: () => {}, info: () => {} },
@@ -257,6 +264,45 @@ describe("订阅落库", () => {
       status: "active",
       plan_id: "professional",
       cancel_at_period_end: false,
+    });
+  });
+
+  it("checkout.session.completed 带 payment_link → metadata 与 env 都判不出时 plink 兜底", async () => {
+    // price 无 metadata.plan_id,env(planByPrice)也为空 —— 只有 payment_link 能判套餐
+    stripeState.subscriptions.set(SUB, {
+      id: SUB,
+      status: "active",
+      customer: CUS,
+      cancel_at_period_end: false,
+      metadata: { userId: USER },
+      items: {
+        data: [
+          {
+            current_period_end: 1_800_000_000,
+            price: { id: "price_unknown", metadata: {} },
+          },
+        ],
+      },
+    });
+    const POST = await handler();
+    const res = await POST(
+      post(
+        event("checkout.session.completed", {
+          subscription: SUB,
+          customer: CUS,
+          metadata: { userId: USER },
+          // Professional 月付的新 Payment Link(定价 v2,真实 plink ID)
+          payment_link: "plink_1U4GSTLySKtXMoIYwKEAlnfM",
+        }),
+      ),
+    );
+
+    expect(res.status).toBe(200);
+    expect(db.subscriptions[0]).toMatchObject({
+      user_id: USER,
+      stripe_subscription_id: SUB,
+      status: "active",
+      plan_id: "professional",
     });
   });
 

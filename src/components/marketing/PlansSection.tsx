@@ -56,7 +56,7 @@ function PlanCard({
   const ctaLabel = isFree ? "免费开始" : "立即订阅";
 
   // 免费档没有订阅动作,CTA 就是注册链接。
-  // (Enterprise 2026-08-13 起有标准定价 HK2,888/月 + Payment Link,
+  // (Enterprise 2026-08-13 起有标准定价 HK1,999/月 + Payment Link,
   //  与其他付费档一样走 SubscribeButton;「联系销售」入口保留在 /contact 页。)
   if (isFree) {
     return (

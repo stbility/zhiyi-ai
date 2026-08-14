@@ -24,18 +24,18 @@ const M0034 = readFileSync(
 );
 
 describe("plans.ts 港币定价(全球华人市场)", () => {
-  it("Professional 产品决策价 HK49/月", () => {
+  it("Professional 产品决策价(定价 v2:HK49/月)", () => {
     expect(PLANS).toContain('name: "Professional 专业版"');
     expect(PLANS).toContain("annualNote");
   });
 
-  it("Enterprise 产品决策价 HK229/月", () => {
+  it("Enterprise 产品决策价(定价 v2:HK1,999/月)", () => {
     expect(PLANS).toContain('name: "Enterprise 企业版"');
   });
 
   it("年付说明存在(两个月免费惯例)", () => {
-    expect(PLANS).toContain("HK1,280/年");
-    expect(PLANS).toContain("HK3,880/年");
+    expect(PLANS).toContain("HK490/年");
+    expect(PLANS).toContain("HK4,990/年");
   });
 
   it("三档沿能力线递进(超集关系标注)", () => {

@@ -56,6 +56,8 @@ const STRIPE_PRICE_PRO_PLUS_MONTH = process.env.STRIPE_PRICE_PRO_PLUS_MONTH;
 const STRIPE_PRICE_PRO_PLUS_YEAR = process.env.STRIPE_PRICE_PRO_PLUS_YEAR;
 const STRIPE_PRICE_TEAM_MONTH = process.env.STRIPE_PRICE_TEAM_MONTH;
 const STRIPE_PRICE_TEAM_YEAR = process.env.STRIPE_PRICE_TEAM_YEAR;
+const STRIPE_PRICE_ENT_MONTH = process.env.STRIPE_PRICE_ENT_MONTH;
+const STRIPE_PRICE_ENT_YEAR = process.env.STRIPE_PRICE_ENT_YEAR;
 
 // Payment Link 一律只从环境变量读取(值 = buy.stripe.com 完整 URL)。
 // 2026-08-13 修:此前 PRO/PRO_PLUS 四个把 URL 硬编码成 ?? 兜底 ——
@@ -106,9 +108,11 @@ export const PLANS: readonly Plan[] = [
   {
     id: "professional",
     name: "Professional 专业版",
-    price: "HK128/月",
+    // 2026-08-13(定价 v2):49/490(原 128/1280)。8 个新 Payment Link 与
+    // Price 已在 Stripe 创建,值走 STRIPE_PAYMENT_LINK_* / STRIPE_PRICE_* 环境变量。
+    price: "HK49/月",
     period: "月",
-    annualPrice: "HK1,280/年",
+    annualPrice: "HK490/年",
     annualNote: "年付约省 2 个月",
     features: [
       "5 个启用中的工作流",
@@ -128,9 +132,10 @@ export const PLANS: readonly Plan[] = [
   {
     id: "professional_plus",
     name: "Professional 进阶版",
-    price: "HK198/月",
+    // 2026-08-13(定价 v2):149/1490(原 198/1980)。
+    price: "HK149/月",
     period: "月",
-    annualPrice: "HK1,980/年",
+    annualPrice: "HK1,490/年",
     annualNote: "年付约省 2 个月",
     features: [
       "10 个启用中的工作流",
@@ -151,10 +156,11 @@ export const PLANS: readonly Plan[] = [
   {
     id: "team",
     name: "Team 团队版",
-    price: "HK388/月",
+    // 2026-08-13(定价 v2):499/4990(原 388/3880)。
+    price: "HK499/月",
     period: "月",
-    annualPrice: "HK3,880/年",
-    annualNote: "包含 3 名成员，年付约省 2 个月",
+    annualPrice: "HK4,990/年",
+    annualNote: "包含 3 名成员,年付约省 2 个月",
     features: [
       "组织、成员与角色权限",
       "组织知识库与团队检索",
@@ -162,6 +168,7 @@ export const PLANS: readonly Plan[] = [
       "每月 10,000 次标准 Agent 运行",
       "额外成员及额度可加购",
       "优先支持",
+      "包含进阶版全部权益",
     ],
     highlighted: false,
     priceIdMonth: STRIPE_PRICE_TEAM_MONTH,
@@ -172,12 +179,10 @@ export const PLANS: readonly Plan[] = [
   {
     id: "enterprise",
     name: "Enterprise 企业版",
-    // 2026-08-13 定价实化:中大型企业标准价 HK2,888/月、HK28,880/年。
-    // 此前是「自定义报价」不展示价格(P0-3 时代),现在有标准定价,
-    // Payment Link 待配(STRIPE_PAYMENT_LINK_ENT_MONTH/_YEAR)。
-    price: "HK2,888/月",
+    // 2026-08-13(定价 v2):1999/19990(原 2888/28880)。
+    price: "HK1,999/月",
     period: "月",
-    annualPrice: "HK28,880/年",
+    annualPrice: "HK19,990/年",
     annualNote: "年付约省 2 个月",
     features: [
       "SSO/SAML 与自动成员管理",
@@ -187,10 +192,11 @@ export const PLANS: readonly Plan[] = [
       "安全及合规评审",
       "正式 SLA",
       "专属技术支持",
+      "包含 Team 全部权益",
     ],
     highlighted: false,
-    priceIdMonth: undefined,
-    priceIdYear: undefined,
+    priceIdMonth: STRIPE_PRICE_ENT_MONTH,
+    priceIdYear: STRIPE_PRICE_ENT_YEAR,
     paymentLinkMonth: STRIPE_PAYMENT_LINK_ENT_MONTH,
     paymentLinkYear: STRIPE_PAYMENT_LINK_ENT_YEAR,
   },
