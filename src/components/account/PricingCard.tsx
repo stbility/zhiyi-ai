@@ -78,7 +78,8 @@ export function PricingCard({
       {showPrice && (
         <p className="flex items-baseline gap-1">
           <span className="text-fg text-[32px] font-semibold">{price}</span>
-          <span className="text-fg-tertiary text-caption">/{period}</span>
+          {/* 2026-08-14:周期前加空格 —— 显示为 "HK$49.00 / 月" */}
+          <span className="text-fg-tertiary text-caption"> / {period}</span>
         </p>
       )}
 

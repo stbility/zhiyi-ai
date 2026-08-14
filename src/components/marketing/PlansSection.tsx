@@ -34,6 +34,26 @@ function withPrefilledEmail(
   return `${base}${sep}prefilled_email=${encodeURIComponent(email)}`;
 }
 
+/**
+ * 价格显示格式化(2026-08-14 修复):plans.ts 的 price 是展示文案
+ * (如 "HK49/月"),这里拆出金额并格式化为标准格式:
+ *   · 一律带货币符号 HK$
+ *   · 保留 2 位小数(HK$49.00)
+ *   · 超千位加逗号(HK$1,999.00)
+ * 只改显示,不碰数据(PLANS 的价格数值、Payment Link、权益均不动)。
+ */
+function formatPriceDisplay(priceText: string | undefined): string {
+  if (!priceText) return "";
+  const amount = Number(
+    priceText.split("/")[0]?.replace(/[^0-9]/g, "") ?? "",
+  );
+  if (!Number.isFinite(amount)) return priceText;
+  return `HK$${amount.toLocaleString("en-HK", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 function PlanCard({
   plan,
   interval,
@@ -49,9 +69,12 @@ function PlanCard({
   // 传给 PricingCard 的必须是「纯金额 + 纯周期」两段:
   // plan.price 形如 "HK128/月"(金额+周期一体),若原样传入,卡片内部
   // 再拼一次 "/{period}" 就会渲染成 "HK128/月/月"(2026-08-13 修复)。
-  // 这里拆出金额段,周期按当前切换状态给 "月"/"年"(free 无年付,恒为月)。
-  const shownPrice = (isFree || !isYear ? plan.price : plan.annualPrice)
-    ?.split("/")[0] ?? plan.price;
+  // 这里拆出金额段并格式化为 HK$xx.00(千位逗号 + 2 位小数,2026-08-14),
+  // 周期按当前切换状态给 "月"/"年"(free 无年付,恒为月)。
+  const shownPrice = formatPriceDisplay(
+    (isFree || !isYear ? plan.price : plan.annualPrice)?.split("/")[0] ??
+      plan.price,
+  );
   const shownPeriod = isFree || !isYear ? "月" : "年";
   const ctaLabel = isFree ? "免费开始" : "立即订阅";
 
