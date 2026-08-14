@@ -206,10 +206,13 @@
 **认领流程**:
 1. 查账外表(在 Supabase SQL Editor 用 service_role 或 psql):
    ```sql
-   select stripe_subscription_id, customer_email, plan_id, status, attempts, created_at
+   select stripe_subscription_id, customer_email, plan_id, status, attempts,
+          user_id, created_at
    from public.unattributed_subscriptions
    order by created_at desc;
    ```
+   注:`user_id` 列(0062 新增):「套餐判不出但归属已确认」的行会直接带 UUID,
+   此时跳过第 2 步的用户查找,直接用该 UUID 补录。
 2. 用付款邮箱在 auth.users 里找到对应用户(邮箱不一致时先与用户确认身份):
    ```sql
    select id, email from auth.users where lower(email) = lower('<付款邮箱>');
