@@ -74,28 +74,28 @@ def call(path, data=None, method=None):
 
 # 产品名必须能被认成套餐(webhook 按 Price 上的 metadata.plan_id 判定,
 # 不依赖产品名关键字;2026-08-10 已删除目录自解析)。
-# 2026-08-13 定价(HKD,单位:分):
-#   Pro 128/1280、Pro+ 198/1980、Team 388/3880、Ent 2888/28880。
+# 2026-08-13 定价 v2(HKD,单位:分):
+#   Pro 49/490、Pro+ 149/1490、Team 499/4990、Ent 1999/19990。
 PLANS = [
     {
         "plan_id": "professional",
         "product_name": "Professional 专业版",
-        "prices": [("month", 12800), ("year", 128000)],
+        "prices": [("month", 4900), ("year", 49000)],
     },
     {
         "plan_id": "professional_plus",
         "product_name": "Professional 进阶版",
-        "prices": [("month", 19800), ("year", 198000)],
+        "prices": [("month", 14900), ("year", 149000)],
     },
     {
         "plan_id": "team",
         "product_name": "Team 团队版",
-        "prices": [("month", 38800), ("year", 388000)],
+        "prices": [("month", 49900), ("year", 499000)],
     },
     {
         "plan_id": "enterprise",
         "product_name": "Enterprise 企业版",
-        "prices": [("month", 288800), ("year", 2888000)],
+        "prices": [("month", 199900), ("year", 1999000)],
     },
 ]
 

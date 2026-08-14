@@ -8,6 +8,7 @@ import {
   resolvePlanIdForPrice,
   getStripe,
   getStripeConfig,
+  PLINK_TO_PLAN,
 } from "@/lib/billing/stripe";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -61,6 +62,7 @@ async function upsertSubscription(
   admin: SupabaseClient,
   stripe: Stripe,
   subscription: Stripe.Subscription,
+  paymentLink?: string,
 ): Promise<void> {
   // 归属判定:subscription.metadata.userId 优先(checkout 路由创建时写入);
   // 没有则用 customer 映射反查;再没有则按 Stripe customer 的邮箱
@@ -145,11 +147,15 @@ async function upsertSubscription(
   const periodEnd = item?.current_period_end ?? null;
   // 套餐判定:price.metadata.plan_id 优先(白名单);生产实测 4 条 HKD 价格
   // metadata 全空 —— 此时用环境变量里的 Price ID 反查,绝不静默降级成 free。
+  // 2026-08-13(定价 v2):再加 plink 兜底 —— 走 Payment Link 的订阅在
+  // checkout.session.completed 里带 session.payment_link,metadata 与 env
+  // 都判不出时用它反查(判定顺序:metadata → env → plink → 账外表)。
   const pricePlan = item?.price.metadata?.plan_id;
   const planId =
-    typeof pricePlan === "string" && PLAN_WHITELIST.has(pricePlan)
+    (typeof pricePlan === "string" && PLAN_WHITELIST.has(pricePlan)
       ? pricePlan
-      : await resolvePlanIdForPrice(stripe, item?.price.id ?? "");
+      : await resolvePlanIdForPrice(stripe, item?.price.id ?? "")) ??
+    (paymentLink ? (PLINK_TO_PLAN[paymentLink] ?? null) : null);
   if (!planId) {
     // metadata 与 env 都判不出套餐 → 入账外表(plan_id='unknown')并返回 200:
     // 绝不静默降级 free(静默降级 = 付了钱权益不升,是断链根因),
@@ -317,7 +323,14 @@ export async function POST(request: NextRequest) {
             );
           }
           const subscription = await fetchAuthoritative(stripe, subscriptionId);
-          await upsertSubscription(admin, stripe, subscription);
+          // 2026-08-13(定价 v2):把 Payment Link ID 传给套餐判定 ——
+          // 走 Payment Link 的订阅 Price 可能无 metadata 且 env 未配,
+          // 用 PLINK_TO_PLAN 兜底(三级判定:metadata → env → plink)。
+          const paymentLink =
+            typeof session.payment_link === "string"
+              ? session.payment_link
+              : undefined;
+          await upsertSubscription(admin, stripe, subscription, paymentLink);
         }
         break;
       }

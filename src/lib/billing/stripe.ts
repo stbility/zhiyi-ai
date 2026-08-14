@@ -86,6 +86,29 @@ export function paymentLinkEnvKey(
   return `STRIPE_PAYMENT_LINK_${code}${interval === "year" ? "_YEAR" : "_MONTH"}`;
 }
 
+/**
+ * Payment Link ID(plink_xxx)→ plan_id 映射。
+ *
+ * 2026-08-13(定价 v2)新增:8 个新 Payment Link 与 Price 在 Stripe 侧已创建,
+ * 走 Payment Link 的付款在 webhook 里用 checkout.session.payment_link 兜底
+ * 判套餐(判定顺序:price.metadata.plan_id → STRIPE_PRICE_* env → 本表)。
+ * 值来自用户提供的真实 plink ID,与 STRIPE_PAYMENT_LINK_* 环境变量一一对应。
+ */
+export const PLINK_TO_PLAN: Readonly<Record<string, string>> = {
+  // Professional 专业版(HK49/月、HK490/年)
+  plink_1U4GSTLySKtXMoIYwKEAlnfM: "professional",
+  plink_1U4GUHLySKtXMoIYuShTq0lQ: "professional",
+  // Professional 进阶版(HK149/月、HK1,490/年)
+  plink_1U4GW0LySKtXMoIYa1zcSfSP: "professional_plus",
+  plink_1U4GoLLySKtXMoIY9IQhFPC3: "professional_plus",
+  // Team 团队版(HK499/月、HK4,990/年)
+  plink_1U4GqvLySKtXMoIYuJGeCC1v: "team",
+  plink_1U4Gt6LySKtXMoIY8nuWaYmq: "team",
+  // Enterprise 企业版(HK1,999/月、HK19,990/年)
+  plink_1U4GvWLySKtXMoIYXLmdp0vX: "enterprise",
+  plink_1U4GxmLySKtXMoIYWPdXoQNw: "enterprise",
+};
+
 export function getPriceIdForPlan(
   planId: string,
   interval: "month" | "year" = "month",

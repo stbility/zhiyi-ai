@@ -46,27 +46,27 @@
 配置前：Enterprise 卡片「联系销售」，`/api/billing/checkout` 对 enterprise 返回 503 → 降级 Payment Link。
 配置后：checkout 走服务端 Checkout（与 Pro/Team 同链路），webhook 正确映射 price → enterprise → 权益解锁。
 
-### 价格（推荐复用 Stripe 现有 388/3880 产品）
-Enterprise 定价锚定 Team 上浮，**月付 HK388 / 年付 HK3,880**（Stripe 侧已有该产品，
-链接 `cNi00kgBt3078DUaCa5AQ02` 实测显示 ¥346.93/月≈HK388、年付 ¥3,460≈HK3,880）。
-配额在权益矩阵 0055 中 **全部 null（不限）** —— 与「企业自定义额度」定位一致。
+### 价格(2026-08-13 定价 v2:1999/19990)
+Enterprise 定价 **月付 HK1,999 / 年付 HK19,990**,新 Payment Link
+`7sY7sM70T0RZaM211A5AQ0D`(月)/ `00waEYdpheIP6vM25E5AQ0E`(年)。
+配额在权益矩阵 0055 中 **全部 null(不限)** —— 与「企业自定义额度」定位一致。
 
-> 💡 若想调整 Enterprise 价格：在 Stripe Dashboard 新建 Price（金额 HK388 起，可按企业客户单独报价），
-> 用新 Price ID 填 env 即可，无需改代码。
+> 💡 若想调整 Enterprise 价格:在 Stripe Dashboard 新建 Price(金额 HK1,999 起,可按企业客户单独报价),
+> 用新 Price ID 填 env 即可,无需改代码。
 
 ### 需要的 2 个变量
 
 | 变量名 | 必填 | 取值来源 |
 |---|---|---|
-| `STRIPE_PRICE_ENT_MONTH` | ✅ | Stripe Dashboard → Products → Enterprise 产品 → Pricing → 月付 Price 的 ID（`price_xxx`） |
-| `STRIPE_PRICE_ENT_YEAR` | ✅ | 同上，年付 Price 的 ID（`price_xxx`） |
+| `STRIPE_PRICE_ENT_MONTH` | ✅ | Stripe Dashboard → Products → Enterprise 产品 → Pricing → 月付 Price 的 ID(`price_xxx`) |
+| `STRIPE_PRICE_ENT_YEAR` | ✅ | 同上,年付 Price 的 ID(`price_xxx`) |
 
 ### 操作步骤
-1. 打开 [Stripe Dashboard](https://dashboard.stripe.com/products) → 找到「Enterprise 企业版」产品（388/3880）
-2. 点开 Pricing，复制月付和年付两个 Price 的 ID（格式 `price_1...`）
+1. 打开 [Stripe Dashboard](https://dashboard.stripe.com/products) → 找到「Enterprise 企业版」产品(1999/19990)
+2. 点开 Pricing,复制月付和年付两个 Price 的 ID(格式 `price_1...`)
 3. Vercel → 项目 `zhiyi-ai` → Settings → Environment Variables → 添加 `STRIPE_PRICE_ENT_MONTH` / `STRIPE_PRICE_ENT_YEAR`
-4. Redeploy（同 EMBEDDINGS 步骤 3）
-5. 验证：`status.json` → `stripe_prices_configured: 8/8`（从 6/8 变 8/8）
+4. Redeploy(同 EMBEDDINGS 步骤 3)
+5. 验证:`status.json` → `stripe_prices_configured: 8/8`(从 6/8 变 8/8)
 
 ---
 

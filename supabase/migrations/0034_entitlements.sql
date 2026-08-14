@@ -39,10 +39,11 @@ create policy entitlements_select_all on public.entitlements
 
 -- 默认权益。决策输入(以 Stripe 为准,价格不在此表):
 --   Free         HK$0/月      workflows=1,   monthly_agent_turns=100
---   Professional HK$128/月   workflows=5,   monthly_agent_turns=2000
---   Professional+ HK$198/月  workflows=10,  monthly_agent_turns=4000
---   Team         HK$388/月   workflows=null(不限), monthly_agent_turns=10000
---   Enterprise   自定义        workflows=null(不限), monthly_agent_turns=null(不限)
+--   Professional HK$49/月     workflows=5,   monthly_agent_turns=2000
+--   Professional+ HK$149/月  workflows=10,  monthly_agent_turns=4000
+--   Team         HK$499/月   workflows=null(不限), monthly_agent_turns=10000
+--   Enterprise   HK$1,999/月  workflows=null(不限), monthly_agent_turns=null(不限)
+-- (2026-08-13 定价 v2:49/149/499/1999 替换原 128/198/388/2888)
 insert into public.entitlements (plan_id, feature, quota) values
   ('free',              'workflows',            1),
   ('free',              'monthly_agent_turns',  100),

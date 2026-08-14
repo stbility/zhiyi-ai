@@ -139,7 +139,7 @@ export default function PricingPage() {
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3">
             <LinkButton href="/pricing" size="lg">
-              订阅专业版 HK128 →
+              订阅专业版 HK49 →
             </LinkButton>
             <LinkButton href="/pricing#enterprise" variant="secondary" size="lg">
               企业版 Enterprise

@@ -54,17 +54,18 @@ print('  可收款 :', d.get('charges_enabled'), '| 可打款:', d.get('payouts_
 "
 
 echo
-echo "── 2. 价格目录(应有 6 条 HKD:12800/128000/19800/198000/38800/388000)──────"
+echo "── 2. 价格目录(应有 8 条 HKD:4900/49000/14900/149000/49900/499000/199900/1999000)──────"
 get "prices?active=true&limit=100&expand[]=data.product" | py "
 import sys,json
 d=json.load(sys.stdin)
 if 'error' in d: print('  ERR:', d['error'].get('message')); sys.exit()
 rows=d.get('data',[])
 print(f'  active 价格共 {len(rows)} 条')
-# 2026-08-13 定价:Pro 128/1280、Pro+ 198/1980、Ent 388/3880(HKD 分)
-want={12800:'STRIPE_PRICE_PRO_MONTH',128000:'STRIPE_PRICE_PRO_YEAR',
-      19800:'STRIPE_PRICE_PRO_PLUS_MONTH',198000:'STRIPE_PRICE_PRO_PLUS_YEAR',
-      38800:'STRIPE_PRICE_ENT_MONTH',388000:'STRIPE_PRICE_ENT_YEAR'}
+# 2026-08-13 定价 v2:Pro 49/490、Pro+ 149/1490、Team 499/4990、Ent 1999/19990(HKD 分)
+want={4900:'STRIPE_PRICE_PRO_MONTH',49000:'STRIPE_PRICE_PRO_YEAR',
+      14900:'STRIPE_PRICE_PRO_PLUS_MONTH',149000:'STRIPE_PRICE_PRO_PLUS_YEAR',
+      49900:'STRIPE_PRICE_TEAM_MONTH',499000:'STRIPE_PRICE_TEAM_YEAR',
+      199900:'STRIPE_PRICE_ENT_MONTH',1999000:'STRIPE_PRICE_ENT_YEAR'}
 hit={}
 for p in rows:
     prod=p.get('product') or {}
