@@ -6,6 +6,7 @@ import { getSiteUrl } from "@/lib/env/server";
 import { logger } from "@/lib/log";
 import { resolvePriceIdForPlan, getStripe, priceEnvKey } from "@/lib/billing/stripe";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 /**
  * 发起订阅 Checkout。
@@ -99,7 +100,15 @@ export async function POST(request: NextRequest) {
       metadata: { userId: user.id },
     });
     customerId = customer.id;
-    const { error: mapError } = await supabase
+    // 【RLS 修复 2026-08-15】客户映射的写入走 service_role ——
+    // 0033 安全模型:stripe_customers 只有 SELECT policy,写仅限 service_role;
+    // 此前用用户会话客户端 upsert,新用户首购插入即被 RLS 拒(42501),
+    // 表永远 0 行、订阅归属链路断裂。与 webhook 同一纪律。
+    const admin = createSupabaseAdminClient();
+    if (!admin) {
+      return NextResponse.json({ error: "服务端数据库未配置。" }, { status: 503 });
+    }
+    const { error: mapError } = await admin
       .from("stripe_customers")
       .upsert(
         { user_id: user.id, customer_id: customer.id },

@@ -68,6 +68,24 @@ describe("0033 Stripe 客户与订阅", () => {
     expect(M0033).not.toContain("subscriptions_delete");
   });
 
+  it("checkout 路由写 stripe_customers 走 service_role(42501 修复)", () => {
+    // 2026-08-15 生产 42501 修复:stripe_customers 只有 SELECT policy,
+    // 写仅限 service_role(0033 安全模型)。checkout 此前用用户会话
+    // 客户端 upsert → 新用户首购即被 RLS 拒,表永远 0 行。
+    // 契约:客户映射的写入必须走 admin(service_role)客户端。
+    const CHECKOUT = readFileSync(
+      resolve(ROOT, "src/app/api/billing/checkout/route.ts"),
+      "utf8",
+    );
+    // 整个文件层面:admin 客户端 + upsert 链必须成对出现
+    expect(CHECKOUT).toMatch(
+      /createSupabaseAdminClient\(\)[\s\S]*?const \{ error: mapError \} = await admin\s*\.from\("stripe_customers"\)\s*\.upsert\(/,
+    );
+    // 表侧:stripe_customers 无 INSERT policy(用户永远不能自写客户映射)
+    expect(M0033).not.toContain("stripe_customers_insert");
+    expect(M0033).not.toContain("stripe_customers_update");
+  });
+
   it("订阅状态是权益唯一事实来源 —— 不信任客户端传的 plan", () => {
     expect(M0033).toContain("由 webhook 从 Stripe Price 的 metadata.plan_id 映射而来");
     expect(M0033).toContain("不在客户端传");
