@@ -56,6 +56,7 @@ skill_files_skill_idx
 skills_created_by_idx
 skills_organization_idx
 subscriptions_user_idx
+system_logs_actor_idx
 system_logs_level_created_idx
 system_logs_org_created_idx
 unattributed_subscriptions_email_idx
