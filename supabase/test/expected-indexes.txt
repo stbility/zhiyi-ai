@@ -59,6 +59,7 @@ subscriptions_user_idx
 system_logs_level_created_idx
 system_logs_org_created_idx
 unattributed_subscriptions_email_idx
+unattributed_subscriptions_user_idx
 workflow_runs_workflow_idx
 workflows_created_by_idx
 workflows_org_idx

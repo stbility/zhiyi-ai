@@ -161,7 +161,8 @@ async function upsertSubscription(
     // 绝不静默降级 free(静默降级 = 付了钱权益不升,是断链根因),
     // 也绝不 throw 死循环重试(重试到放弃 = 事件永久丢失)。
     // 价格 metadata 缺失是配置问题,账外表比 5xx 重试更有诊断价值。
-    await recordUnattributed(admin, stripe, subscription, "unknown");
+    // 归属已确认(userId 已知)→ 一并落库,认领时按 UUID 直接追到用户。
+    await recordUnattributed(admin, stripe, subscription, "unknown", userId);
     return;
   }
 
@@ -211,6 +212,8 @@ async function setSubscriptionStatus(
  *
  * 幂等:以 stripe_subscription_id 为主键 upsert,attempts 递增记录重试次数。
  * 附带读取 Stripe customer 的邮箱 —— 人工认领的唯一线索,读不到也不阻断。
+ * userId:可空 —— 归属认不出的行传 undefined(user_id 保持 NULL);
+ *   套餐判不出但归属已确认的行传 userId,让账外表能按 auth.uid() UUID 追人。
  * 账外表写入本身失败 → 仍然抛出吃 5xx 让 Stripe 重试(极端情况下
  * 留痕优先于吞掉事件)。
  */
@@ -219,6 +222,7 @@ async function recordUnattributed(
   stripe: Stripe,
   subscription: Stripe.Subscription,
   planId: string,
+  userId?: string,
 ): Promise<void> {
   let customerEmail: string | null = null;
   try {
@@ -244,6 +248,7 @@ async function recordUnattributed(
 
   const { error } = await admin.from("unattributed_subscriptions").upsert(
     {
+      user_id: userId ?? null,
       stripe_subscription_id: subscription.id,
       customer_id: subscription.customer as string,
       customer_email: customerEmail,

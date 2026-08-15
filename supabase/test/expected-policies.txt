@@ -81,6 +81,7 @@ stripe_customers_select_own
 subscriptions_select_own
 system_logs_insert_member
 system_logs_select_admin
+unattributed_subscriptions_no_direct_access
 usage_metering_insert_own
 usage_metering_select_own
 usage_metering_update_own
