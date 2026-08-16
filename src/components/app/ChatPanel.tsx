@@ -936,8 +936,8 @@ export function ChatPanel({
 
                 {/* P1:fallback 轨迹 —— 显式展示切换,不隐藏成 model changed */}
                 {fallbackTrail !== "" ? (
-                  <div className="text-fg-tertiary text-label mt-1.5 border-l border-amber-500/40 pl-3 whitespace-pre-wrap">
-                    <span className="text-amber-600/80">⇄ fallback:</span>{" "}
+                  <div className="text-fg-tertiary text-label mt-1.5 border-l border-warning-tint pl-3 whitespace-pre-wrap">
+                    <span className="text-warning">⇄ fallback:</span>{" "}
                     {fallbackTrail}
                   </div>
                 ) : null}
