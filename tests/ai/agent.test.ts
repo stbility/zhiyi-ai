@@ -520,6 +520,7 @@ describe("智能体循环", () => {
       outputTokens: 1,
       haltReason: "已达到步数上限(12 步)。",
       toolSupport: null,
+      messages: [],
     });
 
     // 只剩模型说的那句话。系统不再往里拼任何东西 ——
