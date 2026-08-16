@@ -106,8 +106,10 @@ describe("助手页水合", () => {
       container.querySelector('[aria-label="添加文件夹"]'),
     ).toBeTruthy();
     expect(container.textContent).toContain("联网");
-    // 智能体不在这条通道里 —— 它是 /agent,不是这里的一个开关
-    expect(container.textContent).not.toContain("智能体");
+    // P0-2 起聊天面板新增任务类型选择器(文本/编程/智能体/视觉)——
+    // 「智能体」是任务类型选项之一,不再是通道开关。
+    expect(container.textContent).toContain("文本");
+    expect(container.textContent).toContain("智能体");
 
     consoleError.mockRestore();
     await act(async () => root.unmount());

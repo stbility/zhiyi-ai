@@ -39,6 +39,7 @@ export async function runAgentTurn({
   conversationId,
   providerId,
   model,
+  taskType,
   userMessage,
   history,
   signal,
@@ -51,6 +52,8 @@ export async function runAgentTurn({
   conversationId: string;
   providerId: string;
   model: string;
+  /** 任务类型(P0-2),进入执行上下文与 journal(缺省 "text") */
+  taskType: "text" | "coding" | "agent" | "vision" | "image" | "video";
   userMessage: string;
   history: readonly { role: "user" | "assistant"; content: string }[];
   signal: AbortSignal;
@@ -225,6 +228,7 @@ export async function runAgentTurn({
           ? null
           : selected.providerId,
         modelId: selected.modelId,
+        taskType,
       });
 
       // 把 runId 推给前端。前端拿到它,才知道撞上限后该带哪个 run 续跑。
