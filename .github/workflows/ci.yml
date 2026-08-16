@@ -60,7 +60,13 @@ jobs:
       - name: 从空库重放全部迁移并核对最终状态
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-        run: bash scripts/check-migrations.sh
+        run: bash scripts/check-migrations.sh --sync
+      - name: Upload migration snapshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-snapshots
+          path: supabase/test/expected-policies.txt
+          if-no-files-found: error
 
   # 真实网络冒烟 —— 与主门禁隔离的独立 job。
   #

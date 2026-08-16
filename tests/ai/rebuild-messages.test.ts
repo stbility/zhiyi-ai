@@ -36,14 +36,15 @@ describe("rebuildMessagesFromSteps(方案 B:续跑消息重建)", () => {
     const rows = [step(100, "git_read_file", "call-1", { path: "README.md" }, "内容")];
     const msgs = rebuildMessagesFromSteps(rows)!;
     expect(msgs).toHaveLength(2);
-    expect(msgs[0].role).toBe("assistant");
-    expect((msgs[0].tool_calls as unknown[])[0]).toMatchObject({
+    const [assistant, toolMsg] = msgs;
+    expect(assistant?.role).toBe("assistant");
+    expect((assistant!.tool_calls as unknown[])[0]).toMatchObject({
       id: "call-1",
       type: "function",
     });
-    expect(msgs[1].role).toBe("tool");
-    expect(msgs[1].tool_call_id).toBe("call-1");
-    expect(msgs[1].content).toBe("内容");
+    expect(toolMsg?.role).toBe("tool");
+    expect(toolMsg?.tool_call_id).toBe("call-1");
+    expect(toolMsg?.content).toBe("内容");
   });
 
   it("同一步多个工具 → 合并进同一个 assistant 消息", () => {
@@ -54,7 +55,7 @@ describe("rebuildMessagesFromSteps(方案 B:续跑消息重建)", () => {
     const msgs = rebuildMessagesFromSteps(rows)!;
     const assistants = msgs.filter((m) => m.role === "assistant");
     expect(assistants).toHaveLength(1);
-    expect(assistants[0].tool_calls).toHaveLength(2);
+    expect(assistants[0]?.tool_calls).toHaveLength(2);
   });
 
   it("超过预算 → 最早的步骤压缩成摘要,最近的原样保留", () => {
@@ -65,11 +66,12 @@ describe("rebuildMessagesFromSteps(方案 B:续跑消息重建)", () => {
     }
     const msgs = rebuildMessagesFromSteps(rows)!;
     // 第一条是摘要 user 消息
-    expect(msgs[0].role).toBe("user");
-    expect(String(msgs[0].content)).toContain("此前已完成");
+    const [head] = msgs;
+    expect(head?.role).toBe("user");
+    expect(String(head?.content)).toContain("此前已完成");
     // 摘要只含前 10 步
-    expect(String(msgs[0].content)).toContain("结果0");
-    expect(String(msgs[0].content)).not.toContain(`结果${MAX_REBUILD_MESSAGES}`);
+    expect(String(head?.content)).toContain("结果0");
+    expect(String(head?.content)).not.toContain(`结果${MAX_REBUILD_MESSAGES}`);
     // 最近 60 条完整保留(assistant + tool 各 60)
     const recent = msgs.slice(1);
     expect(recent.filter((m) => m.role === "tool")).toHaveLength(MAX_REBUILD_MESSAGES);
