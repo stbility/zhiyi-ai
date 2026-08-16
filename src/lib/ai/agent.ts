@@ -78,6 +78,12 @@ export interface AgentOutcome {
    *               尤其不能把「这次没调工具」记成「不支持工具」。
    */
   readonly toolSupport: "observed" | "rejected" | null;
+  /**
+   * 方案 B:本次运行结束时的完整消息序列(含 assistant tool_calls 与
+   * tool 结果)。fallback/续跑时由调用方取走,作为下一次 runAgent 的
+   * initialMessages —— 实现 attempt 间上下文连续。
+   */
+  readonly messages: readonly Record<string, unknown>[];
 }
 
 export interface AgentLimits {
@@ -158,6 +164,23 @@ export function capToolResult(content: string): string {
 }
 
 /**
+ * 重建消息序列的预算上限(方案 B:Agent Runtime messages 管理重构)。
+ *
+ * 续跑/fallback 时从 agent_steps 重建真实消息序列 —— 但重建必须受预算
+ * 约束,不能无限原样回放(生产实证:单次运行 118 个工具步骤,全量回放
+ * 会撑爆上下文)。
+ *
+ * 策略:最近 MAX_REBUILD_MESSAGES 条**原样完整重建**(assistant tool_calls
+ * + tool 结果,这是"最近发生的、与当前任务最相关"的部分,零丢失);
+ * 更早的部分压缩成一段摘要文本放在序列开头(只留轨迹 + 关键结果预览)。
+ *
+ * 每条消息约等于一步工具轮次(assistant tool_calls 1 条 + tool 结果
+ * 若干条合并计);60 条 ≈ 最近 ~30 步完整保真,配合单步 30K 字符截断,
+ * 重建序列的 token 上界是可控的。
+ */
+export const MAX_REBUILD_MESSAGES = 60;
+
+/**
  * 用户选定的「服务商 + 模型」。凭据必须和模型名成对传 ——
  * 只带模型名、凭据另取一家,跑的就不是用户选的那个东西。
  */
@@ -209,6 +232,7 @@ export async function runAgent({
   limits,
   reporter,
   personaOverride,
+  initialMessages,
 }: {
   /**
    * 用哪个「服务商 + 模型」跑。**就这一个,不换。**
@@ -245,6 +269,17 @@ export async function runAgent({
   reporter?: AgentReporter;
   /** 组织自定义品牌人格(organizations.persona)。为空用默认人格。 */
   personaOverride?: string | null | undefined;
+  /**
+   * 方案 B(Agent Runtime messages 管理重构):外部传入的初始消息序列。
+   *
+   * fallback/续跑时,上一次运行已产生的工具轮次(assistant tool_calls +
+   * tool 结果)通过这个入参**续用**,而不是从 history + userMessage 重造。
+   * 传入时:不再注入 system prompt(调用方已放好)、不再追加 userMessage
+   * (调用方已把续跑上下文合并进去)。
+   *
+   * 未传入时行为与以前完全一致 —— 从 history + userMessage 构造。
+   */
+  initialMessages?: Record<string, unknown>[] | undefined;
 }): Promise<AgentOutcome> {
   const startedAt = Date.now();
 
@@ -329,7 +364,10 @@ export async function runAgent({
 
   // 对话消息数组会在循环里不断追加(助手的工具请求 + 工具结果),
   // 所以用宽松类型 —— tool 角色不在 ChatMessage 的三种之内。
-  const messages: Record<string, unknown>[] = [
+  //
+  // 方案 B:fallback/续跑时调用方传入 initialMessages(含已完成的工具
+  // 轮次),直接续用,不重造。未传入时与以前完全一致 —— 从零构造。
+  const messages: Record<string, unknown>[] = initialMessages ?? [
     {
       role: "system",
       content: buildAgentSystemPrompt(personaOverride),
@@ -715,6 +753,8 @@ export async function runAgent({
     outputTokens,
     haltReason,
     toolSupport,
+    // 方案 B:把完整消息序列交出去(fallback/续跑时续用)
+    messages,
   };
 }
 

@@ -93,6 +93,7 @@ describe("content 里不得出现系统写的文字", () => {
       outputTokens: 1,
       haltReason: "已达到步数上限(12 步)。",
       toolSupport: null,
+      messages: [],
     });
 
     expect(summary).toBe("已完成登录页。");
