@@ -447,6 +447,14 @@ export function ChatPanel({
 
   async function send(e: FormEvent) {
     e.preventDefault();
+    // streaming 时发送按钮是「停止」—— 直接中止当前流。
+    // 此前它 type="submit" 触发 send → submitTurn,而 submitTurn 在
+    // streaming 时直接 return,abort 从未被调用 → 「暂停按钮点击无反应」。
+    if (streaming) {
+      abortRef.current?.abort();
+      setStreaming(false);
+      return;
+    }
     await submitTurn(draft.trim(), undefined);
   }
 
