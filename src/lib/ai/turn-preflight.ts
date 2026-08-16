@@ -49,6 +49,19 @@ export const turnBodySchema = z.object({
   model: z.string().trim().min(1, "请选择模型"),
   content: z.string().trim().min(1, "请输入内容").max(32_000, "内容过长"),
   /**
+   * 任务类型(P0-2)。由 Dashboard 选择,随请求传入运行时。
+   *
+   * 缺省 = "text" —— 不传时行为与之前完全一致(普通文本任务),
+   * 不破坏任何现有调用方。
+   *
+   * 能力匹配:Agent 路由在入口用 Capability Registry 校验
+   * model.capabilities ⊇ task.requirements,不满足直接拒绝并
+   * 明确列出缺失能力(见 agent route 的 capabilityGate)。
+   */
+  taskType: z
+    .enum(["text", "coding", "agent", "vision", "image", "video"])
+    .optional(),
+  /**
    * 续跑上一轮被时间上限中断的智能体运行。
    *
    * 传了它,content 会被追加一段「之前已完成的步骤」摘要,
@@ -158,6 +171,8 @@ export interface TurnContext {
   readonly providerBaseUrl: string | null;
   readonly apiKeyCipher: string;
   readonly model: string;
+  /** 任务类型(P0-2)。缺省 "text",与旧行为一致 */
+  readonly taskType: "text" | "coding" | "agent" | "vision" | "image" | "video";
   /** 用户自己打的那句话,不含附件与检索材料 */
   readonly content: string;
   /** 续跑上一轮被中断的运行。没传为 null */
@@ -565,6 +580,7 @@ export async function preflightTurn(
       providerBaseUrl,
       apiKeyCipher,
       model,
+      taskType: parsed.data.taskType ?? "text",
       content,
       resumeRunId: parsed.data.resumeRunId ?? null,
       userMessage,

@@ -339,6 +339,10 @@ export function ChatPanel({
     {},
   );
   const [selected, setSelected] = useState(models[0]?.value ?? "");
+  /** 任务类型(P0-2)。缺省 "text",随请求传后端做能力匹配。 */
+  const [taskType, setTaskType] = useState<"text" | "coding" | "agent" | "vision">(
+    "text",
+  );
   const [turns, setTurns] = useState<Turn[]>(() => initialTurns.map(toTurn));
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -499,6 +503,7 @@ export function ChatPanel({
           providerId,
           model: modelId,
           content,
+          taskType,
           ...(resumeRunId ? { resumeRunId } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(webSearch ? { webSearch: true } : {}),
@@ -1177,6 +1182,20 @@ export function ChatPanel({
             </Tag>
 
             <div className="flex-1" />
+
+            {/* 任务类型(P0-2):随请求传后端做 Capability Matching。
+                缺省 text;选到与模型能力不匹配的任务,后端会明确拒绝。 */}
+            <Select
+              value={taskType}
+              onChange={(v) => setTaskType(v as typeof taskType)}
+              options={[
+                { value: "text", label: "文本" },
+                { value: "coding", label: "编程" },
+                { value: "agent", label: "智能体" },
+                { value: "vision", label: "视觉" },
+              ]}
+              className="text-caption min-h-8 min-w-0 max-w-[7rem] px-2.5 py-0"
+            />
 
             <Select
               value={selected}

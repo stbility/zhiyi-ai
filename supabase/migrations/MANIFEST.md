@@ -284,3 +284,4 @@ CI 的真实重放已经覆盖它。0044 已把 0005 连同基线 0001-0027 一�
 | `0061_unattributed_subscriptions.sql` | 待应用 | P0-6 付款归属账外表:webhook 归属失败落表留痕(含付款邮箱)返回 200,不再死循环重试;仅 service_role 可访问 |
 | `0062_unattributed_subscriptions_user_id.sql` | 待应用 | 安全告警修复:账外表补 user_id 列(Supabase 认证用户以 auth.uid() UUID 识别)+ 外键索引 + 显式拒绝策略(0047 同款,清 Advisor 0008);webhook 在归属已确认时落 UUID | 
 | `0063_system_logs_actor_idx.sql` | 待应用 | Performance Advisor 0001 修复:system_logs.actor_id 外键列补覆盖索引(0056 遗漏) | 
+| `0064_agent_runs_task_type.sql` | 待应用 | P0-2/P0-3 任务类型追踪:agent_runs 加 task_type 列(默认 'text',check 约束枚举),记录每轮智能体运行的任务类型,仅追踪不改执行逻辑 |

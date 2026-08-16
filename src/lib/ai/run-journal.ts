@@ -53,6 +53,8 @@ export async function openRunJournal(
     organizationId: string;
     providerId: string | null;
     modelId: string;
+    /** 任务类型(P0-3),进 journal 可追踪上下文。缺省 "text" */
+    taskType?: "text" | "coding" | "agent" | "vision" | "image" | "video";
   },
 ): Promise<RunJournal | null> {
   const { data, error } = await supabase
@@ -63,6 +65,7 @@ export async function openRunJournal(
       // 平台免费档在 ai_providers 里没有行,provider_id 只能留空
       provider_id: input.providerId,
       model_id: input.modelId,
+      task_type: input.taskType ?? "text",
       status: "running",
     })
     .select("id")

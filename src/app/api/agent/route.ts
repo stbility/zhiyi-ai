@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { logger } from "@/lib/log";
 import {
   errorResponse,
   preflightTurn,
@@ -107,6 +108,35 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // ── Capability Gate(P0-1/P0-2)──────────────────────────────────────────
+  // Task Type 能力匹配:model.capabilities ⊇ task.requirements。
+  // 用 Capability Registry 单一事实来源,不在本路由另写能力判断。
+  // 缺省 taskType = "text",任何模型(至少声明 text)都能过,不破坏旧行为。
+  const { modelCapabilities, matchTaskCapabilities } = await import(
+    "@/lib/ai/capabilities"
+  );
+  const taskType = pre.ctx.taskType;
+  const { caps, known } = modelCapabilities(model);
+  if (!known) {
+    // 未知模型:不默认 AVAILABLE,但也不阻塞 text 任务 ——
+    // text 是最低要求,未知模型按「可尝试」放行,留痕说明。
+    logger.warn(
+      { model, taskType },
+      "Capability Gate: 未知模型能力,按 text 任务放行",
+    );
+  } else {
+    const taskCheck = matchTaskCapabilities(caps, taskType);
+    if (!taskCheck.compatible) {
+      const missing = [...taskCheck.missing, ...taskCheck.unknown];
+      return errorResponse(
+        `所选模型 (${model}) 不满足任务类型「${taskType}」的能力要求:` +
+          `缺少 ${missing.join(", ")}。` +
+          `请在 Dashboard 选择具备该能力的模型。`,
+        400,
+      );
+    }
+  }
+
   const { runAgentTurn } = await import("@/lib/ai/agent-turn");
   return runAgentTurn({
     // 时间预算由**这条路由的 maxDuration** 推导,不在别处另写一个秒数。
@@ -121,6 +151,7 @@ export async function POST(request: NextRequest) {
     conversationId,
     providerId,
     model,
+    taskType,
     userMessage,
     history,
     signal: request.signal,
