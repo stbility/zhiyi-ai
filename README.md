@@ -40,7 +40,7 @@ Vercel 构建失败 → PR 红 → 合不进去;生产 SHA 对齐由 push 后验
 | 1 | 数据库 Schema、迁移、RLS、Supabase 认证 | ✅ 已完成(越权隔离已实测) |
 | 2 | 组织、成员、角色权限、审计日志 | ✅ 已完成(数据库层 0001 + 品牌人格 /settings/persona + 成员管理 /settings/members + 组织切换器) |
 | 3 | Provider/Model Registry、AI Gateway、Adapter、模型服务设置页 | ✅ 已完成 |
-| 4 | Tool Registry、Agent、工作流状态机、Worker | ✅ 工具注册与智能体循环已完成;续跑(检查点摘要恢复,突破 300s)已实现;工作流已上线(0036:10 态状态机 + 定义/步骤编辑 + 运行历史留痕);后台 Worker 已上线(2026-08-12:入队化 + /api/workflow/worker + Cron 兜底;等待输入/等待确认双人工闸门,断点续跑);并发数权益双入口检查 |
+| 4 | Tool Registry、Agent、工作流状态机、Worker | ✅ 工具注册与智能体循环已完成;续跑(检查点消息序列重建,突破 300s)已实现 —— 从 agent_steps 重建真实工具历史(最近 60 条完整 + 早期摘要,方案 B,2026-08-16);工作流已上线(0036:10 态状态机 + 定义/步骤编辑 + 运行历史留痕);后台 Worker 已上线(2026-08-12:入队化 + /api/workflow/worker + Cron 兜底;等待输入/等待确认双人工闸门,断点续跑);并发数权益双入口检查 |
 | 5 | 文件上传、解析、RAG、长期记忆 | 🟡 文件夹上传、跨轮保留、上下文预算已完成;记忆沉淀闭环已实现(0028,确认 → 落库 → Wiki 同步);长期记忆向量召回已上线(0040 pgvector + search_memories,需 EMBEDDINGS_API_URL/KEY 后生效);AI 记忆管理页已上线(/memory);知识库已上线(0038,解析 + 全文检索 + /knowledge 管理页);向量检索待 embedding 服务接入 |
 | 6 | Entitlement Service、Stripe 订阅 | 🟡 五档定价(Free/49/149/499/1999)全链路生产运行:checkout/webhook/plans/billing 已上线;Payment Link 8 个已对齐(2026-08-13 定价 v2:PRO/PRO_PLUS/TEAM/ENT × 月付/年付,见 .env.example);权益矩阵 0055 已应用(30 行种子);六项营销承诺全部 gating(2026-08-12 补齐并发任务数 + 历史保留天数);待配 STRIPE_PRICE_* 8 个 Price ID(未配时 checkout 如实 503 降级 Payment Link) |
 | 7 | 全部页面接入真实数据 | ✅ 已完成(workflow/knowledge/memory/billing/skills/eval/reports 全部真实数据,无假数据) |

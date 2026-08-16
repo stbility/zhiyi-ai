@@ -6,6 +6,8 @@ import {
   DEFAULT_LIMITS,
   runAgent,
   summarizeRun,
+  capToolResult,
+  MAX_REBUILD_MESSAGES,
   type AgentModelOption,
 } from "@/lib/ai/agent";
 import { loadGitContext } from "@/lib/ai/git-tools";
@@ -21,6 +23,129 @@ import { ProviderCallError } from "@/lib/ai/gateway";
 import type { ToolContext } from "@/lib/ai/tools";
 import { loadProviderCipher } from "@/lib/ai/credentials";
 import type { ProviderKind } from "@/lib/providers/registry";
+
+/**
+ * 方案 B:agent_steps 的一行(续跑重建消息序列的数据源)。
+ * 对应 run-journal.record() 写入的字段。
+ */
+export interface RebuildStepRow {
+  step_index: number;
+  tool_call_id: string | null;
+  tool_name: string | null;
+  arguments: unknown;
+  result_preview: string | null;
+  result_chars: number | null;
+  ok: boolean;
+}
+
+/**
+ * 方案 B:从 agent_steps 重建**真实消息序列**(续跑时替代 resumeContext
+ * 压缩文本,让模型看到自己执行过的真实工具历史)。
+ *
+ * 重建规则(与 runAgent 循环内的消息格式一致,见 agent.ts 579-687):
+ *   - 每个工具调用 → assistant 消息(tool_calls 数组)+ tool 消息
+ *     (tool_call_id + 截断结果)
+ *   - 纯文本步骤(无工具)→ 并入上下文开头说明(无法还原为精确轮次,
+ *     以摘要形式保留)
+ *
+ * Token 预算(用户要求):受 MAX_REBUILD_MESSAGES 上限约束 ——
+ *   最近 MAX_REBUILD_MESSAGES 条**原样完整重建**(零丢失);
+ *   更早的部分压缩成一段摘要文本放在序列开头(只留轨迹 + 关键结果预览)。
+ * 单条 tool 结果经 capToolResult 截断(30K 字符,与运行期一致)。
+ */
+export function rebuildMessagesFromSteps(
+  rows: RebuildStepRow[],
+): Record<string, unknown>[] | null {
+  if (rows.length === 0) return null;
+
+  // 按 step_index 排序(小数位区分同一步多工具)
+  const sorted = [...rows].sort((a, b) => a.step_index - b.step_index);
+
+  // 构建消息序列
+  const messages: Record<string, unknown>[] = [];
+  let earliestSummary = "";
+
+  // 先计算总量:超过预算时,最早的步骤压缩成摘要
+  let earlyCount = 0;
+  if (sorted.length > MAX_REBUILD_MESSAGES) {
+    const cutoff = sorted.length - MAX_REBUILD_MESSAGES;
+    earlyCount = cutoff;
+    const early = sorted.slice(0, cutoff);
+    const earlyLines = early.map((s) => {
+      const idx = Math.floor(s.step_index / 100) + 1;
+      const name = s.tool_name ?? "模型回复";
+      const preview = (s.result_preview ?? "").slice(0, 120).replace(/\n/g, " ");
+      return `步骤 ${idx} · ${name}: ${preview}`;
+    });
+    earliestSummary =
+      `【此前已完成 ${early.length} 步,摘要如下(为控制上下文长度,较早步骤不再逐条展开)】\n` +
+      earlyLines.join("\n");
+  }
+
+  // 只重建最近 MAX_REBUILD_MESSAGES 行;更早的已在摘要里,跳过
+  for (const s of sorted.slice(earlyCount)) {
+    // 工具步骤:assistant tool_calls + tool 结果
+    if (s.tool_call_id && s.tool_name && s.arguments !== null) {
+      // 同一步内多个工具共享同一个 assistant 消息 —— 用 step_index 分组
+      const idx = s.step_index;
+      const existing = messages.find(
+        (m) =>
+          m.role === "assistant" &&
+          (m as { _stepIndex?: number })._stepIndex === Math.floor(idx / 100),
+      ) as (Record<string, unknown> & { _stepIndex?: number }) | undefined;
+      if (existing && Array.isArray(existing.tool_calls)) {
+        (existing.tool_calls as unknown[]).push({
+          id: s.tool_call_id,
+          type: "function",
+          function: { name: s.tool_name, arguments: JSON.stringify(s.arguments ?? {}) },
+        });
+      } else {
+        messages.push({
+          role: "assistant",
+          content: null,
+          _stepIndex: Math.floor(idx / 100),
+          tool_calls: [
+            {
+              id: s.tool_call_id,
+              type: "function",
+              function: {
+                name: s.tool_name,
+                arguments: JSON.stringify(s.arguments ?? {}),
+              },
+            },
+          ],
+        });
+      }
+      messages.push({
+        role: "tool",
+        tool_call_id: s.tool_call_id,
+        content: capToolResult(
+          s.result_preview ?? (s.ok ? "(工具已执行,无返回内容)" : "(工具执行失败)"),
+        ),
+      });
+    }
+    // 纯文本步骤(模型说话):并入摘要开头,不重建为对话轮次
+    else if (!s.tool_name && s.result_preview) {
+      // 已包含在 earliestSummary 或作为用户可见上下文保留
+    }
+  }
+
+  // 去掉内部标记字段
+  const clean = messages.map((m) => {
+    const { _stepIndex, ...rest } = m as Record<string, unknown> & {
+      _stepIndex?: number;
+    };
+    return rest;
+  });
+
+  if (clean.length === 0) return null;
+
+  // 摘要放最前(作为一条 user 消息,模型读到的是"此前已完成…")
+  if (earliestSummary !== "") {
+    clean.unshift({ role: "user", content: earliestSummary });
+  }
+  return clean;
+}
 
 /**
  * 智能体模式的一轮。
@@ -68,6 +193,73 @@ export async function runAgentTurn({
    */
   resumeRunId?: string | undefined;
 }): Promise<Response> {
+  // ── P1 fallback 辅助(P1 Runtime Fallback)───────────────────────────────
+  // 候选来源:组织内全部 enabled 的 ai_models(排除 Primary 本身由
+  // resolver 的 attempted/requested 判定处理)。不建第二套 Registry ——
+  // 数据仍来自 ai_models + ai_providers(与 candidates.ts 同一来源)。
+  const loadFallbackCandidates = async (): Promise<
+    {
+      providerId: string;
+      modelId: string;
+      providerName: string;
+      enabled: boolean;
+    }[]
+  > => {
+    const { data: rows } = await supabase
+      .from("ai_models")
+      .select(
+        "model_id, provider_id, ai_providers!inner (display_name, enabled)",
+      )
+      .eq("organization_id", organizationId)
+      .eq("enabled", true);
+    return (rows ?? []).flatMap((row: Record<string, unknown>) => {
+      const provider = row.ai_providers as
+        | { display_name?: string; enabled?: boolean }
+        | null
+        | undefined;
+      if (!provider || provider.enabled === false) return [];
+      return [
+        {
+          providerId: row.provider_id as string,
+          modelId: row.model_id as string,
+          providerName: provider.display_name ?? "",
+          enabled: true,
+        },
+      ];
+    });
+  };
+
+  // 按候选装载凭据(与上方 Primary 凭据装配同一逻辑,不另写一套)
+  const loadCredentialsFor = async (candidate: {
+    providerId: string;
+    modelId: string;
+  }): Promise<AgentModelOption["credentials"] | null> => {
+    if (isPlatformProviderId(candidate.providerId)) {
+      const cipher = await platformCredentialsFor(
+        supabase,
+        organizationId,
+        candidate.providerId,
+        candidate.modelId,
+      );
+      return cipher;
+    }
+    const { data: providerRow } = await supabase
+      .from("ai_providers")
+      .select("kind, base_url, display_name, enabled")
+      .eq("id", candidate.providerId)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (!providerRow || providerRow.enabled === false) return null;
+    const cipher = await loadProviderCipher(candidate.providerId);
+    return cipher
+      ? {
+          kind: providerRow.kind as ProviderKind,
+          baseUrl: providerRow.base_url as string | null,
+          apiKeyCipher: cipher,
+        }
+      : null;
+  };
+
   // 工作区真正用到时才建,而且只建一次。
   // 无条件建的话,模型一个文件都没写的运行也会留下一个空工作区。
   let workspacePromise: Promise<string> | null = null;
@@ -115,15 +307,19 @@ export async function runAgentTurn({
   // undefined,agent 行为与旧版完全一致(不注入任何外部工具)。
   const externalContext = await buildExternalContext(supabase, organizationId);
 
-  // 用户选的那一个服务商 + 模型。**不准备备用,也不自动换。**
+  // 用户选的那一个服务商 + 模型 = **Primary(首选)**。
   //
-  // 这里曾经是一条跨服务商的候选链,某一步失败就换下一个接着跑。
-  // 删掉了。用户的原话是「你选哪个就用哪个,不换」,而实际发生的事
-  // 比「换了」更糟:他选 deepseek-v4-flash,系统跑了 glm-5.2,
-  // 留痕里的 model_id 记的还是 deepseek —— 同一次运行,库里和界面上
-  // 两个不一样的模型名。从用户那一侧看,这和编造无法区分。
+  // 历史:这里曾经是一条跨服务商的候选链,某一步失败就换下一个接着跑,
+  // 后来删掉了 —— 原因是「用户选 A 系统跑 B,留痕还是 A」:他选
+  // deepseek-v4-flash,系统跑了 glm-5.2,model_id 记的还是 deepseek,
+  // 同一次运行两个模型名,与编造无法区分。
   //
-  // 模型不可用就如实报错,让他自己换。这是他的选择,不是我们的。
+  // P1(P1 Runtime Fallback)在**保留这个教训**的前提下恢复 fallback:
+  //   · 用户选的 = requested(先跑,失败才切)
+  //   · 实际跑的 = executed(每次切换都是显式 fallback event)
+  //   · journal 同时记 requested 与 executed,primary failure 不被覆盖
+  //   · attempted set + MAX_FALLBACK_ATTEMPTS 防循环
+  // 见 agent-turn 下方 orchestration 循环 + run-journal + 0065 迁移。
   //
   // 凭据装配分两支,与 /api/chat 同一个实现:
   //   · 平台档(providerId 形如 platform:openai:https://…):ai_providers 里
@@ -228,6 +424,11 @@ export async function runAgentTurn({
           ? null
           : selected.providerId,
         modelId: selected.modelId,
+        // P1:requested = 用户原始选择(journal 同时记 executed,见 finish)
+        requestedProviderId: isPlatformProviderId(selected.providerId)
+          ? null
+          : selected.providerId,
+        requestedModelId: selected.modelId,
         taskType,
       });
 
@@ -253,6 +454,10 @@ export async function runAgentTurn({
       //   RLS(agent_steps_own)已保证跨用户读不到,这里补的是同用户内的
       //   对话与状态约束 —— 两层都不可省。
       let resumeContext = "";
+      // 方案 B:续跑时从 agent_steps 重建**真实消息序列**(assistant
+      // tool_calls + tool 结果),替代压缩文本。重建函数见下方
+      // rebuildMessagesFromSteps。为空 = 重建失败/无步骤 → 降级 resumeContext。
+      let resumeMessages: Record<string, unknown>[] | null = null;
       if (resumeRunId) {
         const { data: run } = await supabase
           .from("agent_runs")
@@ -281,12 +486,48 @@ export async function runAgentTurn({
 
           const { data: prevSteps } = await supabase
             .from("agent_steps")
-            .select("step_index, tool_name, result_preview")
+            .select("step_index, tool_call_id, tool_name, arguments, result_preview, result_chars, ok")
             .eq("run_id", resumeRunId)
-            .order("step_index", { ascending: true })
-            .limit(100);
+            .order("step_index", { ascending: true });
 
+          // 方案 B:重建真实消息序列。成功则 resumeMessages 非空,
+          // runAgent 以 initialMessages 续用 —— 模型看到自己执行过的
+          // 真实工具历史,而不是一段说明文字。
           if (prevSteps && prevSteps.length > 0) {
+            const rebuilt = rebuildMessagesFromSteps(
+              prevSteps as RebuildStepRow[],
+            );
+            if (rebuilt && rebuilt.length > 0) {
+              resumeMessages = rebuilt;
+            }
+          }
+
+          // 无论重建成功与否,都保留「工作区已有文件」清单 —— 那是真实
+          // 状态(模型需要知道有哪些产物),不是上下文丢失的补偿。
+          // 重建成功时它以一条 user 消息并入;失败时降级为 resumeContext。
+          const { data: prevFiles } = await supabase
+            .from("workspace_files")
+            .select("path, size_chars")
+            .eq("written_by_conversation", conversationId)
+            .order("path");
+          if (prevFiles && prevFiles.length > 0) {
+            const fileList = (prevFiles as { path: string; size_chars: number }[])
+              .map((f) => `  - ${f.path} (${f.size_chars}字符)`)
+              .join("\n");
+            const filesBlock = `\n\n【工作区已有文件 —— 不要重写,直接使用】\n${fileList}`;
+            if (resumeMessages) {
+              // 重建成功:文件清单作为 user 消息并入(不含续跑说明文字)
+              resumeMessages.push({
+                role: "user",
+                content: `【工作区已有文件 —— 不要重写,直接使用】\n${fileList}`,
+              });
+            } else {
+              resumeContext += filesBlock;
+            }
+          }
+
+          // 重建失败时的降级(保底,不丢功能):压缩文本摘要,同旧行为
+          if (!resumeMessages && prevSteps && prevSteps.length > 0) {
             const lines = (prevSteps as {
               step_index: number;
               tool_name: string | null;
@@ -300,21 +541,6 @@ export async function runAgentTurn({
             resumeContext =
               `\n\n【续跑上下文 —— 以下步骤在此前的运行中已完成,不要重做,直接继续】\n` +
               lines.join("\n");
-
-            // 【Bug 3 修复】workspace_files 内容注入上下文
-            // 续跑时只恢复了文字描述,模型不知道已有哪些文件。
-            // 把 workspace 里已有的文件列表注入,让模型知道直接使用而非重写。
-            const { data: prevFiles } = await supabase
-              .from("workspace_files")
-              .select("path, size_chars")
-              .eq("written_by_conversation", conversationId)
-              .order("path");
-            if (prevFiles && prevFiles.length > 0) {
-              const fileList = (prevFiles as { path: string; size_chars: number }[])
-                .map((f) => `  - ${f.path} (${f.size_chars}字符)`)
-                .join("\n");
-              resumeContext += `\n\n【工作区已有文件 —— 不要重写,直接使用】\n${fileList}`;
-            }
           }
         } else {
           logger.warn(
@@ -381,57 +607,190 @@ export async function runAgentTurn({
         ? `${effectiveUserMessage}${knowledgeBlock}`
         : effectiveUserMessage;
 
-      try {
-        const outcome = await runAgent({
-          model: selected,
-          userMessage: messageWithKnowledge,
-          history,
-          toolContext,
-          gitContext,
-          externalContext,
-          signal,
-          limits: { ...DEFAULT_LIMITS, budgetMs },
-          personaOverride: orgPersona,
-          reporter: {
-            // 模型每吐一段就推一段 —— 这是智能体从「看起来卡死」
-            // 变成「看得见在跑」的关键。
-            //
-            // 走 reasoning 槽位而不是 delta:智能体运行途中说的话是**过程**,
-            // 不是最终答案 —— 最终答案是跑完之后的 summarizeRun。
-            // 推成 delta 的话,过程文字会和最后那份总结在正文里叠加两遍。
-            // 前端把 reasoning 渲染成生成期间默认展开的折叠块,正合适。
-            onText(text: string) {
-              send("reasoning", { text });
-            },
-            async onStep(step: AgentStep) {
-              // 顺序是硬要求:**先落库,再推送**。
-              //   执行工具 → 写 agent_steps → 提交 → 发 SSE → 下一轮
-              //
-              // 反过来的话,用户在界面上看到了这一步、而请求恰好在落库前
-              // 被杀 —— 他看见过的东西数据库里没有,刷新之后凭空消失。
-              // 那比什么都不显示更糟。
-              await journal?.record(step);
+      // ── P1 Runtime Fallback orchestration ──────────────────────────────
+      // 外层尝试循环:**同一个 journal/run_id**,历史与上下文全程连续。
+      // runAgent 内部不动(冻结条件 A);这里只捕它 throw 的异常 →
+      // classify → policy → resolver → 下一候选 → 重跑 runAgent。
+      // 候选切换是显式 fallback event,绝不偷偷替换 model。
+      const { classifyP1Failure } = await import("@/lib/ai/failure-classifier");
+      const { allowsFallback, MAX_FALLBACK_ATTEMPTS } = await import(
+        "@/lib/ai/fallback-policy"
+      );
+      const { resolveFallbackCandidate, candidateKey } = await import(
+        "@/lib/ai/fallback-resolver"
+      );
 
-              // 每一步都实时推给用户 —— 智能体跑几分钟,期间什么都不显示
-              // 会让人以为卡死了
-              send("step", {
-                index: step.index,
-                text: step.text,
-                tools: step.tools.map((t) => ({
-                  name: t.name,
-                  ok: t.ok,
-                  content: t.content.slice(0, 300),
-                  // 完整长度一并推过去 —— 界面要据此说明「这是摘要」。
-                  // 只推截断后的内容,前端根本没有办法知道自己拿到的
-                  // 是不是全部,于是只能默默显示,用户只能默默误会。
-                  totalChars: t.content.length,
-                  truncated: t.content.length > 300,
-                  durationMs: t.durationMs ?? null,
-                })),
+      const attempted = new Set<string>([candidateKey(selected)]);
+      let attemptNumber = 1;
+      let outcome: Awaited<ReturnType<typeof runAgent>> | null = null;
+      // 方案 B:上一次 attempt 已产生的消息序列 —— fallback 时续用
+      let lastMessages: Record<string, unknown>[] | null = null;
+      let lastError: unknown = null;
+      let executed: AgentModelOption = selected;
+
+      try {
+        while (attemptNumber <= MAX_FALLBACK_ATTEMPTS) {
+          try {
+            // 每次尝试都留痕(attempt event)
+            if (attemptNumber > 1) {
+              send("fallback", {
+                attempt: attemptNumber,
+                provider: executed.providerName || executed.providerId,
+                model: executed.modelId,
+                status: "running",
               });
-            },
-          },
-        });
+            }
+            outcome = await runAgent({
+              model: executed,
+              // 方案 B:续跑时 resumeMessages 非空 → 以 initialMessages 传入,
+              // 模型看到真实工具历史;否则走 userMessage(含 resumeContext)。
+              // fallback 时上一次 attempt 已产生的消息序列续用。
+              ...(attemptNumber === 1 && resumeMessages
+                ? { initialMessages: resumeMessages }
+                : attemptNumber > 1 && lastMessages
+                  ? { initialMessages: [...lastMessages] }
+                  : {}),
+              userMessage: messageWithKnowledge,
+              history,
+              toolContext,
+              gitContext,
+              externalContext,
+              signal,
+              limits: { ...DEFAULT_LIMITS, budgetMs },
+              personaOverride: orgPersona,
+              reporter: {
+                // 模型每吐一段就推一段 —— 这是智能体从「看起来卡死」
+                // 变成「看得见在跑」的关键。
+                //
+                // 走 reasoning 槽位而不是 delta:智能体运行途中说的话是**过程**,
+                // 不是最终答案 —— 最终答案是跑完之后的 summarizeRun。
+                // 推成 delta 的话,过程文字会和最后那份总结在正文里叠加两遍。
+                // 前端把 reasoning 渲染成生成期间默认展开的折叠块,正合适。
+                onText(text: string) {
+                  send("reasoning", { text });
+                },
+                async onStep(step: AgentStep) {
+                  // 顺序是硬要求:**先落库,再推送**。
+                  //   执行工具 → 写 agent_steps → 提交 → 发 SSE → 下一轮
+                  //
+                  // 反过来的话,用户在界面上看到了这一步、而请求恰好在落库前
+                  // 被杀 —— 他看见过的东西数据库里没有,刷新之后凭空消失。
+                  // 那比什么都不显示更糟。
+                  await journal?.record(step);
+
+                  // 每一步都实时推给用户 —— 智能体跑几分钟,期间什么都不显示
+                  // 会让人以为卡死了
+                  send("step", {
+                    index: step.index,
+                    text: step.text,
+                    tools: step.tools.map((t) => ({
+                      name: t.name,
+                      ok: t.ok,
+                      content: t.content.slice(0, 300),
+                      // 完整长度一并推过去 —— 界面要据此说明「这是摘要」。
+                      // 只推截断后的内容,前端根本没有办法知道自己拿到的
+                      // 是不是全部,于是只能默默显示,用户只能默默误会。
+                      totalChars: t.content.length,
+                      truncated: t.content.length > 300,
+                      durationMs: t.durationMs ?? null,
+                    })),
+                  });
+                },
+              },
+            });
+            // 成功:退出循环
+            break;
+          } catch (e) {
+            if (signal.aborted) throw e;
+            lastError = e;
+            const failureClass = classifyP1Failure(e);
+            // 失败留痕(attempt event:failed + journal attempt 轨迹)
+            send("fallback", {
+              attempt: attemptNumber,
+              provider: executed.providerName || executed.providerId,
+              model: executed.modelId,
+              status: "failed",
+              failureClass,
+            });
+            await journal
+              ?.recordAttempt({
+                attemptNumber,
+                providerId: executed.providerId,
+                modelId: executed.modelId,
+                status: "failed",
+                failureClass,
+                reason: e instanceof Error ? e.message : String(e),
+              })
+              .catch(() => undefined);
+
+            // 方案 B:本次 attempt 已产生的步骤从 agent_steps 重建为消息序列,
+            // fallback 到下一候选时续用 —— attempt 间上下文连续。
+            // 重建失败(无步骤/数据不全)→ 下一 attempt 从 history 起(降级)。
+            if (!lastMessages && journal) {
+              try {
+                const { data: partialSteps } = await supabase
+                  .from("agent_steps")
+                  .select(
+                    "step_index, tool_call_id, tool_name, arguments, result_preview, result_chars, ok",
+                  )
+                  .eq("run_id", journal.runId)
+                  .order("step_index", { ascending: true });
+                if (partialSteps && partialSteps.length > 0) {
+                  const rebuilt = rebuildMessagesFromSteps(
+                    partialSteps as RebuildStepRow[],
+                  );
+                  if (rebuilt && rebuilt.length > 0) {
+                    lastMessages = rebuilt;
+                  }
+                }
+              } catch {
+                // 重建失败:降级,下一 attempt 从 history 起
+              }
+            }
+
+            // policy 决定是否 fallback
+            if (!allowsFallback(failureClass) || attemptNumber >= MAX_FALLBACK_ATTEMPTS) {
+              throw e;
+            }
+            // resolver 选下一候选(含 Capability Re-Match + 防循环)
+            const next = await resolveFallbackCandidate({
+              taskType,
+              requested: { providerId, modelId: model },
+              attempted,
+              failureClass,
+              candidates: (await loadFallbackCandidates()).map((c) => ({
+                ...c,
+                attempted: attempted.has(candidateKey(c)),
+              })),
+            });
+            if (!next) throw e;
+            attempted.add(candidateKey(next));
+            // 切换候选:重新装载凭据
+            const nextCredentials = await loadCredentialsFor(next);
+            if (!nextCredentials) {
+              attempted.add(candidateKey(next));
+              if (attemptNumber >= MAX_FALLBACK_ATTEMPTS) throw e;
+              attemptNumber += 1;
+              continue;
+            }
+            executed = {
+              providerId: next.providerId,
+              providerName: next.providerName,
+              modelId: next.modelId,
+              credentials: nextCredentials,
+            };
+            attemptNumber += 1;
+            send("fallback", {
+              attempt: attemptNumber,
+              provider: next.providerName,
+              model: next.modelId,
+              status: "switching",
+              fromProvider: executed.providerId,
+              fromModel: model,
+            });
+          }
+        }
+        if (!outcome) throw lastError ?? new Error("fallback 无可用候选");
 
         // 把观察到的工具能力落库。
         //
@@ -468,11 +827,10 @@ export async function runAgentTurn({
             // 0043:把运行记录挂到消息上 —— 页面恢复会话时按 run_id 反查
             // 状态,「继续运行」按钮才能跨页面刷新存活
             run_id: journal?.runId ?? null,
-            // 记实际跑的那一个。selected 就是本次唯一跑过的模型 ——
-            // 从这里取而不是从入参取,是为了让「库里记的」和「真跑的」
-            // 在代码上是同一个来源,而不是两个碰巧相等的值。
-            provider_id: selected.providerId,
-            model_id: selected.modelId,
+            // 记实际跑的那一个。P1 起 executed 可能经 fallback 切换 ——
+            // 从这里取(而非入参 requested),让「库里记的」=「真跑的」。
+            provider_id: executed.providerId,
+            model_id: executed.modelId,
             input_tokens: outcome.inputTokens,
             output_tokens: outcome.outputTokens,
             latency_ms: Date.now() - startedAt,
@@ -487,10 +845,22 @@ export async function runAgentTurn({
         if (outcome.haltReason) send("error", { message: outcome.haltReason });
 
         // 收尾。跑完的不可续 —— resumable 由 finish 按结局决定。
-        await journal?.finish(
-          outcome.haltReason ? "interrupted" : "completed",
-          outcome.haltReason ?? undefined,
-        );
+        // P1:成功路径写最终执行信息(executed/attempt_count/fallback_used)
+        await journal?.finishWithExecution({
+          outcome: outcome.haltReason ? "interrupted" : "completed",
+          errorMessage: outcome.haltReason ?? undefined,
+          executedProviderId: executed.providerId,
+          executedModelId: executed.modelId,
+          attemptCount: attemptNumber,
+          fallbackUsed: attemptNumber > 1,
+        });
+        // 成功 attempt 留痕(轨迹可还原)
+        await journal?.recordAttempt({
+          attemptNumber,
+          providerId: executed.providerId,
+          modelId: executed.modelId,
+          status: "success",
+        });
 
         send("done", {
           inputTokens: outcome.inputTokens,
@@ -514,9 +884,9 @@ export async function runAgentTurn({
             // 0043:失败消息同样挂运行记录 —— 失败也是发生过的事实
             run_id: journal?.runId ?? null,
             // 失败留痕同样记**实际跑的**那一个,与成功路径同源。
-            // 两条路径取不同的来源,迟早会出现「同一次运行两个模型名」。
-            provider_id: selected.providerId,
-            model_id: selected.modelId,
+            // P1:executed 可能经 fallback 切换,这里取最终尝试的那个。
+            provider_id: executed.providerId,
+            model_id: executed.modelId,
             latency_ms: Date.now() - startedAt,
             error_message: message,
           });
@@ -537,8 +907,26 @@ export async function runAgentTurn({
         //
         // 分两档:被中止(用户关页面、平台强杀)标 interrupted,
         // 那是**可续**的;真正的失败标 failed,续也没用。
+        // P1:失败路径也写最终执行信息 + 失败 attempt 留痕
         await journal
-          ?.finish(signal.aborted ? "interrupted" : "failed", message)
+          ?.finishWithExecution({
+            outcome: signal.aborted ? "interrupted" : "failed",
+            errorMessage: message,
+            executedProviderId: executed.providerId,
+            executedModelId: executed.modelId,
+            attemptCount: attemptNumber,
+            fallbackUsed: attemptNumber > 1,
+          })
+          .catch(() => undefined);
+        await journal
+          ?.recordAttempt({
+            attemptNumber,
+            providerId: executed.providerId,
+            modelId: executed.modelId,
+            status: "failed",
+            failureClass: "UNKNOWN",
+            reason: message,
+          })
           .catch(() => undefined);
 
         send("error", { message });

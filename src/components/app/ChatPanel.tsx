@@ -343,6 +343,8 @@ export function ChatPanel({
   const [taskType, setTaskType] = useState<"text" | "coding" | "agent" | "vision">(
     "text",
   );
+  /** P1:fallback 轨迹(显式展示,不把切换隐藏成 model changed) */
+  const [fallbackTrail, setFallbackTrail] = useState("");
   const [turns, setTurns] = useState<Turn[]>(() => initialTurns.map(toTurn));
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -479,6 +481,7 @@ export function ChatPanel({
     setTurns((prev) => [...prev, userTurn, assistantTurn]);
     setDraft("");
     setStreaming(true);
+    setFallbackTrail("");
     setWaitedMs(0);
 
     const controller = new AbortController();
@@ -578,7 +581,16 @@ export function ChatPanel({
                 outputTokens: number | null;
                 latencyMs: number;
               }
-            | { message: string };
+            | { message: string }
+            | {
+                attempt: number;
+                provider?: string;
+                model?: string;
+                status: string;
+                failureClass?: string;
+                fromProvider?: string;
+                fromModel?: string;
+              };
           try {
             payload = JSON.parse(dataLine.slice(5).trim());
           } catch {
@@ -597,6 +609,30 @@ export function ChatPanel({
           } else if (event === "reasoning" && "text" in payload) {
             reasoning += payload.text;
             patchAssistant({ reasoning });
+          } else if (event === "fallback" && "status" in payload) {
+            // P1:显式 fallback 事件 —— 不把切换隐藏成「model changed」。
+            // 累积成可读状态,如:
+            //   NVIDIA / gpt-oss-120b AUTH_FAILED → OpenRouter / model-x RUNNING
+            const fb = payload as {
+              attempt: number;
+              provider?: string;
+              model?: string;
+              status: string;
+              failureClass?: string;
+              fromProvider?: string;
+              fromModel?: string;
+            };
+            const provider = fb.provider ?? fb.fromProvider ?? "";
+            const model = fb.model ?? fb.fromModel ?? "";
+            const label =
+              fb.status === "failed"
+                ? `${provider} / ${model} ${fb.failureClass ?? "FAILED"}`
+                : fb.status === "switching"
+                  ? `→ ${provider} / ${model}`
+                  : `${provider} / ${model} ${fb.status.toUpperCase()}`;
+            setFallbackTrail((prev) =>
+              prev === "" ? label : `${prev} · ${label}`,
+            );
           } else if (event === "done" && "latencyMs" in payload) {
             const done = payload as {
               inputTokens: number | null;
@@ -896,6 +932,14 @@ export function ChatPanel({
                       {turn.reasoning}
                     </div>
                   </details>
+                ) : null}
+
+                {/* P1:fallback 轨迹 —— 显式展示切换,不隐藏成 model changed */}
+                {fallbackTrail !== "" ? (
+                  <div className="text-fg-tertiary text-label mt-1.5 border-l border-amber-500/40 pl-3 whitespace-pre-wrap">
+                    <span className="text-amber-600/80">⇄ fallback:</span>{" "}
+                    {fallbackTrail}
+                  </div>
                 ) : null}
 
                 {/* 工具执行 —— 照 Claude Code 的做法用**专门的可视组件**

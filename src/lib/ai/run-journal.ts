@@ -36,11 +36,29 @@ export interface RunJournal {
   readonly runId: string;
   /** 一步完成时调用。**返回的 Promise 必须被 await** */
   record(step: AgentStep): Promise<void>;
+  /** 记录一次模型调用尝试(P1:attempt 轨迹,失败也留痕) */
+  recordAttempt(input: {
+    attemptNumber: number;
+    providerId: string | null;
+    modelId: string;
+    status: "running" | "success" | "failed" | "skipped";
+    failureClass?: string | null;
+    reason?: string | null;
+  }): Promise<void>;
   /** 收尾。中断路径也要调 —— 状态停在 running 就没人知道它是死是活 */
   finish(
     outcome: "completed" | "failed" | "interrupted" | "cancelled",
     errorMessage?: string,
   ): Promise<void>;
+  /** P1:收尾并补充最终执行信息(executed/attempt_count/fallback_used) */
+  finishWithExecution(input: {
+    outcome: "completed" | "failed" | "interrupted" | "cancelled";
+    errorMessage?: string | undefined;
+    executedProviderId: string | null;
+    executedModelId: string;
+    attemptCount: number;
+    fallbackUsed: boolean;
+  }): Promise<void>;
 }
 
 /** 单步结果只存摘要。全文可能几万字符,而恢复上下文时本来就要截断 */
@@ -55,6 +73,9 @@ export async function openRunJournal(
     modelId: string;
     /** 任务类型(P0-3),进 journal 可追踪上下文。缺省 "text" */
     taskType?: "text" | "coding" | "agent" | "vision" | "image" | "video";
+    /** P1:用户原始选择(requested)。缺省 = providerId/modelId(无 fallback) */
+    requestedProviderId?: string | null;
+    requestedModelId?: string | null;
   },
 ): Promise<RunJournal | null> {
   const { data, error } = await supabase
@@ -65,6 +86,9 @@ export async function openRunJournal(
       // 平台免费档在 ai_providers 里没有行,provider_id 只能留空
       provider_id: input.providerId,
       model_id: input.modelId,
+      // P1:requested 单独保留用户选择(与最终执行 provider_id/model_id 区分)
+      requested_provider_id: input.requestedProviderId ?? input.providerId,
+      requested_model_id: input.requestedModelId ?? input.modelId,
       task_type: input.taskType ?? "text",
       status: "running",
     })
@@ -96,8 +120,77 @@ export async function openRunJournal(
     );
   }
 
+  // 收尾实现(P1:可带最终执行信息)。函数声明在 return 之前,闭包安全。
+  async function finishImpl(input: {
+    outcome: "completed" | "failed" | "interrupted" | "cancelled";
+    errorMessage?: string | undefined;
+    executedProviderId?: string | null;
+    executedModelId?: string | undefined;
+    attemptCount?: number | undefined;
+    fallbackUsed?: boolean | undefined;
+  }) {
+    const { error } = await supabase
+      .from("agent_runs")
+      .update({
+        status: input.outcome,
+        completed_at: new Date().toISOString(),
+        error_message: input.errorMessage ?? null,
+        // 跑完的不需要续;被中断的才需要
+        resumable: input.outcome === "interrupted",
+        // P1:最终执行信息(provider_id/model_id 语义 = executed)
+        ...(input.executedProviderId !== undefined
+          ? { provider_id: input.executedProviderId }
+          : {}),
+        ...(input.executedModelId !== undefined
+          ? { model_id: input.executedModelId }
+          : {}),
+        ...(input.attemptCount !== undefined
+          ? { attempt_count: input.attemptCount }
+          : {}),
+        ...(input.fallbackUsed !== undefined
+          ? { fallback_used: input.fallbackUsed }
+          : {}),
+      })
+      .eq("id", runId);
+
+    if (error) {
+      logger.warn(
+        { runId, outcome: input.outcome, dbError: error.message },
+        "智能体运行状态未能收尾,记录会一直停在 running",
+      );
+      return;
+    }
+
+    // 用量计量已由 record() 按完成步骤逐笔完成(P0-4):
+    //   中断/失败只计已完成步骤;一步未完成计 0(自动返还语义)。
+    // finish 只负责状态收尾,不再做一次性 bump。
+  }
+
   return {
     runId,
+
+    async recordAttempt(input) {
+      try {
+        await supabase.from("agent_run_fallback_events").insert({
+          run_id: runId,
+          attempt_number: input.attemptNumber,
+          provider_id: input.providerId,
+          model_id: input.modelId,
+          status: input.status,
+          failure_class: input.failureClass ?? null,
+          reason: input.reason ?? null,
+          completed_at:
+            input.status === "success" || input.status === "failed"
+              ? new Date().toISOString()
+              : null,
+        });
+      } catch (e) {
+        logger.warn(
+          { runId, err: e instanceof Error ? e.message : String(e) },
+          "attempt 轨迹未能落库(不影响运行)",
+        );
+      }
+    },
 
     async record(step: AgentStep) {
       // 一步可能调多个工具。一个工具一行 —— 恢复时要按工具粒度判断
@@ -190,28 +283,18 @@ export async function openRunJournal(
     },
 
     async finish(outcome, errorMessage) {
-      const { error } = await supabase
-        .from("agent_runs")
-        .update({
-          status: outcome,
-          completed_at: new Date().toISOString(),
-          error_message: errorMessage ?? null,
-          // 跑完的不需要续;被中断的才需要
-          resumable: outcome === "interrupted",
-        })
-        .eq("id", runId);
+      await finishImpl({ outcome, errorMessage });
+    },
 
-      if (error) {
-        logger.warn(
-          { runId, outcome, dbError: error.message },
-          "智能体运行状态未能收尾,记录会一直停在 running",
-        );
-        return;
-      }
-
-      // 用量计量已由 record() 按完成步骤逐笔完成(P0-4):
-      //   中断/失败只计已完成步骤;一步未完成计 0(自动返还语义)。
-      // finish 只负责状态收尾,不再做一次性 bump。
+    async finishWithExecution(input) {
+      await finishImpl({
+        outcome: input.outcome,
+        errorMessage: input.errorMessage,
+        executedProviderId: input.executedProviderId,
+        executedModelId: input.executedModelId,
+        attemptCount: input.attemptCount,
+        fallbackUsed: input.fallbackUsed,
+      });
     },
   };
 }

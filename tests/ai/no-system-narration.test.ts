@@ -60,10 +60,12 @@ describe("智能体不换模型", () => {
 
 describe("留痕记的是实际跑的那个模型", () => {
   it("model_id 从跑过的那个对象上取,不是从入参取", () => {
-    // 从 selected 取而不是从入参 model 取,是为了让「库里记的」和
-    // 「真跑的」在代码上是同一个来源,而不是两个碰巧相等的值
-    expect(AGENT_TURN).toMatch(/model_id:\s*selected\.modelId/);
-    expect(AGENT_TURN).toMatch(/provider_id:\s*selected\.providerId/);
+    // 从 executed 取而不是从入参 model 取,是为了让「库里记的」和
+    // 「真跑的」在代码上是同一个来源,而不是两个碰巧相等的值。
+    // P1:executed 是 attempt 循环里更新的最终执行对象(selected 是
+    // 用户选择的 requested;可能经 fallback 切换)。
+    expect(AGENT_TURN).toMatch(/model_id:\s*executed\.modelId/);
+    expect(AGENT_TURN).toMatch(/provider_id:\s*executed\.providerId/);
   });
 });
 
@@ -93,6 +95,7 @@ describe("content 里不得出现系统写的文字", () => {
       outputTokens: 1,
       haltReason: "已达到步数上限(12 步)。",
       toolSupport: null,
+      messages: [],
     });
 
     expect(summary).toBe("已完成登录页。");
