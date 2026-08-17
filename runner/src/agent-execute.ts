@@ -87,11 +87,26 @@ function zhiyiMcpServers(deps: AgentExecuteDeps): unknown[] {
   ];
 }
 
-/** 默认任务文本解析(阶段 D 占位;阶段 E 可注入真实 conversation 读取) */
-async function defaultTaskText(ctx: ExecuteContext): Promise<string> {
-  // 真实实现:从 conversation_id 读 messages 重建任务描述(阶段 E 后续)
-  // 当前:明确提示 Runner 正在执行该 run
-  return `执行智能体任务(run=${ctx.run.runId})。请按主仓对话上下文完成任务。`;
+/** 默认任务文本解析:从 conversation 的最新 user 消息取任务(真实实现) */
+async function defaultTaskText(ctx: ExecuteContext, client: pg.PoolClient): Promise<string> {
+  // 从 messages 读该 conversation 最新的 user 消息(服务端直查,不受 RLS 影响)
+  const res = await client.query(
+    `
+    SELECT content
+    FROM public.messages
+    WHERE conversation_id = $1
+      AND role = 'user'
+    ORDER BY created_at DESC
+    LIMIT 1
+    `,
+    [ctx.run.conversationId],
+  );
+  const content = res.rows[0]?.content as string | undefined;
+  if (!content || !content.trim()) {
+    // 无消息兜底(理论不会发生,run 由用户消息触发)
+    return `执行智能体任务(run=${ctx.run.runId})。`;
+  }
+  return content;
 }
 
 /** Runner execute handler:claim 后执行一个 run(阶段 D+E) */
@@ -140,10 +155,10 @@ export async function executeAgentRun(
       );
     }
 
-    // 2. 任务文本
+    // 2. 任务文本(从 conversation 最新 user 消息读取)
     const taskText = deps.resolveTaskText
       ? await deps.resolveTaskText(ctx, client)
-      : await defaultTaskText(ctx);
+      : await defaultTaskText(ctx, client);
 
     // 3. prompt(长时执行,预算由 runner 主循环控制)
     const promptResult = await deps.acp.prompt(session.acpSessionId, taskText, {

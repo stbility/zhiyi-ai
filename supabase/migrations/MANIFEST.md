@@ -287,3 +287,4 @@ CI 的真实重放已经覆盖它。0044 已把 0005 连同基线 0001-0027 一�
 | `0064_agent_runs_task_type.sql` | 待应用 | P0-2/P0-3 任务类型追踪:agent_runs 加 task_type 列(默认 'text',check 约束枚举),记录每轮智能体运行的任务类型,仅追踪不改执行逻辑 |
 | `0065_agent_runs_runner_lease.sql` | 待应用 | Agent Runner lease 列(阶段 B):agent_runs 加 claimed_by/claimed_at/lease_expires_at/lease_generation,支持 FOR UPDATE SKIP LOCKED 领取 + generation fencing 防双执行;纯新增列 | 
 | `0066_agent_runs_acp_session.sql` | 待应用 | Agent Runner ACP session 映射(阶段 E):agent_runs 加 acp_session_id/hermes_session_id 列,中断恢复时 session/resume 同一 Hermes 会话,不新建逻辑执行;纯新增列 | 
+| `0067_agent_runs_recover_expired.sql` | 待应用 | Agent Runner 过期租约恢复 RPC(Cron 扫描器专用):有步骤→interrupted(resumable)/无步骤→failed,原子 UPDATE + generation+1,security definer;幂等(已恢复行不再命中)+ 最小权限(revoke public,仅 grant service_role);只标记不执行 Agent | 
