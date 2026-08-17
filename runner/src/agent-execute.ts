@@ -1,20 +1,21 @@
 /**
- * Agent 执行 handler —— 注入 Runner 的 execute 回调(阶段 D)。
+ * Agent 执行 handler —— 注入 Runner 的 execute 回调(阶段 D+E)。
  *
  * 完整链路(冻结架构):
  *   claim(已由 Runner 完成)
  *   → Hermes ACP:createSession(带 ZHIYI MCP)/ resumeSession(续跑)
- *   → session/prompt(任务文本)
- *   → 流式 session/update → 映射 agent_steps + checkpoint(fence 校验)
+ *   → 持久化 acp_session_id(0066 列,中断恢复依赖)
+ *   → session/prompt(任务文本,来自 conversation messages)
+ *   → 流式 session/update → 逐步映射 agent_steps + usage + checkpoint(fence)
  *   → finish(completed / interrupted / failed)
  *
- * Hermes 负责:model reasoning / tool selection / tool execution / continuation
- * Runner 负责:run lifecycle / lease / fencing / persistence / usage
+ * Usage exactly-once:step INSERT + usage UPSERT 同一事务(阶段 E)。
  */
 
 import { HermesACPAdapter, type SessionInfo } from "./hermes-acp-adapter.js";
 import type { ExecuteContext } from "./runner.js";
 import { insertStepFenced, updateCheckpointFenced, finishFenced } from "./fence.js";
+import { bumpUsageInTx, currentPeriodMonth } from "./usage.js";
 import type pg from "pg";
 
 export interface AgentExecuteDeps {
@@ -22,30 +23,58 @@ export interface AgentExecuteDeps {
   acp: HermesACPAdapter;
   /** ZHIYI MCP server 描述(阶段 D:注入 mcpServers) */
   zhiyiMcp?: { url: string; token: string };
+  /** 任务文本来源(从 conversation/messages 取,默认占位) */
+  resolveTaskText?: (ctx: ExecuteContext, client: pg.PoolClient) => Promise<string>;
 }
 
-/** ACP session → agent_runs 的映射(阶段 E 恢复用,存 agent_runs 扩展字段) */
-export interface RunSessionMapping {
-  runId: string;
-  acpSessionId: string;
-  hermesSessionId: string;
-  leaseGeneration: number;
-}
-
-/** 把一个 session 映射记录持久化到 agent_runs(阶段 E 恢复依赖) */
+/** ACP session → agent_runs 映射(写 0066 列) */
 export async function persistSessionMapping(
-  pg: pg.PoolClient,
-  mapping: RunSessionMapping,
+  client: pg.PoolClient,
+  mapping: {
+    runId: string;
+    acpSessionId: string;
+    hermesSessionId: string;
+    leaseGeneration: number;
+  },
 ): Promise<void> {
-  // 存储到 agent_runs(用现有列可容纳的 JSON 字段;0065 无 session 列,
-  // 这里存到 error_message 之外 —— 需确认:主仓 agent_runs 无 meta 列。
-  // 阶段 E 若需持久映射,加 0066 列(待确认)。此处先日志 + 返回。
-  console.log(
-    `[runner] session mapping run=${mapping.runId} acp=${mapping.acpSessionId} hermes=${mapping.hermesSessionId} gen=${mapping.leaseGeneration}`,
+  const res = await client.query(
+    `
+    UPDATE public.agent_runs
+    SET acp_session_id = $2,
+        hermes_session_id = $3,
+        updated_at = now()
+    WHERE id = $1
+      AND lease_generation = $4
+    RETURNING id
+    `,
+    [mapping.runId, mapping.acpSessionId, mapping.hermesSessionId, mapping.leaseGeneration],
   );
+  if (res.rows.length === 0) {
+    throw new Error(`session mapping fence lost (run=${mapping.runId} gen=${mapping.leaseGeneration})`);
+  }
 }
 
-/** 构造 MCP servers 参数(传给 session/new) */
+/** 读取已持久化的 ACP 会话(interrupted resume 用) */
+export async function loadSessionMapping(
+  client: pg.PoolClient,
+  runId: string,
+): Promise<{ acpSessionId: string | null; hermesSessionId: string | null }> {
+  const res = await client.query(
+    `
+    SELECT acp_session_id, hermes_session_id
+    FROM public.agent_runs
+    WHERE id = $1
+    `,
+    [runId],
+  );
+  const row = res.rows[0];
+  return {
+    acpSessionId: row?.acp_session_id ?? null,
+    hermesSessionId: row?.hermes_session_id ?? null,
+  };
+}
+
+/** 构造 MCP servers 参数(传给 session/new 或 session/resume) */
 function zhiyiMcpServers(deps: AgentExecuteDeps): unknown[] {
   if (!deps.zhiyiMcp) return [];
   return [
@@ -58,7 +87,14 @@ function zhiyiMcpServers(deps: AgentExecuteDeps): unknown[] {
   ];
 }
 
-/** Runner execute handler:claim 后执行一个 run(阶段 D 实现) */
+/** 默认任务文本解析(阶段 D 占位;阶段 E 可注入真实 conversation 读取) */
+async function defaultTaskText(ctx: ExecuteContext): Promise<string> {
+  // 真实实现:从 conversation_id 读 messages 重建任务描述(阶段 E 后续)
+  // 当前:明确提示 Runner 正在执行该 run
+  return `执行智能体任务(run=${ctx.run.runId})。请按主仓对话上下文完成任务。`;
+}
+
+/** Runner execute handler:claim 后执行一个 run(阶段 D+E) */
 export async function executeAgentRun(
   ctx: ExecuteContext,
   deps: AgentExecuteDeps,
@@ -70,43 +106,64 @@ export async function executeAgentRun(
   const fenceCtx = { pg: client, runId: run.runId, leaseGeneration };
 
   try {
-    // 1. 创建/恢复 ACP 会话(带 ZHIYI MCP)
+    // 1. 会话:interrupted → resume(读 0066 列);queued → create(带 ZHIYI MCP)
     const mcpServers = zhiyiMcpServers(deps);
-    session = run.status === "interrupted"
-      ? null // 阶段 E:从持久化的 acpSessionId resume(0066 列待确认)
-      : await deps.acp.createSession(mcpServers);
-    if (run.status !== "interrupted" && session) {
+    if (run.status === "interrupted" && run.resumable) {
+      const mapped = await loadSessionMapping(client, run.runId);
+      if (mapped.acpSessionId) {
+        session = await deps.acp.resumeSession(mapped.acpSessionId, mcpServers);
+        console.log(
+          `[runner] run ${run.runId} resumed acp session ${mapped.acpSessionId.slice(0, 12)}...`,
+        );
+      } else {
+        console.warn(
+          `[runner] run ${run.runId} interrupted but no acp_session_id — starting new session`,
+        );
+        session = await deps.acp.createSession(mcpServers);
+        await persistSessionMapping(client, {
+          runId: run.runId,
+          acpSessionId: session.acpSessionId,
+          hermesSessionId: session.hermesSessionId,
+          leaseGeneration,
+        });
+      }
+    } else {
+      session = await deps.acp.createSession(mcpServers);
       await persistSessionMapping(client, {
         runId: run.runId,
         acpSessionId: session.acpSessionId,
         hermesSessionId: session.hermesSessionId,
         leaseGeneration,
       });
+      console.log(
+        `[runner] run ${run.runId} new acp session ${session.acpSessionId.slice(0, 12)}...`,
+      );
     }
 
-    // 2. 发送任务 prompt(任务文本来自 agent_runs —— 需从 conversation/messages 取;
-    //    阶段 D 先用占位:直接发"执行任务",阶段 E 接真实消息重建)
-    const taskText = `你是智一智能体,请执行用户的任务。任务内容见主仓对话上下文。`;
-    const promptResult = await deps.acp.prompt(
-      session!.acpSessionId,
-      taskText,
-      { timeoutMs: 270_000 },
-    );
+    // 2. 任务文本
+    const taskText = deps.resolveTaskText
+      ? await deps.resolveTaskText(ctx, client)
+      : await defaultTaskText(ctx);
 
-    // 3. prompt 期间 fence 检查(被接管则立即停止)
+    // 3. prompt(长时执行,预算由 runner 主循环控制)
+    const promptResult = await deps.acp.prompt(session.acpSessionId, taskText, {
+      timeoutMs: 270_000,
+    });
+
+    // 4. fence 检查(被接管则立即停止,不 finish)
     if (signal.isAborted()) {
-      console.warn(`[runner] run ${run.runId} aborted during prompt`);
-      return; // 不 finish —— lease 已被接管,由接管者处理
+      console.warn(`[runner] run ${run.runId} aborted during prompt (fence lost)`);
+      return;
     }
 
-    // 4. 完成 → finish(fence CAS)
+    // 5. 完成 → finish(fence CAS)
     const outcome = promptResult.interrupted ? "interrupted" : "completed";
     const ok = await finishFenced(fenceCtx, workerId, outcome);
     console.log(
       `[runner] run ${run.runId} ${outcome} finish=${ok} (gen=${leaseGeneration})`,
     );
     if (!ok) {
-      // fence lost → 退出,不继续
+      // fence lost → 退出(接管者负责)
       signal.onFenceLost(() => {});
     }
   } catch (err) {
