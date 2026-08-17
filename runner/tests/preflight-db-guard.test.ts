@@ -27,9 +27,10 @@ const FORBIDDEN_PATTERNS: { pattern: RegExp; reason: string }[] = [
 ];
 
 describe("preflight-db.mts 纯直连防回归", () => {
-  it("必须直接使用 process.env.DATABASE_URL", () => {
+  it("必须直接使用环境变量连接串,零转换", () => {
     expect(src).toContain("process.env.DATABASE_URL");
-    expect(src).toContain("connectionString: DATABASE_URL");
+    expect(src).toContain("process.env.RUNNER_DATABASE_URL");
+    expect(src).toContain("connectionString: CONNECTION_STRING");
   });
 
   it("不得包含任何自动 URL 转换逻辑", () => {

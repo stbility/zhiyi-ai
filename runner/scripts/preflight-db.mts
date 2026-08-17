@@ -1,9 +1,11 @@
 /**
- * Runner E2E 前置验证:PostgreSQL 纯直连(零转换)。
+ * Runner E2E 前置验证:PostgreSQL 连接验证(零转换)。
  *
- * 【唯一允许的连接方式】
- *   const DATABASE_URL = process.env.DATABASE_URL;
- *   new pg.Pool({ connectionString: DATABASE_URL, ... });
+ * 【连接串来源(用户提供,代理不生成)】
+ *   - RUNNER_DATABASE_URL:Runner 使用的连接串
+ *     (Supabase Shared Pooler Session Mode IPv4,用户从 Dashboard 复制)
+ *   - DATABASE_URL:主仓原始数据库配置(保留,不覆盖)
+ *   优先级:先 RUNNER_DATABASE_URL,未设置则回退 DATABASE_URL。
  *
  * 【绝对禁止】
  *   - 任何"连接失败 → 自动换连接串"逻辑
@@ -17,12 +19,15 @@
 
 import pg from "pg";
 
-// ── 1. 检查 DATABASE_URL 是否存在 ────────────────────────────────────────
+// ── 1. 检查连接串是否存在(优先 RUNNER_DATABASE_URL) ──────────────────────
 const DATABASE_URL = process.env.DATABASE_URL;
-if (!DATABASE_URL) {
-  console.error("DATABASE_URL = UNSET");
+const RUNNER_DATABASE_URL = process.env.RUNNER_DATABASE_URL;
+const CONNECTION_STRING = RUNNER_DATABASE_URL ?? DATABASE_URL;
+if (!CONNECTION_STRING) {
+  console.error("DATABASE_URL / RUNNER_DATABASE_URL = UNSET");
   process.exit(1);
 }
+const SOURCE = RUNNER_DATABASE_URL ? "RUNNER_DATABASE_URL" : "DATABASE_URL";
 
 // 脱敏 host 显示:只保留主机名与端口,不输出 user/password/完整串
 function safeHost(url: string): string {
@@ -35,12 +40,12 @@ function safeHost(url: string): string {
   }
 }
 
-console.log("DATABASE_URL = SET");
-console.log("DB HOST =", safeHost(DATABASE_URL));
+console.log("连接串来源 =", SOURCE);
+console.log("DB HOST =", safeHost(CONNECTION_STRING));
 
-// ── 2. 原样建立 pg connection(直接使用原始连接串,禁止中间转换) ─────────
+// ── 2. 原样建立 pg connection(直接使用连接串,禁止中间转换) ─────────────
 const pool = new pg.Pool({
-  connectionString: DATABASE_URL,
+  connectionString: CONNECTION_STRING,
   max: 2,
   connectionTimeoutMillis: 15_000,
 });
