@@ -86,7 +86,8 @@ export async function checkTurnQuota(input: {
   // 免费档额度。确认 isTeamAdmin 是否参与(单成员组织 owner 不豁免,
   // 应与本次 quota=0 无关)。排查完删除。
   if (teamAdmin) return null;
-  logger.info(
+  // 【临时调试日志 2026-08-17】warn 级别:生产 LOG_LEVEL=warn,info 会被过滤。
+  logger.warn(
     { debugTurnQuota: true, userId, organizationId, channel, teamAdmin },
     "DEBUG checkTurnQuota teamAdmin result",
   );

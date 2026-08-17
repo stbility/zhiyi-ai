@@ -45,7 +45,8 @@ export async function getMyEntitlements(): Promise<Entitlements | null> {
   // 【临时调试日志 2026-08-17】排查:提权 enterprise 后智能体页仍显示
   // 免费档额度。打印 auth.uid() 实际值与 RPC 原始返回,定位是
   // 会话问题还是 RPC 函数行为问题。排查完删除。
-  logger.info(
+  // 用 warn 级别:生产 LOG_LEVEL=warn,info 会被 pino 过滤(实证)。
+  logger.warn(
     {
       debugGetEntitlements: true,
       uid: user.id,
