@@ -13,7 +13,8 @@
 import { createServer } from "node:http";
 import pg from "pg";
 import { Runner, makeWorkerId } from "./runner.js";
-import type { ExecuteContext } from "./runner.js";
+import { HermesACPAdapter } from "./hermes-acp-adapter.js";
+import { executeAgentRun } from "./agent-execute.js";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
@@ -23,30 +24,31 @@ if (!DATABASE_URL) {
 
 const SLOTS = Number(process.env.RUNNER_SLOTS ?? "2");
 const WORKER_ID = process.env.RUNNER_WORKER_ID ?? makeWorkerId();
+const ZHIYI_MCP_URL = process.env.ZHIYI_MCP_URL;
+const ZHIYI_MCP_TOKEN = process.env.ZHIYI_MCP_TOKEN;
 
 const pool = new pg.Pool({ connectionString: DATABASE_URL, max: SLOTS + 2 });
 
-/** 阶段 C 占位执行器:当前直接标记完成(等待 Hermes ACP Adapter 注入) */
-async function placeholderExecute(ctx: ExecuteContext): Promise<void> {
-  const { finishFenced } = await import("./fence.js");
-  const client = await pool.connect();
-  try {
-    const ok = await finishFenced(
-      { pg: client, runId: ctx.run.runId, leaseGeneration: ctx.leaseGeneration },
-      ctx.workerId,
-      "completed",
-    );
-    console.log(
-      `[runner] placeholder executed run ${ctx.run.runId} (gen=${ctx.leaseGeneration}) finish=${ok}`,
-    );
-  } finally {
-    client.release();
-  }
-}
+// 阶段 C/D:Hermes ACP Adapter + Agent execute handler
+const acp = new HermesACPAdapter({
+  bin: process.env.HERMES_BIN,
+  home: process.env.HERMES_HOME ?? `${process.env.HOME}/.hermes`,
+});
+await acp.start();
+console.log("[runner] Hermes ACP connected");
+
+const execute = (ctx: Parameters<typeof executeAgentRun>[0]) =>
+  executeAgentRun(ctx, {
+    pool,
+    acp,
+    zhiyiMcp: ZHIYI_MCP_URL && ZHIYI_MCP_TOKEN
+      ? { url: ZHIYI_MCP_URL, token: ZHIYI_MCP_TOKEN }
+      : undefined,
+  });
 
 const runner = new Runner({
   pool,
-  execute: placeholderExecute,
+  execute,
   config: { workerId: WORKER_ID, slots: SLOTS },
 });
 
