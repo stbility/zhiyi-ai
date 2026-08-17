@@ -1,0 +1,346 @@
+name: Hermes production MCP E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Read-only verification or guarded Draft PR verification
+        required: true
+        type: choice
+        options:
+          - read
+          - write
+      write_confirmation:
+        description: For write mode enter CREATE_DRAFT_PR
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-production-mcp-e2e
+  cancel-in-progress: false
+
+jobs:
+  prepare-hermes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Restore prebuilt Hermes Runner
+        id: hermes-cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.hermes
+            ~/.local/bin
+            ~/.local/share
+          key: hermes-agent-${{ runner.os }}-v2
+
+      - name: Install real Hermes Agent on cache miss
+        if: steps.hermes-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+          test -x "$HOME/.local/bin/hermes" || test -x "$HOME/.hermes/bin/hermes"
+
+  agent:
+    needs: prepare-hermes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ZHIYI_MCP_URL: https://zhiyi-ai.vercel.app/api/mcp
+      ZHIYI_MCP_TOKEN: ${{ secrets.ZHIYI_HERMES_MCP_TOKEN }}
+      ZHIYI_OPENCLAW_MCP_TOKEN: ${{ secrets.ZHIYI_OPENCLAW_MCP_TOKEN }}
+      # 主模型凭据:同时注入两个标准 key env(Hermes 按 provider 读取对应
+      # 一个 —— gemini 读 GEMINI_API_KEY,openai-api 读 OPENAI_API_KEY),
+      # 均复用 HERMES_MODEL_API_KEY secret,不新增 secret。
+      OPENAI_API_KEY: ${{ secrets.HERMES_MODEL_API_KEY }}
+      HERMES_MODEL_BASE_URL: ${{ secrets.HERMES_MODEL_BASE_URL }}
+      HERMES_MODEL_NAME: ${{ secrets.HERMES_MODEL_NAME }}
+      # 备用模型链(可插拔):主模型限速/过载时自动切换。
+      # 未配置 HERMES_FALLBACK_1_* = 无 fallback,行为与之前一致。
+      HERMES_FALLBACK_1_BASE_URL: ${{ secrets.HERMES_FALLBACK_1_BASE_URL }}
+      HERMES_FALLBACK_1_API_KEY: ${{ secrets.HERMES_FALLBACK_1_API_KEY }}
+      HERMES_FALLBACK_1_MODEL: ${{ secrets.HERMES_FALLBACK_1_MODEL }}
+      HERMES_FALLBACK_2_BASE_URL: ${{ secrets.HERMES_FALLBACK_2_BASE_URL }}
+      HERMES_FALLBACK_2_API_KEY: ${{ secrets.HERMES_FALLBACK_2_API_KEY }}
+      HERMES_FALLBACK_2_MODEL: ${{ secrets.HERMES_FALLBACK_2_MODEL }}
+      HERMES_FALLBACK_3_BASE_URL: ${{ secrets.HERMES_FALLBACK_3_BASE_URL }}
+      HERMES_FALLBACK_3_API_KEY: ${{ secrets.HERMES_FALLBACK_3_API_KEY }}
+      HERMES_FALLBACK_3_MODEL: ${{ secrets.HERMES_FALLBACK_3_MODEL }}
+      # 主链路 gemini provider 的标准 key env —— 指向主模型 key
+      # (主模型切 Gemini 后 HERMES_MODEL_API_KEY = Gemini key)
+      GEMINI_API_KEY: ${{ secrets.HERMES_MODEL_API_KEY }}
+      # Worker / Secondary 模型(单次最小调用验证,不消耗额度)
+      HERMES_MODEL_GPT_OSS_20B: ${{ secrets.HERMES_MODEL_GPT_OSS_20B }}
+      HERMES_MODEL_QWEN3_6_27B: ${{ secrets.HERMES_MODEL_QWEN3_6_27B }}
+      HERMES_MODEL_GEMINI_3_5_FLASH: ${{ secrets.HERMES_MODEL_GEMINI_3_5_FLASH }}
+      HERMES_MODEL_GEMINI_3_1_FLASH_LITE: ${{ secrets.HERMES_MODEL_GEMINI_3_1_FLASH_LITE }}
+      E2E_MODE: ${{ inputs.mode }}
+      WRITE_CONFIRMATION: ${{ inputs.write_confirmation }}
+    steps:
+      - name: Check out the E2E harness
+        uses: actions/checkout@v6
+
+      - name: Validate inputs and secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ZHIYI_MCP_TOKEN" || {
+            echo "Missing ZHIYI_HERMES_MCP_TOKEN"
+            exit 1
+          }
+          test -n "$OPENAI_API_KEY" || {
+            echo "Missing HERMES_MODEL_API_KEY"
+            exit 1
+          }
+          test -n "$HERMES_MODEL_NAME" || {
+            echo "Missing HERMES_MODEL_NAME"
+            exit 1
+          }
+          # fallback 链:只要第 1 档配了,就必须三件套齐全(每档独立)
+          for n in 1 2 3; do
+            fb_url=$(env | grep -E "^HERMES_FALLBACK_${n}_BASE_URL=" | cut -d= -f2-)
+            fb_key=$(env | grep -E "^HERMES_FALLBACK_${n}_API_KEY=" | cut -d= -f2-)
+            fb_model=$(env | grep -E "^HERMES_FALLBACK_${n}_MODEL=" | cut -d= -f2-)
+            if [ -n "$fb_url" ] || [ -n "$fb_key" ] || [ -n "$fb_model" ]; then
+              test -n "$fb_url" && test -n "$fb_key" && test -n "$fb_model" || {
+                echo "Incomplete HERMES_FALLBACK_${n}_* (need BASE_URL+API_KEY+MODEL together)"
+                exit 1
+              }
+            fi
+          done
+          if [[ "$E2E_MODE" == write && "$WRITE_CONFIRMATION" != CREATE_DRAFT_PR ]]; then
+            echo "Write mode requires exact confirmation CREATE_DRAFT_PR"
+            exit 1
+          fi
+
+      - name: Normalize model API base URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${HERMES_MODEL_BASE_URL%/}"
+          base_url="${base_url%/chat/completions}"
+          base_url="${base_url%/}"
+          if [[ -z "$base_url" ]]; then
+            echo "HERMES_MODEL_BASE_URL is required (OpenAI-compatible endpoint)"
+            exit 1
+          fi
+          case "$base_url" in
+            http://*|https://*) ;;
+            *) echo "HERMES_MODEL_BASE_URL must be an HTTP(S) URL"; exit 1 ;;
+          esac
+          echo "OPENAI_BASE_URL=$base_url" >> "$GITHUB_ENV"
+          # Provider-neutral:按主端点识别 provider。
+          # 优先用 Hermes 内置 provider(nvidia/openrouter —— 08-05 基线
+          # 实证 nvidia 内置 provider 完整跑通 Agent+MCP);
+          # 其余 OpenAI 兼容端点 → openai-api 通用 adapter。
+          if [[ "$base_url" == *"generativelanguage.googleapis.com"* ]]; then
+            echo "HERMES_PROVIDER=gemini" >> "$GITHUB_ENV"
+          elif [[ "$base_url" == *"integrate.api.nvidia.com"* ]]; then
+            echo "HERMES_PROVIDER=nvidia" >> "$GITHUB_ENV"
+          elif [[ "$base_url" == *"openrouter.ai"* ]]; then
+            echo "HERMES_PROVIDER=openrouter" >> "$GITHUB_ENV"
+          else
+            echo "HERMES_PROVIDER=openai-api" >> "$GITHUB_ENV"
+          fi
+
+      - name: Restore prebuilt Hermes Runner
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.hermes
+            ~/.local/bin
+            ~/.local/share
+          key: hermes-agent-${{ runner.os }}-v2
+
+      - name: Activate and verify Hermes Runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$HOME/.hermes/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          test -x "$HOME/.local/bin/hermes" || test -x "$HOME/.hermes/bin/hermes"
+
+      - name: Configure only the Zhiyi MCP server
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.hermes"
+          umask 077
+          ZHIYI_MCP_URL="$ZHIYI_MCP_URL" ZHIYI_MCP_TOKEN="$ZHIYI_MCP_TOKEN" \
+            python3 scripts/e2e/write_hermes_config.py "$HOME/.hermes/config.yaml"
+
+      - name: Pre-flight MCP token freshness check
+        if: inputs.mode == 'read'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # P0-3 (2026-08-15):在进入消耗额度的主链路之前,先做一次轻量
+          # MCP 鉴权探测 —— 过期令牌 401 提前暴露,不浪费一整轮 E2E。
+          # 只发 ping,不发起任何业务调用。输出只含 PASS/FAIL + HTTP 码,
+          # 绝不打印令牌值。
+          check_mcp_auth() {
+            local name="$1" url="$2" token="$3"
+            if [ -z "$token" ]; then
+              echo "$name: FAIL (token missing)"
+              return 1
+            fi
+            status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
+              -H "Authorization: Bearer $token" \
+              -X POST "$url" \
+              -d '{"jsonrpc":"2.0","id":"probe","method":"ping"}')
+            if [ "$status" = "401" ] || [ "$status" = "403" ]; then
+              echo "$name: FAIL (token invalid/expired, HTTP $status)"
+              return 1
+            fi
+            echo "$name: PASS (HTTP $status)"
+          }
+          TOKEN_FAIL=0
+          check_mcp_auth "HERMES_MCP" "$ZHIYI_MCP_URL" "$ZHIYI_MCP_TOKEN" || TOKEN_FAIL=1
+          check_mcp_auth "OPENCLAW_MCP" "$ZHIYI_MCP_URL" "$ZHIYI_OPENCLAW_MCP_TOKEN" || TOKEN_FAIL=1
+          if [ "$TOKEN_FAIL" = "1" ]; then
+            echo "::error::MCP token 预检失败,请先更新过期令牌再触发完整 E2E"
+            exit 1
+          fi
+
+      - name: Provider / Model capability detection
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 能力注册表:按 Base URL 自动识别 Provider + 模型能力(无网络、无密钥)。
+          python3 scripts/e2e/provider_capabilities.py > capabilities.json
+          cat capabilities.json
+          python3 scripts/e2e/check_primary_capability.py
+
+      - name: Execute read-only repository proof
+        if: inputs.mode == 'read'
+        shell: bash
+        run: |
+          set -euo pipefail
+          hermes chat --provider "$HERMES_PROVIDER" --model "$HERMES_MODEL_NAME" \
+            --toolsets zhiyi --quiet --query \
+            "Use only Zhiyi MCP tools. Call zhiyi_whoami, discover accessible repositories, list the root of stbility/zhiyi-ai, then read README.md from stbility/zhiyi-ai. Do not create, update, or delete anything. Report each tool name and a short result." \
+            2>&1 | sed -E 's/Bearer [A-Za-z0-9._~-]+/Bearer [REDACTED]/g; s/(sk-|gsk-|nvapi-|AIza)[A-Za-z0-9_.-]+/\1[REDACTED]/g' | tee hermes-read.log
+          grep -q 'zhiyi_whoami' hermes-read.log
+          grep -q 'zhiyi_git_list_files' hermes-read.log
+          grep -q 'zhiyi_git_read_file' hermes-read.log
+          grep -q 'stbility/zhiyi-ai' hermes-read.log
+          if grep -Eqi 'FAILED|不在授权范围|cannot be completed|summary / blocker|credentials.*pending' hermes-read.log \
+            && ! grep -Eqi 'Primary auth failed|switching to fallback' hermes-read.log; then
+            echo 'Hermes reported an MCP or repository authorization failure'
+            exit 1
+          fi
+
+      - name: Execute guarded branch and Draft PR proof
+        if: inputs.mode == 'write' && inputs.write_confirmation == 'CREATE_DRAFT_PR'
+        shell: bash
+        run: |
+          set -euo pipefail
+          hermes chat --provider "$HERMES_PROVIDER" --model "$HERMES_MODEL_NAME" \
+            --toolsets zhiyi --quiet --query \
+            "Use only Zhiyi MCP GitHub tools. The only allowed repository is stbility/zhiyi-ai. In stbility/zhiyi-ai create branch Hermes-E2E-20260805 from main. Never commit directly to main. On that isolated branch create docs/e2e/hermes-20260805.md containing only an E2E timestamp and purpose, commit it, and create a Draft PR targeting main titled 'Hermes production E2E proof'. Stop and report exact evidence. Never merge the PR and never touch any other repository or existing branch." \
+            2>&1 | sed -E 's/Bearer [A-Za-z0-9._~-]+/Bearer [REDACTED]/g; s/(sk-|gsk-|nvapi-|AIza)[A-Za-z0-9_.-]+/\1[REDACTED]/g' | tee hermes-write.log
+
+      - name: Remove local credential file
+        if: always()
+        shell: bash
+        run: rm -f "$HOME/.hermes/config.yaml"
+
+      - name: Preserve client trace
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Hermes-E2E-20260805-${{ inputs.mode }}
+          path: hermes-*.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  # P2 (2026-08-15):worker/次要模型验证与主链路解耦 —— 独立 job,
+  # 只依赖 prepare-hermes,与 agent job 并行。主链路(agent)因 429
+  # 等 Provider 故障失败时,worker 验证仍独立给出每个模型的 PASS/FAIL,
+  # 不再被主链路失败连带跳过。
+  worker-validation:
+    needs: prepare-hermes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      OPENAI_API_KEY: ${{ secrets.HERMES_MODEL_API_KEY }}
+      HERMES_MODEL_BASE_URL: ${{ secrets.HERMES_MODEL_BASE_URL }}
+      GEMINI_API_KEY: ${{ secrets.HERMES_FALLBACK_1_API_KEY }}
+      HERMES_MODEL_GPT_OSS_20B: ${{ secrets.HERMES_MODEL_GPT_OSS_20B }}
+      HERMES_MODEL_QWEN3_6_27B: ${{ secrets.HERMES_MODEL_QWEN3_6_27B }}
+      HERMES_MODEL_GEMINI_3_5_FLASH: ${{ secrets.HERMES_MODEL_GEMINI_3_5_FLASH }}
+      HERMES_MODEL_GEMINI_3_1_FLASH_LITE: ${{ secrets.HERMES_MODEL_GEMINI_3_1_FLASH_LITE }}
+    steps:
+      - name: Restore prebuilt Hermes Runner
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.hermes
+            ~/.local/bin
+            ~/.local/share
+          key: hermes-agent-${{ runner.os }}-v2
+
+      - name: Activate and verify Hermes Runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$HOME/.hermes/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          test -x "$HOME/.local/bin/hermes" || test -x "$HOME/.hermes/bin/hermes"
+
+      - name: Verify worker and secondary models (single minimal call each)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 单次最小调用验证,不消耗额度。每模型一个固定短 query。
+          # 输出:逻辑名 + provider + 配置态 + 真实结果(PASS/FAIL/RATE_LIMITED),
+          # 模型名在 secret 中时只显示逻辑名,不显示 secret 值。
+          declare -A MODELS=(
+            [WORKER]="$HERMES_MODEL_GPT_OSS_20B"
+            [GROQ_SECONDARY]="$HERMES_MODEL_QWEN3_6_27B"
+            [GEMINI_WORKER]="$HERMES_MODEL_GEMINI_3_5_FLASH"
+            [GEMINI_LITE]="$HERMES_MODEL_GEMINI_3_1_FLASH_LITE"
+          )
+          declare -A PROVIDERS=(
+            [WORKER]="openai-api"
+            [GROQ_SECONDARY]="openai-api"
+            [GEMINI_WORKER]="gemini"
+            [GEMINI_LITE]="gemini"
+          )
+          declare -A PROVIDER_LABEL=(
+            [WORKER]="Groq"
+            [GROQ_SECONDARY]="Groq"
+            [GEMINI_WORKER]="Gemini"
+            [GEMINI_LITE]="Gemini"
+          )
+          for key in WORKER GROQ_SECONDARY GEMINI_WORKER GEMINI_LITE; do
+            model="${MODELS[$key]}"
+            provider="${PROVIDERS[$key]}"
+            label="${PROVIDER_LABEL[$key]}"
+            if [ -z "$model" ]; then
+              echo "$key [${label}] provider=${provider} model=NOT_CONFIGURED result=NOT_CONFIGURED"
+              continue
+            fi
+            echo "$key [${label}] provider=${provider} model=configured"
+            # set -e 下命令替换赋值为非零会直接退出 —— 显式捕获退出码。
+            set +e
+            out=$(hermes chat --provider "$provider" --model "$model" \
+              --quiet --query "Reply with exactly: OK" 2>&1 \
+              | sed -E 's/Bearer [A-Za-z0-9._~-]+/Bearer [REDACTED]/g; s/(sk-|gsk-|nvapi-|AIza)[A-Za-z0-9_.-]+/\1[REDACTED]/g')
+            rc=$?
+            set -e
+            if [ "$rc" -ne 0 ] || echo "$out" | grep -qE 'HTTP [45][0-9][0-9]|Invalid|rate limit|Rate limit|error|Error'; then
+              if echo "$out" | grep -qE '429|rate limit|Rate limit'; then
+                echo "$key [${label}] result=RATE_LIMITED (HTTP 429 / quota)"
+              else
+                echo "$key [${label}] result=FAIL"
+              fi
+              echo "$out" | tail -2
+            else
+              echo "$key [${label}] result=PASS"
+            fi
+          done
