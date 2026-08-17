@@ -88,3 +88,8 @@ $$;
 -- 最小权限:收回 PUBLIC 默认 EXECUTE,只授予 service_role(Cron 扫描器)
 revoke all on function public.recover_expired_agent_runs() from public;
 grant execute on function public.recover_expired_agent_runs() to service_role;
+
+-- Supabase 环境:anon/authenticated 是独立角色,不继承 public 的 revoke,
+-- 必须显式收回(否则匿名/登录用户可触发恢复逻辑 —— 越权面)
+revoke all on function public.recover_expired_agent_runs() from anon;
+revoke all on function public.recover_expired_agent_runs() from authenticated;
