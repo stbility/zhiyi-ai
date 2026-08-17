@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { getMyEntitlements, quotaOf } from "@/lib/billing/entitlements";
 import { agentTurnBlockReason, sumUsageRows } from "@/lib/billing/quota-math";
+import { logger } from "@/lib/log";
 
 /**
  * 两条 AI 通道共用的额度守卫。
@@ -80,7 +81,15 @@ export async function checkTurnQuota(input: {
 }): Promise<TurnQuotaBlock | null> {
   const { supabase, userId, organizationId, channel } = input;
 
-  if (await isTeamAdmin(supabase, userId, organizationId)) return null;
+  const teamAdmin = await isTeamAdmin(supabase, userId, organizationId);
+  // 【临时调试日志 2026-08-17】排查:提权 enterprise 后智能体页仍显示
+  // 免费档额度。确认 isTeamAdmin 是否参与(单成员组织 owner 不豁免,
+  // 应与本次 quota=0 无关)。排查完删除。
+  if (teamAdmin) return null;
+  logger.info(
+    { debugTurnQuota: true, userId, organizationId, channel, teamAdmin },
+    "DEBUG checkTurnQuota teamAdmin result",
+  );
 
   const entitlements = await getMyEntitlements();
   // fail-closed:权益查不到按 0(没额度)处理,不按「不限」处理。
