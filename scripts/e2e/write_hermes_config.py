@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from urllib.parse import urlparse
 
 
 def _provider_for_base_url(base_url: str) -> str:
@@ -24,7 +25,8 @@ def _provider_for_base_url(base_url: str) -> str:
       Google Generative Language API,非 OpenAI 兼容)
     - 其余 → openai-api(通用 OpenAI 兼容:Groq/OpenRouter/DeepSeek 等)
     """
-    if "generativelanguage.googleapis.com" in base_url:
+    host = (urlparse(base_url).hostname or "").lower()
+    if host == "generativelanguage.googleapis.com":
         return "gemini"
     return "openai-api"
 
