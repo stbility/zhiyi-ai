@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { logger } from "@/lib/log";
 
 /**
  * 权益服务(Entitlement Service)。
@@ -41,6 +42,18 @@ export async function getMyEntitlements(): Promise<Entitlements | null> {
   const { data, error } = await supabase.rpc("get_entitlements", {
     p_user_id: user.id,
   });
+  // 【临时调试日志 2026-08-17】排查:提权 enterprise 后智能体页仍显示
+  // 免费档额度。打印 auth.uid() 实际值与 RPC 原始返回,定位是
+  // 会话问题还是 RPC 函数行为问题。排查完删除。
+  logger.info(
+    {
+      debugGetEntitlements: true,
+      uid: user.id,
+      rpcError: error ? { message: error.message, code: error.code } : null,
+      rpcRaw: data,
+    },
+    "DEBUG get_entitlements RPC raw result",
+  );
   if (error) return null; // 网络/鉴权错误 → null,调用方按无订阅处理
   if (!data || !Array.isArray(data)) {
     // RPC 成功但返回空数组 → subscriptions 表无记录 = free plan
