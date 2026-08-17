@@ -47,6 +47,7 @@
     "node_modules",
     ".next",
     ".probe",
-    "zhiyi-ai"
+    "zhiyi-ai",
+    "runner"
   ]
 }
