@@ -4,7 +4,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { getMyEntitlements, quotaOf } from "@/lib/billing/entitlements";
 import { agentTurnBlockReason, sumUsageRows } from "@/lib/billing/quota-math";
-import { logger } from "@/lib/log";
 
 /**
  * 两条 AI 通道共用的额度守卫。
@@ -69,27 +68,17 @@ async function isTeamAdmin(
 
 /**
  * 本轮该不该被额度拦下。返回 null = 放行。
- *
- * @param channel 只影响文案 —— 用户看到的是「AI 助手」还是「智能体」,
- *   额度本身两条通道共用一个。
  */
 export async function checkTurnQuota(input: {
   readonly supabase: SupabaseClient;
   readonly userId: string;
   readonly organizationId: string;
+  /** 保留入参兼容调用方;文案已统一为「两条通道共用」,不再区分通道名 */
   readonly channel: "chat" | "agent";
 }): Promise<TurnQuotaBlock | null> {
-  const { supabase, userId, organizationId, channel } = input;
+  const { supabase, userId, organizationId } = input;
 
-  const teamAdmin = await isTeamAdmin(supabase, userId, organizationId);
-  // 【临时调试日志 2026-08-17】排查:提权 enterprise 后智能体页仍显示
-  // 免费档额度。确认 isTeamAdmin 是否参与(单成员组织 owner 不豁免,
-  // 应与本次 quota=0 无关)。排查完删除。
-  if (teamAdmin) return null;
-  logger.info(
-    { debugTurnQuota: true, userId, organizationId, channel, teamAdmin },
-    "DEBUG checkTurnQuota teamAdmin result",
-  );
+  if (await isTeamAdmin(supabase, userId, organizationId)) return null;
 
   const entitlements = await getMyEntitlements();
   // fail-closed:权益查不到按 0(没额度)处理,不按「不限」处理。
@@ -110,11 +99,17 @@ export async function checkTurnQuota(input: {
   const reason = agentTurnBlockReason({ quota, used });
   if (!reason) return null;
 
-  const 通道 = channel === "chat" ? "AI 助手" : "智能体";
+  // 升级指引文案从展示层(plans.ts)动态取价,不硬编码。
+  // 此前硬编码「HK49」—— plans.ts 定价 v2 已改价时这里不会跟着变,
+  // 两处数字对不上。展示错用户看得见,但额度文案错得更隐蔽。
+  const { PLANS } = await import("@/lib/plans");
+  const proPrice = PLANS.find((p) => p.id === "professional")?.price ?? "";
+  // 「两条通道共用同一份额度」不写通道名 —— 通道是 agent 时拼出
+  // 「智能体与智能体共用」的重复措辞(2026-08-17 修复)。
   return {
     reason:
-      `${reason}${通道}与智能体共用同一份月度额度。` +
-      `升级 Professional(月付 HK49)可提升到每月 2,000 次,` +
+      `${reason}AI 助手与智能体共用同一份月度额度。` +
+      (proPrice ? `升级 Professional(${proPrice})可提升额度,` : "") +
       `Enterprise 自定义额度。`,
     used,
     quota: quota ?? 0,
