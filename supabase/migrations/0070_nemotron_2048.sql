@@ -22,12 +22,14 @@
 alter table public.memories
   alter column embedding type extensions.vector(2048);
 
--- 2. HNSW 索引重建(旧索引绑定旧维度类型,必须重建;
---    操作符类同样走 extensions schema,与 0046 移动后的类型一致)
+-- 2. 索引重建:HNSW 有 2000 维硬上限(pgvector 约束),
+--    Nemotron 2048 维必须用 IVFFlat(无此限制)。
+--    生产数据量极小(4 条),IVFFlat lists=1 足够;维度随列自动适配。
 drop index if exists public.memories_embedding_idx;
 create index memories_embedding_idx
   on public.memories
-  using hnsw (embedding extensions.vector_cosine_ops)
+  using ivfflat (embedding extensions.vector_cosine_ops)
+  with (lists = 1)
   where embedding is not null;
 
 -- 3. search_memories 重建为 2048 维(继承 0046 的 extensions 限定 +
