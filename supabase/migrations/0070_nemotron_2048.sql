@@ -16,16 +16,21 @@
 --   3. search_memories 重建为 extensions.vector(2048) 签名
 --   4. GRANT/REVOKE 签名同步(extensions.vector(2048) 与 2048 显式签名)
 
--- 1. 列升级 1536 → 2048
+-- 1. 先 drop 旧 HNSW 索引(0040 建的 1536 维):
+--    pgvector 在 alter column 类型时若旧 HNSW 索引仍在,会尝试转换
+--    并触发 2000 维上限检查(实证:column cannot have more than 2000
+--    dimensions for hnsw index)。必须先删索引,再改类型。
+drop index if exists public.memories_embedding_idx;
+
+-- 2. 列升级 1536 → 2048
 -- ⚠️ 0046 已把 vector 扩展移入 extensions schema,裸 vector 类型不可见,
 --    必须用 extensions.vector(与 search_memories 函数体一致)。
 alter table public.memories
   alter column embedding type extensions.vector(2048);
 
--- 2. 索引重建:HNSW 有 2000 维硬上限(pgvector 约束),
+-- 3. 索引重建:HNSW 有 2000 维硬上限(pgvector 约束),
 --    Nemotron 2048 维必须用 IVFFlat(无此限制)。
 --    生产数据量极小(4 条),IVFFlat lists=1 足够;维度随列自动适配。
-drop index if exists public.memories_embedding_idx;
 create index memories_embedding_idx
   on public.memories
   using ivfflat (embedding extensions.vector_cosine_ops)
