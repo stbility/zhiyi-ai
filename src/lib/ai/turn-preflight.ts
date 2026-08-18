@@ -45,7 +45,13 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const turnBodySchema = z.object({
   conversationId: z.string().uuid().optional(),
-  providerId: z.string().uuid("请选择模型服务"),
+  providerId: z.union([
+    z.string().uuid("请选择模型服务"),
+    z.string().refine(
+      (v) => isPlatformProviderId(v),
+      "请选择模型服务",
+    ),
+  ]),
   model: z.string().trim().min(1, "请选择模型"),
   content: z.string().trim().min(1, "请输入内容").max(32_000, "内容过长"),
   /**
