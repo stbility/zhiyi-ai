@@ -28,14 +28,11 @@ drop index if exists public.memories_embedding_idx;
 alter table public.memories
   alter column embedding type extensions.vector(2048);
 
--- 3. 索引重建:HNSW 有 2000 维硬上限(pgvector 约束),
---    Nemotron 2048 维必须用 IVFFlat(无此限制)。
---    生产数据量极小(4 条),IVFFlat lists=1 足够;维度随列自动适配。
-create index memories_embedding_idx
-  on public.memories
-  using ivfflat (embedding extensions.vector_cosine_ops)
-  with (lists = 1)
-  where embedding is not null;
+-- 3. 索引:p gvector 所有索引(HNSW/IVFFlat)有 2000 维硬上限,
+--    Nemotron 2048 维无法建索引 —— 不建索引。
+--    生产数据量极小(4 条),顺序扫描 + extensions.<=> 毫秒级;
+--    数据增长后再评估(如降维方案或换索引兼容模型)。
+--    (注意:旧 memories_embedding_idx 已在步骤 1 drop,不再重建)
 
 -- 3. search_memories 重建为 2048 维(继承 0046 的 extensions 限定 +
 --    security invoker + search_path='' 全部保留,仅维度变更)
