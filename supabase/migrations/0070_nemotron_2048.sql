@@ -17,14 +17,17 @@
 --   4. GRANT/REVOKE 签名同步(extensions.vector(2048) 与 2048 显式签名)
 
 -- 1. 列升级 1536 → 2048
+-- ⚠️ 0046 已把 vector 扩展移入 extensions schema,裸 vector 类型不可见,
+--    必须用 extensions.vector(与 search_memories 函数体一致)。
 alter table public.memories
-  alter column embedding type vector(2048);
+  alter column embedding type extensions.vector(2048);
 
--- 2. HNSW 索引重建(旧索引绑定旧维度类型,必须重建)
+-- 2. HNSW 索引重建(旧索引绑定旧维度类型,必须重建;
+--    操作符类同样走 extensions schema,与 0046 移动后的类型一致)
 drop index if exists public.memories_embedding_idx;
 create index memories_embedding_idx
   on public.memories
-  using hnsw (embedding vector_cosine_ops)
+  using hnsw (embedding extensions.vector_cosine_ops)
   where embedding is not null;
 
 -- 3. search_memories 重建为 2048 维(继承 0046 的 extensions 限定 +
