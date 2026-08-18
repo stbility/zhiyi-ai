@@ -288,4 +288,5 @@ CI 的真实重放已经覆盖它。0044 已把 0005 连同基线 0001-0027 一�
 | `0065_agent_runs_runner_lease.sql` | 待应用 | Agent Runner lease 列(阶段 B):agent_runs 加 claimed_by/claimed_at/lease_expires_at/lease_generation,支持 FOR UPDATE SKIP LOCKED 领取 + generation fencing 防双执行;纯新增列 | 
 | `0066_agent_runs_acp_session.sql` | 待应用 | Agent Runner ACP session 映射(阶段 E):agent_runs 加 acp_session_id/hermes_session_id 列,中断恢复时 session/resume 同一 Hermes 会话,不新建逻辑执行;纯新增列 | 
 | `0067_agent_runs_recover_expired.sql` | 待应用 | Agent Runner 过期租约恢复 RPC(Cron 扫描器专用):有步骤→interrupted(resumable)/无步骤→failed,原子 UPDATE + generation+1,security definer;幂等(已恢复行不再命中)+ 最小权限(revoke public,仅 grant service_role);只标记不执行 Agent | 
-| `0068_agent_runs_rpc_min_privilege.sql` | 待应用 | 安全修复:0067 RPC 最小权限收口 —— revoke anon/authenticated(0067 的 revoke public 未覆盖独立角色,生产实证;无实际调用,纯权限收口) | 
+| `0068_agent_runs_rpc_min_privilege.sql` | 待应用 | 安全修复:0067 RPC 最小权限收口 —— revoke anon/authenticated(0067 的 revoke public 未覆盖独立角色,生产实证;无实际调用,纯权限收口) |
+| `0069_platform_free_gpt_oss_120b.sql` | 待应用 | 平台免费档补注册 openai/gpt-oss-120b:NVIDIA 目录存在但 platform_models 未注册,用户无法在平台免费档下拉列表中选择该模型;凭证来源 PLATFORM_NVIDIA_API_KEY,kind=openai_compatible,sort_order=35 |
