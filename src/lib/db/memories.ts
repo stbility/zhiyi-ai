@@ -129,6 +129,7 @@ export async function saveMemory(
   void (async () => {
     try {
       const { embedText } = await import("@/lib/ai/embeddings");
+      // Nemotron 基线:沉淀/写入走 passage 向量
       const embedding = await embedText(content);
       if (embedding) {
         await supabase.from("memories").update({ embedding }).eq("id", created.id);
@@ -303,6 +304,7 @@ export async function saveWorkflowMemory(
   void (async () => {
     try {
       const { embedText } = await import("@/lib/ai/embeddings");
+      // Nemotron 基线:沉淀/写入走 passage 向量
       const embedding = await embedText(content);
       if (embedding) {
         await supabase.from("memories").update({ embedding }).eq("id", created.id);
@@ -325,8 +327,9 @@ export async function recallMemories(
   // 未配置/失败 → 降级到「最近优先」召回 —— 长期记忆是增强,不是阻断。
   if (query && query.trim().length > 0) {
     try {
-      const { embedText } = await import("@/lib/ai/embeddings");
-      const embedding = await embedText(query);
+      const { embedQuery } = await import("@/lib/ai/embeddings");
+      // Nemotron 基线:召回/查询走 query 向量
+      const embedding = await embedQuery(query);
       if (embedding) {
         const { data, error } = await supabase.rpc("search_memories", {
           p_embedding: embedding,

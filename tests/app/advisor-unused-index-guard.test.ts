@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
  *      0051 生产实测:0050 误删 4 条 FK 列索引后 0001 当场出现。
  *      0050 的教训与 0051 的结论已写死在迁移注释里。
  *
- *   2. 功能必需索引 —— memories_embedding_idx(HNSW 向量召回)、
+ *   2. 功能必需索引 —— (向量召回索引已因 2048 维超出 pgvector 2000 维上限移除)、
  *      system_logs_org/level_created_idx(日志查询路径)、
  *      sales_leads_status_idx(线索状态筛选)、
  *      unattributed_subscriptions_email_idx(认领流程按邮箱查)。
@@ -73,7 +73,6 @@ const PROTECTED_UNUSED_INDEXES = [
   "skills_created_by_idx",
   "skill_files_skill_idx",
   "agent_runs_provider_idx",
-  "memories_embedding_idx",
   "eval_run_cases_run_idx",
   "eval_cases_feedback_idx",
   "knowledge_files_created_by_idx",
