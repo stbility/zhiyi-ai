@@ -311,7 +311,7 @@ export async function POST(request: NextRequest) {
         organization_id: organizationId,
         role: "assistant",
         content: "",
-        provider_id: providerId,
+        provider_id: isPlatformProviderId(providerId) ? null : providerId,
         model_id: model,
         latency_ms: Date.now() - startedAt,
         error_message: message,
@@ -413,7 +413,7 @@ export async function POST(request: NextRequest) {
             organization_id: organizationId,
             role: "assistant",
             content: "",
-            provider_id: usedProviderId,
+            provider_id: isPlatformProviderId(usedProviderId) ? null : usedProviderId,
             model_id: usedModel,
             latency_ms: Date.now() - startedAt,
             error_message: reason,
@@ -430,7 +430,12 @@ export async function POST(request: NextRequest) {
           // 一个字正文都没有时,存思考过程 —— 它同样是**模型自己的输出**,
           // 不是我们写的东西。丢掉它等于让用户白等。
           content: full !== "" ? full : reasoningSoFar,
-          provider_id: usedProviderId,
+          // 平台模型的 provider_id 是 "platform:openai_compatible:..." 格式,
+          // 不是 UUID,无法满足 messages.provider_id → ai_providers(id) 的 FK 约束,
+          // 因此对平台模型传 null(BYOK 模型走正常 UUID 路径)。
+          provider_id: isPlatformProviderId(usedProviderId)
+            ? null
+            : usedProviderId,
           model_id: usedModel,
           input_tokens: result.usage.inputTokens,
           output_tokens: result.usage.outputTokens,
@@ -501,7 +506,7 @@ export async function POST(request: NextRequest) {
             // 中断路径同样兜底 —— 不兜的话,等了几分钟的用户拿到的
             // 就是一个空气泡。
             content: full !== "" ? full : reasoningSoFar,
-            provider_id: usedProviderId,
+            provider_id: isPlatformProviderId(usedProviderId) ? null : usedProviderId,
             model_id: usedModel,
             latency_ms: Date.now() - startedAt,
             // 已经有内容时不记错误:那是一次**被平台打断的正常生成**,

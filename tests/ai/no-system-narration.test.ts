@@ -63,7 +63,15 @@ describe("留痕记的是实际跑的那个模型", () => {
     // 从 selected 取而不是从入参 model 取,是为了让「库里记的」和
     // 「真跑的」在代码上是同一个来源,而不是两个碰巧相等的值
     expect(AGENT_TURN).toMatch(/model_id:\s*selected\.modelId/);
-    expect(AGENT_TURN).toMatch(/provider_id:\s*selected\.providerId/);
+  });
+
+  it("provider_id 平台模型传 null,BYOK 传 selected.providerId", () => {
+    // 平台免费模型的 providerId 是 "platform:..." 伪标识,不是 UUID,
+    // 无法满足 messages.provider_id → ai_providers(id) 的 FK 约束,
+    // 因此平台模型留痕传 null;BYOK 模型走正常 UUID 路径。
+    expect(AGENT_TURN).toMatch(
+      /provider_id:\s*isPlatformProviderId\(selected\.providerId\)\s*\?\s*null\s*:\s*selected\.providerId/,
+    );
   });
 });
 

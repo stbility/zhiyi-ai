@@ -631,10 +631,13 @@ export async function runAgentTurn({
             // 0043:把运行记录挂到消息上 —— 页面恢复会话时按 run_id 反查
             // 状态,「继续运行」按钮才能跨页面刷新存活
             run_id: journal?.runId ?? null,
-            // 记实际跑的那一个。selected 就是本次唯一跑过的模型 ——
+            // 记实际跑的那一个。selected 就是本次唯一跑过的模型 —
             // 从这里取而不是从入参取,是为了让「库里记的」和「真跑的」
             // 在代码上是同一个来源,而不是两个碰巧相等的值。
-            provider_id: selected.providerId,
+            // 平台模型 provider_id 非 UUID,FK 约束不满足,传 null。
+            provider_id: isPlatformProviderId(selected.providerId)
+              ? null
+              : selected.providerId,
             model_id: selected.modelId,
             input_tokens: outcome.inputTokens,
             output_tokens: outcome.outputTokens,
@@ -678,7 +681,10 @@ export async function runAgentTurn({
             run_id: journal?.runId ?? null,
             // 失败留痕同样记**实际跑的**那一个,与成功路径同源。
             // 两条路径取不同的来源,迟早会出现「同一次运行两个模型名」。
-            provider_id: selected.providerId,
+            // 平台模型 provider_id 非 UUID,FK 约束不满足,传 null。
+            provider_id: isPlatformProviderId(selected.providerId)
+              ? null
+              : selected.providerId,
             model_id: selected.modelId,
             latency_ms: Date.now() - startedAt,
             error_message: message,
