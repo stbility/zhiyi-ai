@@ -69,8 +69,9 @@ as $$
   limit p_limit;
 $$;
 
--- 4. 权限签名同步(先 revoke 旧 1536 签名,再 grant 2048)
+-- 4. 权限签名同步(先 revoke 旧 1536 签名,再 grant 2048;
+--    0046 已把 vector 移入 extensions,裸 vector 签名不存在,只 revoke
+--    extensions.vector 形式)
 revoke execute on function public.search_memories(extensions.vector, integer) from public, anon;
-revoke execute on function public.search_memories(vector, integer) from public, anon;
 revoke execute on function public.search_memories(extensions.vector(1536), integer) from public, anon;
 grant execute on function public.search_memories(extensions.vector(2048), integer) to authenticated;
