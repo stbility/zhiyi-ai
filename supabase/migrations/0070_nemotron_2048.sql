@@ -1,0 +1,69 @@
+-- 0070 长期记忆 embeddings 升级:NVIDIA Nemotron 2048 维
+--
+-- 【背景】
+-- Phase 5 基线从 OpenAI text-embedding-3-small(1536 维)升级为
+-- NVIDIA nvidia/nemotron-3-embed-1b(2048 维,官方免费端口,
+-- 不支持降维,passage/query 必须区分 input_type)。
+--
+-- 生产数据量极小(审计:4 条 memories,embedding 全 NULL),
+-- 一次性迁移零回填负担。
+--
+-- 【不修改历史迁移】0040/0046 保持原样;本迁移在它们之后叠加覆盖。
+--
+-- 变更:
+--   1. memories.embedding → vector(2048)
+--   2. 重建 HNSW 索引(维度随列,drop + create 保险)
+--   3. search_memories 重建为 extensions.vector(2048) 签名
+--   4. GRANT/REVOKE 签名同步(extensions.vector(2048) 与 2048 显式签名)
+
+-- 1. 列升级 1536 → 2048
+alter table public.memories
+  alter column embedding type vector(2048);
+
+-- 2. HNSW 索引重建(旧索引绑定旧维度类型,必须重建)
+drop index if exists public.memories_embedding_idx;
+create index memories_embedding_idx
+  on public.memories
+  using hnsw (embedding vector_cosine_ops)
+  where embedding is not null;
+
+-- 3. search_memories 重建为 2048 维(继承 0046 的 extensions 限定 +
+--    security invoker + search_path='' 全部保留,仅维度变更)
+create or replace function public.search_memories(
+  p_embedding extensions.vector(2048),
+  p_limit integer default 8
+) returns table (
+  id uuid,
+  organization_id uuid,
+  category text,
+  content text,
+  source_type text,
+  confidence numeric,
+  scope text,
+  recall_enabled boolean,
+  last_used_at timestamptz,
+  created_at timestamptz,
+  similarity double precision
+)
+language sql
+stable
+security invoker
+set search_path = ''
+as $$
+  select m.id, m.organization_id, m.category, m.content, m.source_type,
+         m.confidence, m.scope, m.recall_enabled, m.last_used_at, m.created_at,
+         1 - (m.embedding OPERATOR(extensions.<=>) p_embedding) as similarity
+  from public.memories m
+  where m.embedding is not null
+    and m.recall_enabled
+    and private.is_org_member(m.organization_id)
+    and (m.scope = 'organization' or m.created_by = (select auth.uid()))
+  order by m.embedding OPERATOR(extensions.<=>) p_embedding
+  limit p_limit;
+$$;
+
+-- 4. 权限签名同步(先 revoke 旧 1536 签名,再 grant 2048)
+revoke execute on function public.search_memories(extensions.vector, integer) from public, anon;
+revoke execute on function public.search_memories(vector, integer) from public, anon;
+revoke execute on function public.search_memories(extensions.vector(1536), integer) from public, anon;
+grant execute on function public.search_memories(extensions.vector(2048), integer) to authenticated;

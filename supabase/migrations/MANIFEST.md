@@ -290,3 +290,4 @@ CI 的真实重放已经覆盖它。0044 已把 0005 连同基线 0001-0027 一�
 | `0067_agent_runs_recover_expired.sql` | 待应用 | Agent Runner 过期租约恢复 RPC(Cron 扫描器专用):有步骤→interrupted(resumable)/无步骤→failed,原子 UPDATE + generation+1,security definer;幂等(已恢复行不再命中)+ 最小权限(revoke public,仅 grant service_role);只标记不执行 Agent | 
 | `0068_agent_runs_rpc_min_privilege.sql` | 待应用 | 安全修复:0067 RPC 最小权限收口 —— revoke anon/authenticated(0067 的 revoke public 未覆盖独立角色,生产实证;无实际调用,纯权限收口) |
 | `0069_platform_free_gpt_oss_120b.sql` | 待应用 | 平台免费档补注册 openai/gpt-oss-120b:NVIDIA 目录存在但 platform_models 未注册,用户无法在平台免费档下拉列表中选择该模型;凭证来源 PLATFORM_NVIDIA_API_KEY,kind=openai_compatible,sort_order=35 |
+| `0070_nemotron_2048.sql` | 待应用 | Phase 5 embeddings 升级:NVIDIA Nemotron 2048 维 —— memories.embedding vector(1536→2048) + 重建 HNSW + search_memories(extensions.vector(2048)) + grant/revoke 签名同步;0040/0046 不修改,本迁移叠加覆盖 | 
