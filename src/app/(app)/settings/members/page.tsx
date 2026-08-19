@@ -28,25 +28,37 @@ async function loadMembers(
   const supabase = await createSupabaseServerClient();
   if (!supabase) return [];
 
-  const { data } = await supabase
+  const { data: rows } = await supabase
     .from("memberships")
-    .select(
-      "id, user_id, role, status, profiles (id, email, display_name)",
-    )
+    .select("id, user_id, role, status")
     .eq("organization_id", organizationId)
     .order("created_at", { ascending: true });
 
-  return (data ?? []).map((row) => ({
+  // profiles 表真实 schema 不含 email(id/display_name/avatar_url/locale)。
+  // email 只存在于 auth.users,用户身份客户端(RLS)读不到 —— 成员列表
+  // 只展示 profiles 真实字段,不做嵌入查询(避免请求不存在的列)。
+  const userIds = (rows ?? []).map((r) => r.user_id as string);
+  const { data: profileRows } =
+    userIds.length > 0
+      ? await supabase
+          .from("profiles")
+          .select("id, display_name")
+          .in("id", userIds)
+      : { data: [] };
+  const profileById = new Map(
+    (profileRows ?? []).map((p) => [p.id as string, p]),
+  );
+
+  return (rows ?? []).map((row) => ({
     id: row.id as string,
     userId: row.user_id as string,
     role: row.role as string,
     status: row.status as string,
-    email:
-      ((row.profiles as { email?: string } | null)?.email as string | undefined) ??
-      "",
     displayName:
-      ((row.profiles as { display_name?: string | null } | null)
-        ?.display_name as string | null | undefined) ?? null,
+      (profileById.get(row.user_id as string)?.display_name as
+        | string
+        | null
+        | undefined) ?? null,
     isSelf: (row.user_id as string) === currentUserId,
   }));
 }

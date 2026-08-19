@@ -19,7 +19,6 @@ export interface MemberRow {
   readonly userId: string;
   readonly role: string;
   readonly status: string;
-  readonly email: string;
   readonly displayName: string | null;
   readonly isSelf: boolean;
 }
@@ -169,15 +168,12 @@ function MemberRowView({
       <td className="px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="text-fg font-zh font-medium">
-            {member.displayName || member.email || "未命名用户"}
+            {member.displayName || "未命名用户"}
           </span>
           {member.isSelf && (
             <Badge tone="info">我</Badge>
           )}
         </div>
-        {member.email && (
-          <p className="text-fg-tertiary font-zh text-caption">{member.email}</p>
-        )}
       </td>
       <td className="px-4 py-3">
         <Badge

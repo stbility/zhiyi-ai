@@ -29,12 +29,12 @@ Runner 是**执行承载层**,不是第二套 Agent Runtime:
 ```bash
 cd runner
 npm install
-DATABASE_URL=postgres://... npx tsx src/index.ts
+RUNNER_DATABASE_URL=postgres://... npx tsx src/index.ts
 # health:curl localhost:8787/healthz
 ```
 
 环境变量:
-- `DATABASE_URL`(必填,service role 权限)
+- `RUNNER_DATABASE_URL`(必填,service role 权限)
 - `RUNNER_SLOTS`(默认 2)
 - `RUNNER_WORKER_ID`(默认 hostname+pid+ts)
 

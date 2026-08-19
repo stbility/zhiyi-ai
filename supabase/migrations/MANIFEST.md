@@ -86,11 +86,11 @@
 | `0051_restore_fk_column_indexes.sql` | 0051 | 恢复 0050 误删的 4 条 **FK 列**索引(0001 未索引外键 vs 0005 未使用索引冲突,FK 列必须保索引,详见备注 I) |
 | `0052_entitlements_five_tier_and_grants.sql` | 0052 | 五档定价落地:entitlements/subscriptions 的 plan_id CHECK 3 档→5 档 + 五档默认权益 upsert + 计费 RPC EXECUTE 授权重建(详见备注 J) |
 | `0053_platform_models_refresh.sql` | 0053 | 平台免费档模型池刷新:下线 EOL 的 deepseek-v4-flash/pro(410 Gone),保留 glm-5.2(用户点名长期免费),加入实测快的 minimax-m3 / gpt-oss-20b(详见备注 K) |
-| `0054_organization_persona.sql` | 待应用 | 品牌人格层(P3):organizations 表加 persona 列(可空,≤2000 字)。RLS 沿用组织既有策略(成员可读/admin 可改) |
-| `0055_entitlements_expand_features.sql` | 待应用 | 权益矩阵扩展:新增 concurrent_tasks / history_days / knowledge_capacity / mcp_servers 四类 feature,五档数值对齐 plans.ts 营销承诺 |
-| `0056_system_logs.sql` | 待应用 | 结构化日志(阶段 8):system_logs 表 + level 分级 + admin 读 RLS;关键事件(工作流/智能体/Worker)排查留痕,系统级事件不暴露前端 |
-| `0057_system_logs_policy_harden.sql` | 待应用 | system_logs 写入策略收紧:with check(true) → is_org_member(修复 Supabase Advisor 告警) |
-| `0058_platform_models_sort_fix.sql` | 待应用 | 平台免费档排序修正:glm-5.2(首 token 70-120s)降序到 40,默认选择永不落慢模型 |
+| `0054_organization_persona.sql` | 0054 | 品牌人格层(P3):organizations 表加 persona 列(可空,≤2000 字)。RLS 沿用组织既有策略(成员可读/admin 可改) |
+| `0055_entitlements_expand_features.sql` | 0055 | 权益矩阵扩展:新增 concurrent_tasks / history_days / knowledge_capacity / mcp_servers 四类 feature,五档数值对齐 plans.ts 营销承诺 |
+| `0056_system_logs.sql` | 0056 | 结构化日志(阶段 8):system_logs 表 + level 分级 + admin 读 RLS;关键事件(工作流/智能体/Worker)排查留痕,系统级事件不暴露前端 |
+| `0057_system_logs_policy_harden.sql` | 0057 | system_logs 写入策略收紧:with check(true) → is_org_member(修复 Supabase Advisor 告警) |
+| `0058_platform_models_sort_fix.sql` | 0058 | 平台免费档排序修正:glm-5.2(首 token 70-120s)降序到 40,默认选择永不落慢模型(注:条件与 0053 实际值脱节,0 行生效,见 0071) |
 
 ### 备注 L：0036-0053 已应用(2026-08-11 实证)
 
@@ -279,15 +279,17 @@ CI 的真实重放已经覆盖它。0044 已把 0005 连同基线 0001-0027 一�
 (用户点名长期免费)、加入生产实测快的 minimax-m3(≈4s)与 gpt-oss-20b(即时),
 让免费档降级链真正可用。密钥仍走 PLATFORM_NVIDIA_API_KEY 环境变量,
 未配置时界面如实显示「未配置」。
-| `0059_sales_leads.sql` | 待应用 | Enterprise 销售线索表(P0-3):「联系销售」由硬编码 Stripe Payment Link 改为站内询价表单,提交落 sales_leads;RLS 仅本人读写 |
-| `0060_entitlements_history_days_free.sql` | 待应用 | P0-5 权益倒挂修正:free.history_days 由 null(实现为永久)改为 7 天,权益随档位单调;纯数据更新,不动表结构 | 
-| `0061_unattributed_subscriptions.sql` | 待应用 | P0-6 付款归属账外表:webhook 归属失败落表留痕(含付款邮箱)返回 200,不再死循环重试;仅 service_role 可访问 |
-| `0062_unattributed_subscriptions_user_id.sql` | 待应用 | 安全告警修复:账外表补 user_id 列(Supabase 认证用户以 auth.uid() UUID 识别)+ 外键索引 + 显式拒绝策略(0047 同款,清 Advisor 0008);webhook 在归属已确认时落 UUID | 
-| `0063_system_logs_actor_idx.sql` | 待应用 | Performance Advisor 0001 修复:system_logs.actor_id 外键列补覆盖索引(0056 遗漏) | 
-| `0064_agent_runs_task_type.sql` | 待应用 | P0-2/P0-3 任务类型追踪:agent_runs 加 task_type 列(默认 'text',check 约束枚举),记录每轮智能体运行的任务类型,仅追踪不改执行逻辑 |
-| `0065_agent_runs_runner_lease.sql` | 待应用 | Agent Runner lease 列(阶段 B):agent_runs 加 claimed_by/claimed_at/lease_expires_at/lease_generation,支持 FOR UPDATE SKIP LOCKED 领取 + generation fencing 防双执行;纯新增列 | 
-| `0066_agent_runs_acp_session.sql` | 待应用 | Agent Runner ACP session 映射(阶段 E):agent_runs 加 acp_session_id/hermes_session_id 列,中断恢复时 session/resume 同一 Hermes 会话,不新建逻辑执行;纯新增列 | 
-| `0067_agent_runs_recover_expired.sql` | 待应用 | Agent Runner 过期租约恢复 RPC(Cron 扫描器专用):有步骤→interrupted(resumable)/无步骤→failed,原子 UPDATE + generation+1,security definer;幂等(已恢复行不再命中)+ 最小权限(revoke public,仅 grant service_role);只标记不执行 Agent | 
-| `0068_agent_runs_rpc_min_privilege.sql` | 待应用 | 安全修复:0067 RPC 最小权限收口 —— revoke anon/authenticated(0067 的 revoke public 未覆盖独立角色,生产实证;无实际调用,纯权限收口) |
-| `0069_platform_free_gpt_oss_120b.sql` | 待应用 | 平台免费档补注册 openai/gpt-oss-120b:NVIDIA 目录存在但 platform_models 未注册,用户无法在平台免费档下拉列表中选择该模型;凭证来源 PLATFORM_NVIDIA_API_KEY,kind=openai_compatible,sort_order=35 |
-| `0070_nemotron_2048.sql` | 待应用 | Phase 5 embeddings 升级:NVIDIA Nemotron 2048 维 —— memories.embedding vector(1536→2048) + 重建 HNSW + search_memories(extensions.vector(2048)) + grant/revoke 签名同步;0040/0046 不修改,本迁移叠加覆盖 | 
+| `0059_sales_leads.sql` | 0059 | Enterprise 销售线索表(P0-3):「联系销售」由硬编码 Stripe Payment Link 改为站内询价表单,提交落 sales_leads;RLS 仅本人读写 |
+| `0060_entitlements_history_days_free.sql` | 0060 | P0-5 权益倒挂修正:free.history_days 由 null(实现为永久)改为 7 天,权益随档位单调;纯数据更新,不动表结构 | 
+| `0061_unattributed_subscriptions.sql` | 0061 | P0-6 付款归属账外表:webhook 归属失败落表留痕(含付款邮箱)返回 200,不再死循环重试;仅 service_role 可访问 |
+| `0062_unattributed_subscriptions_user_id.sql` | 0062 | 安全告警修复:账外表补 user_id 列(Supabase 认证用户以 auth.uid() UUID 识别)+ 外键索引 + 显式拒绝策略(0047 同款,清 Advisor 0008);webhook 在归属已确认时落 UUID | 
+| `0063_system_logs_actor_idx.sql` | 0063 | Performance Advisor 0001 修复:system_logs.actor_id 外键列补覆盖索引(0056 遗漏) | 
+| `0064_agent_runs_task_type.sql` | 0064 | P0-2/P0-3 任务类型追踪:agent_runs 加 task_type 列(默认 'text',check 约束枚举),记录每轮智能体运行的任务类型,仅追踪不改执行逻辑 |
+| `0065_agent_runs_runner_lease.sql` | 0065 | Agent Runner lease 列(阶段 B):agent_runs 加 claimed_by/claimed_at/lease_expires_at/lease_generation,支持 FOR UPDATE SKIP LOCKED 领取 + generation fencing 防双执行;纯新增列 | 
+| `0066_agent_runs_acp_session.sql` | 0066 | Agent Runner ACP session 映射(阶段 E):agent_runs 加 acp_session_id/hermes_session_id 列,中断恢复时 session/resume 同一 Hermes 会话,不新建逻辑执行;纯新增列 | 
+| `0067_agent_runs_recover_expired.sql` | 0067 | Agent Runner 过期租约恢复 RPC(Cron 扫描器专用):有步骤→interrupted(resumable)/无步骤→failed,原子 UPDATE + generation+1,security definer;幂等(已恢复行不再命中)+ 最小权限(revoke public,仅 grant service_role);只标记不执行 Agent | 
+| `0068_agent_runs_rpc_min_privilege.sql` | 0068 | 安全修复:0067 RPC 最小权限收口 —— revoke anon/authenticated(0067 的 revoke public 未覆盖独立角色,生产实证;无实际调用,纯权限收口) |
+| `0069_platform_free_gpt_oss_120b.sql` | 0069 | 平台免费档补注册 openai/gpt-oss-120b:NVIDIA 目录存在但 platform_models 未注册,用户无法在平台免费档下拉列表中选择该模型;凭证来源 PLATFORM_NVIDIA_API_KEY,kind=openai_compatible,sort_order=35 |
+| `0070_nemotron_2048.sql` | 0070 | Phase 5 embeddings 升级:NVIDIA Nemotron 2048 维 —— memories.embedding vector(1536→2048) + 重建 HNSW + search_memories(extensions.vector(2048)) + grant/revoke 签名同步;0040/0046 不修改,本迁移叠加覆盖 |
+| `0071_platform_models_glm_sort_order.sql` | 0071 | Phase 1 修复:glm-5.2 sort_order 落地为 40(0058 条件脱节 0 行生效的补正,幂等) |
+| `0072_restore_production_indexes.sql` | 0072 | Phase 1 修复:生产独有索引纳入仓库(ai_model_exclusions_model_id_idx / sales_leads_created_by_idx,幂等) | 
