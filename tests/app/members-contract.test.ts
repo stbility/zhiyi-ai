@@ -43,16 +43,20 @@ describe("成员管理", () => {
     expect(ACTIONS).toContain('error.code === "23505"');
   });
 
-  it("页面从 memberships join profiles 读真实成员", () => {
+  it("页面从 memberships + profiles 读真实成员(不请求不存在的 email)", () => {
     expect(PAGE).toMatch(/from\("memberships"\)/);
-    expect(PAGE).toMatch(/profiles/);
-    expect(PAGE).toMatch(/email/);
+    expect(PAGE).toMatch(/from\("profiles"\)/);
+    // profiles 表真实 schema 无 email 列(0001:id/display_name/avatar_url/locale),
+    // 页面只展示 profiles 真实字段,不得再请求 profiles.email
+    expect(PAGE).not.toMatch(/profiles \(/);
+    expect(PAGE).not.toMatch(/\.select\(\s*"[^"]*\bemail\b/);
     expect(PAGE).toMatch(/role/);
   });
 
-  it("邀请需对方已注册(通过 profiles 查 email)", () => {
-    expect(ACTIONS).toMatch(/from\("profiles"\)/);
-    expect(ACTIONS).toMatch(/eq\("email"/);
+  it("邀请需对方已注册(经 admin.listUsers 从 auth.users 查 email,不再查 profiles.email)", () => {
+    expect(ACTIONS).toMatch(/createSupabaseAdminClient/);
+    expect(ACTIONS).toMatch(/listUsers/);
     expect(ACTIONS).toMatch(/尚未注册智一 AI/);
+    expect(ACTIONS).not.toMatch(/from\("profiles"\)/);
   });
 });

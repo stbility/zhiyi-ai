@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export interface MemberActionResult {
   readonly ok?: string;
@@ -55,14 +56,48 @@ export async function inviteMember(
   } = await supabase.auth.getUser();
   if (!user) return { error: "登录状态已失效,请重新登录。" };
 
-  // 邀请对象必须已注册 —— 通过 auth.users 查邮箱对应的 user_id
-  const { data: invitedUser } = await supabase
-    .from("profiles")
-    .select("id, email")
-    .eq("email", emailParsed.data)
+  // 先确认当前用户是该组织的 owner/admin —— 非管理员直接拒绝,
+  // 不进入下面的 admin 查询(防止用邀请动作枚举全站邮箱是否注册)。
+  const { data: myMembership } = await supabase
+    .from("memberships")
+    .select("role")
+    .eq("organization_id", orgParsed.data.organizationId)
+    .eq("user_id", user.id)
+    .eq("status", "active")
     .maybeSingle();
+  if (
+    !myMembership ||
+    (myMembership.role !== "owner" && myMembership.role !== "admin")
+  ) {
+    return { error: "只有组织所有者或管理员可以邀请成员。" };
+  }
 
-  if (!invitedUser) {
+  // 邀请对象必须已注册 —— 通过 auth.users 查邮箱对应的 user_id。
+  // profiles 表没有 email 列(0001 schema:id/display_name/avatar_url/locale),
+  // email 只存在于 auth.users;用户身份客户端读不到 auth.users(RLS),
+  // 这里用 service role 客户端的 admin.listUsers 只读解析 email → user_id
+  // (PostgREST 不暴露 auth schema,与 webhook 归属解析同一模式)。
+  const admin = createSupabaseAdminClient();
+  if (!admin) return { error: "认证服务未配置,暂时无法邀请。" };
+
+  const targetEmail = emailParsed.data.toLowerCase();
+  let invitedUserId: string | null = null;
+  for (let page = 1; page <= 50; page++) {
+    const { data } = await admin.auth.admin.listUsers({
+      page,
+      perPage: 1000,
+    });
+    const users = data?.users ?? [];
+    const match =
+      users.find((u) => u.email?.toLowerCase() === targetEmail) ?? null;
+    if (match) {
+      invitedUserId = match.id;
+      break;
+    }
+    if (users.length < 1000) break;
+  }
+
+  if (!invitedUserId) {
     return {
       error: "该邮箱尚未注册智一 AI,请先让对方注册后再邀请。",
     };
@@ -70,7 +105,7 @@ export async function inviteMember(
 
   const { error } = await supabase.from("memberships").insert({
     organization_id: orgParsed.data.organizationId,
-    user_id: invitedUser.id,
+    user_id: invitedUserId,
     role: roleParsed.data,
     status: "active",
   });
