@@ -70,7 +70,13 @@ export function OAuthButtons({
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
-      options: { redirectTo: `${origin}/auth/callback` },
+      options: {
+        redirectTo: `${origin}/auth/callback`,
+        // 官方强制要求(auth-azure 文档):Supabase Auth 需要 Azure 返回有效 email,
+        // 必须请求 email scope。运行时缺它会得到 scope=openid → Azure 无 email claim
+        // → GoTrue 无法建立用户 → 自动回登录页。google/github 默认返回 email,不受影响。
+        ...(provider === "azure" ? { scopes: "email" } : {}),
+      },
     });
 
     if (error) {
