@@ -9,8 +9,9 @@ import { getAuthCapabilities } from "@/lib/supabase/auth-settings";
 export const metadata: Metadata = { title: "登录 · 智一 AI" };
 
 const PROVIDER_NAME: Record<string, string> = {
-  github: "GitHub",
   google: "Google",
+  azure: "Microsoft",
+  github: "GitHub",
 };
 
 export default async function LoginPage() {

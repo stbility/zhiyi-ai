@@ -48,3 +48,20 @@ export function GitHubMark() {
     </svg>
   );
 }
+
+export function MicrosoftMark() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 21 21"
+      aria-hidden
+    >
+      {/* Microsoft 官方标识:四色方块,品牌规范要求使用官方颜色 */}
+      <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+      <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+      <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+      <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+    </svg>
+  );
+}

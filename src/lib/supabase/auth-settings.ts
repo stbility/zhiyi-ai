@@ -12,8 +12,18 @@ import { getSupabaseCredentials } from "@/lib/env/server";
  * 这是公开端点,只需可公开密钥;返回的也全是公开配置,不含任何密钥。
  */
 
-/** 产品当前支持展示的第三方登录方式 */
-export const SUPPORTED_OAUTH_PROVIDERS = ["github", "google"] as const;
+/**
+ * 产品当前支持展示的第三方登录方式。
+ *
+ * id 使用 GoTrue 的 provider 键名:Microsoft 在 GoTrue /auth/v1/settings
+ * 的 external 键是 "azure"(实证),supabase-js 的 signInWithOAuth 也接受
+ * "azure" 作为 provider 参数 —— 两者必须一致,否则按钮永远判定为未启用。
+ */
+export const SUPPORTED_OAUTH_PROVIDERS = [
+  "google",
+  "azure",
+  "github",
+] as const;
 
 export type OAuthProvider = (typeof SUPPORTED_OAUTH_PROVIDERS)[number];
 

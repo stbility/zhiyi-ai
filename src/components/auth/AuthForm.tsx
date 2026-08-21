@@ -11,7 +11,7 @@ import { translateAuthError, type AuthErrorMessage } from "@/lib/auth/errors";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { OAuthProvider } from "@/lib/supabase/auth-settings";
 
-export type AuthMode = "login" | "register" | "forgot";
+export type AuthMode = "login" | "register";
 
 const COPY: Record<
   AuthMode,
@@ -19,7 +19,6 @@ const COPY: Record<
 > = {
   login: { submit: "登录", pending: "登录中…", emailLabel: "邮箱" },
   register: { submit: "创建账户", pending: "创建中…", emailLabel: "邮箱" },
-  forgot: { submit: "发送重置邮件", pending: "发送中…", emailLabel: "邮箱" },
 };
 
 /**
@@ -52,7 +51,6 @@ export function AuthForm({
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<AuthErrorMessage | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   // 客户端只建一次,避免每次渲染都新建实例
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -87,7 +85,6 @@ export function AuthForm({
 
     setPending(true);
     setError(null);
-    setNotice(null);
 
     try {
       if (mode === "login") {
@@ -109,28 +106,10 @@ export function AuthForm({
       // 那段代码根本执行不到,却带着「邮箱已注册也报『验证邮件已发送』」
       // 这个已在别处修掉的 bug。死代码留着只会让人以为它还在生效。
 
-      // 回调跟随当前所在的域,不写死 —— 这个部署挂了多个别名域,
-      // 写死域名会让重置链接把人送到另一个域,会话对不上。
-      const origin =
-        typeof window === "undefined" ? siteUrl : window.location.origin;
-
-      // 所有认证回调统一走 /auth/callback,再由它转到目的页。
-      //
-      // 原因是运维现实:Supabase 的重定向白名单被 Supabase–Vercel 集成自动改写,
-      // 手动加的条目会被它不断补充新模式,很难长期维持一份精确清单。
-      // 与其每加一个页面就回后台加一条白名单(还可能被覆盖),不如让整个应用
-      // 只使用**一个**回调地址 —— 它一次进入白名单,之后新增任何页面都不必再动后台。
-      //
-      // /auth/callback 在服务端完成 code 兑换后按 next 参数转跳,
-      // next 经 safeRedirectPath 净化,不构成开放重定向。
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${origin}/auth/callback?next=${encodeURIComponent("/reset-password")}`,
-      });
-      if (error) {
-        setError(translateAuthError(error.message));
-        return;
-      }
-      setNotice("如果该邮箱已注册,重置链接已发送。");
+      // 找回密码也不在这里 —— 见 (auth)/forgot-password 的 RecoveryOtpForm。
+      // 此前这里有一段 resetPasswordForEmail 的 forgot 分支,最终产品 UX 已
+      // 改为「邮箱 8 位验证码」三屏流程(RecoveryOtpForm),那段旧的 Recovery
+      // Link 主流程代码已移除,避免两套 Recovery 设计并存互相冲突。
     } finally {
       setPending(false);
     }
@@ -150,20 +129,18 @@ export function AuthForm({
             onChange={setEmail}
           />
 
-          {mode !== "forgot" && (
-            <Input
-              label="密码"
-              type="password"
-              required
-              minLength={8}
-              autoComplete={
-                mode === "register" ? "new-password" : "current-password"
-              }
-              placeholder={mode === "register" ? "至少 8 位" : "密码"}
-              value={password}
-              onChange={setPassword}
-            />
-          )}
+          <Input
+            label="密码"
+            type="password"
+            required
+            minLength={8}
+            autoComplete={
+              mode === "register" ? "new-password" : "current-password"
+            }
+            placeholder={mode === "register" ? "至少 8 位" : "密码"}
+            value={password}
+            onChange={setPassword}
+          />
 
           {error && (
             <div role="alert" className="border-error-tint bg-error-tint rounded-control p-3">
@@ -174,11 +151,6 @@ export function AuthForm({
                 </p>
               )}
             </div>
-          )}
-          {notice && (
-            <p role="status" className="text-success font-zh text-caption">
-              {notice}
-            </p>
           )}
 
           <Button type="submit" loading={pending} className="w-full">
@@ -191,13 +163,11 @@ export function AuthForm({
         </p>
       )}
 
-      {mode !== "forgot" && (
-        <OAuthButtons
-          siteUrl={siteUrl}
-          enabled={oauthProviders}
-          showDivider={emailEnabled}
-        />
-      )}
+      <OAuthButtons
+        siteUrl={siteUrl}
+        enabled={oauthProviders}
+        showDivider={emailEnabled}
+      />
 
       {mode === "login" && (
         <p className="text-fg-tertiary font-zh text-caption text-center">

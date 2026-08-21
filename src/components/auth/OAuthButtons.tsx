@@ -2,7 +2,11 @@
 
 import { useMemo, useState } from "react";
 
-import { GitHubMark, GoogleMark } from "@/components/auth/BrandMarks";
+import {
+  GitHubMark,
+  GoogleMark,
+  MicrosoftMark,
+} from "@/components/auth/BrandMarks";
 import { Button } from "@/components/primitives/Button";
 import { translateAuthError } from "@/lib/auth/errors";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -27,6 +31,7 @@ const PROVIDERS: readonly {
   mark: () => React.ReactElement;
 }[] = [
   { id: "google", label: "使用 Google 继续", mark: GoogleMark },
+  { id: "azure", label: "使用 Microsoft 继续", mark: MicrosoftMark },
   { id: "github", label: "使用 GitHub 继续", mark: GitHubMark },
 ];
 
