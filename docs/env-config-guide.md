@@ -36,7 +36,7 @@
 1. 打开 Vercel → 项目 `zhiyi-ai` → **Settings → Environment Variables**
 2. 添加 3 个变量（Environment 选 **Production**，可同时选 Preview/Development 方便本地测）
 3. 保存后 → **Deployments → 最新部署 → ⋯ → Redeploy**（让新 env 生效）
-4. 验证：打开 `https://zhiyi-ai.vercel.app/status.json` → `embeddings_configured: true`（之前 false）
+4. 验证：打开 `https://zhiyi-agent.theossindex.com/status.json` → `embeddings_configured: true`（之前 false）
 
 ---
 
@@ -83,11 +83,11 @@ Enterprise 定价 **月付 HK1,999 / 年付 HK19,990**,新 Payment Link
 
 ```bash
 # 1. status.json 两项变绿
-curl https://zhiyi-ai.vercel.app/status.json
+curl https://zhiyi-agent.theossindex.com/status.json
 #   期望: embeddings_configured: true, stripe_prices_configured: 8/8
 
 # 2. Enterprise checkout 不再 503(未登录时是 401「请先登录」,不是 503)
-curl -X POST https://zhiyi-ai.vercel.app/api/billing/checkout \
+curl -X POST https://zhiyi-agent.theossindex.com/api/billing/checkout \
   -H "Content-Type: application/json" -d '{"planId":"enterprise"}'
 #   期望: {"error":"请先登录。"} (401) —— 不是 503 降级
 
