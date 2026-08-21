@@ -14,7 +14,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
  *
  * 最终产品 UX 为「邮箱验证码」,不再以点击邮件链接作为主流程:
  *
- *   输入注册邮箱 → 发送 Recovery 邮件(含 8 位验证码)
+ *   输入注册邮箱 → 发送 Recovery 邮件(含 6 位验证码)
  *   → 输入验证码 → verifyOtp({ email, token, type: "recovery" })
  *   → Recovery Session → 设置新密码(updateUser) → 返回登录
  *
@@ -27,8 +27,8 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
  * 验证码位数以生产真实配置为准:mailer_otp_length = 8(实证)。
  */
 
-/** 生产 mailer_otp_length = 8(实证),UI 校验与文案以 8 位为准 */
-const OTP_LENGTH = 8;
+/** 正式产品标准:Recovery OTP = 6 位(官方默认;mailer_otp_length=6,全链一致) */
+const OTP_LENGTH = 6;
 
 /** 重新发送冷却秒数。GoTrue 对 recover 有邮件限流,给一个保守的本地冷却 */
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -102,7 +102,7 @@ export function RecoveryOtpForm() {
     }
   }
 
-  /** 第二屏:输入 8 位验证码,建立 Recovery Session */
+  /** 第二屏:输入 6 位验证码,建立 Recovery Session */
   async function verifyCode(e: FormEvent) {
     e.preventDefault();
     if (!supabase) return;

@@ -9,14 +9,14 @@ import { RecoveryOtpForm } from "@/components/auth/RecoveryOtpForm";
 /**
  * Recovery OTP 契约测试(最终 Recovery UX)。
  *
- * 产品最终 UX = 邮箱 8 位验证码,不再是「点击邮件链接进入重置页」:
+ * 产品最终 UX = 邮箱 6 位验证码(正式标准),不再是「点击邮件链接进入重置页」:
  *
- *   输入注册邮箱 → resetPasswordForEmail() 发 Recovery 邮件(含 8 位 OTP)
+ *   输入注册邮箱 → resetPasswordForEmail() 发 Recovery 邮件(含 6 位 OTP)
  *   → 输入验证码 → verifyOtp({ email, token, type: "recovery" })
  *   → Recovery Session → updateUser({ password }) → 新密码登录
  *
  * 全部复用 Supabase Auth 官方能力,无自定义 OTP 系统。
- * 验证码位数以生产 mailer_otp_length = 8 为准(实证)。
+ * 验证码位数以正式产品标准 mailer_otp_length = 6 为准。
  *
  * 这是源码契约断言,防止:
  *   - Recovery 主流程回退成旧的 Link UX
@@ -82,9 +82,9 @@ describe("Recovery OTP 契约", () => {
     }
   });
 
-  it("OTP 长度以生产 mailer_otp_length=8 为准", () => {
-    expect(recovery).toMatch(/OTP_LENGTH = 8/);
-    expect(recovery).toMatch(/8 位/);
+  it("OTP 长度以正式标准 mailer_otp_length=6 为准", () => {
+    expect(recovery).toMatch(/OTP_LENGTH = 6/);
+    expect(recovery).toMatch(/6 位/);
   });
 
   it("不再使用旧 Recovery Link 主流程(resetPasswordForEmail 的 redirectTo)", () => {
@@ -145,7 +145,7 @@ describe("RecoveryOtpForm DOM 状态机(jsdom 实测)", () => {
     expect(screen.queryByLabelText(/验证码/)).toBeNull();
   });
 
-  it("提交邮箱 → resetPasswordForEmail(email) → 第二屏(8 位验证码输入框出现)", async () => {
+  it("提交邮箱 → resetPasswordForEmail(email) → 第二屏(6 位验证码输入框出现)", async () => {
     mockAuth.resetPasswordForEmail.mockResolvedValue({ error: null });
     renderForm();
 
@@ -162,14 +162,14 @@ describe("RecoveryOtpForm DOM 状态机(jsdom 实测)", () => {
 
     // 状态转换:验证码输入框出现,且限制 8 位
     const codeInput = (await screen.findByLabelText(/验证码/)) as HTMLInputElement;
-    expect(codeInput.maxLength).toBe(8);
+    expect(codeInput.maxLength).toBe(6);
     expect(screen.getByRole("button", { name: "验证" })).toBeTruthy();
     expect(screen.getByText(/验证码已发送至/)).toBeTruthy();
     expect(screen.getByText(/秒后可重新发送/)).toBeTruthy();
     expect(screen.getByText(/更换邮箱/)).toBeTruthy();
   });
 
-  it("输入 8 位验证码 → verifyOtp({email, token, type:recovery}) → 第三屏(新密码)", async () => {
+  it("输入 6 位验证码 → verifyOtp({email, token, type:recovery}) → 第三屏(新密码)", async () => {
     mockAuth.resetPasswordForEmail.mockResolvedValue({ error: null });
     mockAuth.verifyOtp.mockResolvedValue({ error: null });
     renderForm();
@@ -180,13 +180,13 @@ describe("RecoveryOtpForm DOM 状态机(jsdom 实测)", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送验证码" }));
     const codeInput = await screen.findByLabelText(/验证码/);
 
-    fireEvent.change(codeInput, { target: { value: "12345678" } });
+    fireEvent.change(codeInput, { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "验证" }));
 
     await waitFor(() => {
       expect(mockAuth.verifyOtp).toHaveBeenCalledWith({
         email: "otp-e2e@example.com",
-        token: "12345678",
+        token: "123456",
         type: "recovery",
       });
     });
@@ -208,7 +208,7 @@ describe("RecoveryOtpForm DOM 状态机(jsdom 实测)", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "发送验证码" }));
     const codeInput = await screen.findByLabelText(/验证码/);
-    fireEvent.change(codeInput, { target: { value: "12345678" } });
+    fireEvent.change(codeInput, { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "验证" }));
 
     const newPassword = await screen.findByLabelText(/^新密码/);
@@ -239,7 +239,7 @@ describe("RecoveryOtpForm DOM 状态机(jsdom 实测)", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "发送验证码" }));
     const codeInput = await screen.findByLabelText(/验证码/);
-    fireEvent.change(codeInput, { target: { value: "12345678" } });
+    fireEvent.change(codeInput, { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "验证" }));
 
     expect(
@@ -247,7 +247,7 @@ describe("RecoveryOtpForm DOM 状态机(jsdom 实测)", () => {
     ).toBeTruthy();
   });
 
-  it("验证码位数不足 → 提示请输入 8 位验证码", async () => {
+  it("验证码位数不足 → 提示请输入 6 位验证码", async () => {
     mockAuth.resetPasswordForEmail.mockResolvedValue({ error: null });
     renderForm();
 
@@ -261,7 +261,7 @@ describe("RecoveryOtpForm DOM 状态机(jsdom 实测)", () => {
     fireEvent.click(screen.getByRole("button", { name: "验证" }));
 
     expect(
-      await screen.findByText("请输入 8 位验证码。"),
+      await screen.findByText("请输入 6 位验证码。"),
     ).toBeTruthy();
     // 位数不足时不调用 verifyOtp
     expect(mockAuth.verifyOtp).not.toHaveBeenCalled();
