@@ -4,7 +4,7 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/stbility/zhiyi-ai.git"
-LIVE_URL="${ZHIYI_LIVE_URL:-https://zhiyi-ai.vercel.app}"
+LIVE_URL="${ZHIYI_LIVE_URL:-https://zhiyi-agent.theossindex.com}"
 
 echo "== 1/4 对齐 origin/main =="
 git fetch origin main:refs/remotes/origin/main --quiet 2>/dev/null || {

@@ -33,8 +33,7 @@ const AUTH_ONLY_PATHS = ["/login", "/register", "/forgot-password"];
 export async function proxy(request: NextRequest) {
   // 统一到正式域名。
   //
-  // 生产上这个部署挂了三个别名:zhiyi-ai.vercel.app、zhiyi-ai-vivian10.vercel.app、
-  // zhiyi-ai-git-main-vivian10.vercel.app。而 Cookie 是按域名隔离的 ——
+  // 生产曾挂过多个 Vercel 别名域,而 Cookie 是按域名隔离的 ——
   // 在别名域发起登录,回调却固定跳到正式域,会话 Cookie 就写在了正式域;
   // 用户回到别名域一看,还是未登录。表现就是「第三方登录成功了却用不了」。
   //

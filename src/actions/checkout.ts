@@ -59,7 +59,7 @@ export async function startCheckout(
   const { headers } = await import('next/headers')
 
   const headersList = await headers()
-  const origin = headersList.get('origin') ?? 'https://zhiyi-ai.vercel.app'
+  const origin = headersList.get('origin') ?? 'https://zhiyi-agent.theossindex.com'
 
   try {
     const session = await stripe.checkout.sessions.create({
