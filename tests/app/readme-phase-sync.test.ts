@@ -74,8 +74,8 @@ describe("进度自述一致性(README ↔ phase.ts 全表)", () => {
 
   it("同步块恰好一组(生成器幂等 —— 2026-08-10 实锤:重复运行会复制第二行)", () => {
     // 注意:第二行是「> 改动 ... 线上以 ...」,「> 线上以」前缀永不匹配,
-    // 断言用中间的「线上以 https://zhiyi-ai.vercel.app/status 为准」计数。
-    const matches = README.match(/线上以 https:\/\/zhiyi-ai\.vercel\.app\/status 为准。/g);
+    // 断言用中间的「线上以 https://zhiyi-agent.com/status 为准」计数。
+    const matches = README.match(/线上以 https:\/\/zhiyi-agent\.com\/status 为准。/g);
     expect(matches?.length ?? 0).toBe(1);
     expect(README).toContain("本表由 scripts/sync-readme.ts 从 src/lib/phase.ts 生成");
   });

@@ -2,6 +2,7 @@
 
 import { PLANS, type PlanId } from '@/lib/plans'
 import { paymentLinkEnvKey } from '@/lib/billing/stripe'
+import { getSiteUrl } from '@/lib/env/server'
 
 /**
  * ⚠️ 遗留 server action(2026-08-13 排查):CheckoutButton 组件全仓库无挂载,
@@ -59,7 +60,7 @@ export async function startCheckout(
   const { headers } = await import('next/headers')
 
   const headersList = await headers()
-  const origin = headersList.get('origin') ?? 'https://zhiyi-ai.vercel.app'
+  const origin = headersList.get('origin') ?? getSiteUrl()
 
   try {
     const session = await stripe.checkout.sessions.create({
