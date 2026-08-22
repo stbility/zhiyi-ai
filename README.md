@@ -47,7 +47,7 @@ Vercel 构建失败 → PR 红 → 合不进去;生产 SHA 对齐由 push 后验
 | 8 | 安全、监控、部署、备份回滚 | 🟡 部署、密钥加密、限流已完成;评测集(20 内置用例 + 反馈沉淀用例)与 runner 已上线(/settings/eval,结果落 eval_runs);反馈飞轮消费端已通(改写反馈一键同步为评测用例);结构化日志已上线(2026-08-12:0056 system_logs + 工作流埋点);健康检查已上线(/api/health);备份回滚指南已交付(docs/backup-restore.md);监控告警面板与备份演练未做 |
 
 > 上次同步:2026-08-14,main@9a5cfd0。本表由 scripts/sync-readme.ts 从 src/lib/phase.ts 生成;
-> 改动 `src/lib/phase.ts` 后跑 `pnpm sync:readme`。线上以 https://zhiyi-ai.vercel.app/status 为准。
+> 改动 `src/lib/phase.ts` 后跑 `pnpm sync:readme`。线上以 https://zhiyi-agent.com/status 为准。
 
 ## 开始开发
 

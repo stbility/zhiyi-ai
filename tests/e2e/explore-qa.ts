@@ -1,12 +1,12 @@
 /**
  * zhiyi-ai E2E 探索式 QA (单浏览器顺序版)
- * 目标: https://zhiyi-ai.vercel.app
+ * 目标: https://zhiyi-agent.com
  * 用法: npx tsx tests/e2e/explore-qa.ts
  */
 
 import { chromium, type Page, type ConsoleMessage } from "playwright";
 
-const BASE = "https://zhiyi-ai.vercel.app";
+const BASE = "https://zhiyi-agent.com";
 const TIMEOUT = 15_000;
 
 type TestFn = (p: Page) => Promise<void>;

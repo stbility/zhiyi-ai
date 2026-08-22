@@ -58,7 +58,7 @@ jobs:
             echo "✅ preview URL: https://$URL"
           else
             echo "TARGET=${{ github.sha }}" >> "$GITHUB_ENV"
-            echo "LIVE_URL=${ZHIYI_LIVE_URL:-https://zhiyi-ai.vercel.app}" >> "$GITHUB_ENV"
+            echo "LIVE_URL=${ZHIYI_AGENT_URL:-https://zhiyi-agent.com}" >> "$GITHUB_ENV"
           fi
 
       - name: 轮询 preview 部署就绪(最长 ~8 分钟)
@@ -87,7 +87,7 @@ jobs:
         run: |
           ok=0
           for i in $(seq 1 48); do
-            body=$(curl -s --max-time 10 "$LIVE_URL/status.json" || true)
+            body=$(curl -sL --max-time 10 "$LIVE_URL/status.json" || true)
             deployed=$(echo "$body" | jq -r '.deployed_sha // empty' 2>/dev/null || true)
             if [ -n "$deployed" ] && [ "$deployed" = "$TARGET" ]; then
               echo "✅ 部署对齐: deployed_sha=$deployed == 推送 SHA"

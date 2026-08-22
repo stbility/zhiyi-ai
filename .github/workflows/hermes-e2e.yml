@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      ZHIYI_MCP_URL: https://zhiyi-ai.vercel.app/api/mcp
+      ZHIYI_MCP_URL: https://zhiyi-agent.com/api/mcp
       ZHIYI_MCP_TOKEN: ${{ secrets.ZHIYI_HERMES_MCP_TOKEN }}
       ZHIYI_OPENCLAW_MCP_TOKEN: ${{ secrets.ZHIYI_OPENCLAW_MCP_TOKEN }}
       # 主模型凭据:同时注入两个标准 key env(Hermes 按 provider 读取对应

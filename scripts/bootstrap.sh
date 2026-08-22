@@ -4,7 +4,7 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/stbility/zhiyi-ai.git"
-LIVE_URL="${ZHIYI_LIVE_URL:-https://zhiyi-ai.vercel.app}"
+LIVE_URL="${ZHIYI_AGENT_URL:-https://zhiyi-agent.com}"
 
 echo "== 1/4 对齐 origin/main =="
 git fetch origin main:refs/remotes/origin/main --quiet 2>/dev/null || {
@@ -39,7 +39,7 @@ fi
 
 echo "== 4/4 生产实况(/status.json) =="
 if command -v curl >/dev/null 2>&1; then
-  LIVE=$(curl -s --max-time 8 "$LIVE_URL/status.json" || echo '{"error":"unreachable"}')
+  LIVE=$(curl -sL --max-time 8 "$LIVE_URL/status.json" || echo '{"error":"unreachable"}')
   echo "$LIVE" | head -c 800 | sed 's/^/  /'
   echo ""
   DEPLOYED=$(echo "$LIVE" | grep -o '"deployed_sha":"[^"]*"' | cut -d'"' -f4)

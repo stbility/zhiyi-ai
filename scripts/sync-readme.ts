@@ -48,7 +48,7 @@ function main(): void {
   const today = new Date().toISOString().slice(0, 10);
   const syncBlock = [
     `> 上次同步:${today},main@${sha}。本表由 scripts/sync-readme.ts 从 src/lib/phase.ts 生成;`,
-    "> 改动 `src/lib/phase.ts` 后跑 `pnpm sync:readme`。线上以 https://zhiyi-ai.vercel.app/status 为准。",
+    "> 改动 `src/lib/phase.ts` 后跑 `pnpm sync:readme`。线上以 https://zhiyi-agent.com/status 为准。",
   ];
   const syncStart = lines.findIndex((l) => l.startsWith("> 上次同步:"));
   if (syncStart >= 0) {

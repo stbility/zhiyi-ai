@@ -17,7 +17,7 @@ bash scripts/bootstrap.sh
 | 想看什么 | 去哪看 | 禁止 |
 |---|---|---|
 | 系统开发阶段 | `src/lib/phase.ts`(唯一真值源) | 禁止信 README 阶段表(生成物) |
-| 生产实况(部署 SHA/配置) | `https://zhiyi-ai.vercel.app/status.json` | 禁止从本地/旧克隆推断生产 |
+| 生产实况(部署 SHA/配置) | `https://zhiyi-agent.com/status.json` | 禁止从本地/旧克隆推断生产 |
 | 迁移账本顶 | `supabase/migrations/MANIFEST.md` | 禁止凭 CI 绿推断已交付 |
 | 支付链路现状 | `docs/payment-loop-runbook.md` | 禁止凭记忆改支付代码 |
 
@@ -43,7 +43,7 @@ CI 全绿 ≠ 生产交付,这是本仓库铁律。
 
 ## 4. 本仓库关键事实
 
-- 栈:Next.js 16 / Supabase / Stripe / pnpm;live: https://zhiyi-ai.vercel.app
+- 栈:Next.js 16 / Supabase / Stripe / pnpm;live: https://zhiyi-agent.com
 - 门禁:`pnpm verify`(lint → typecheck → test → build)+ CI 真实迁移重放。
 - 支付:旧 Stripe 账号已删(2026-08-10),新账号重建中;STRIPE_PRICE_* 未配
   = checkout 如实 503 → 降级 Payment Link,不是 bug。
