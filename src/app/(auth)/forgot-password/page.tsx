@@ -1,33 +1,30 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { AuthForm } from "@/components/auth/AuthForm";
 import { AuthShell } from "@/components/auth/AuthShell";
-import { getSiteUrl } from "@/lib/env/server";
-import { getAuthCapabilities } from "@/lib/supabase/auth-settings";
+import { RecoveryOtpForm } from "@/components/auth/RecoveryOtpForm";
 
-export const metadata: Metadata = { title: "找回密码 · 智一 AI" };
+export const metadata: Metadata = { title: "重置统一登录密码 · 智一 AI" };
 
-export default async function ForgotPasswordPage() {
-  const capabilities = await getAuthCapabilities();
-
+/**
+ * 找回密码 —— Recovery OTP 三屏流程(发码 → 验证码 → 设新密码)。
+ *
+ * 主流程为邮箱验证码,不依赖点击邮件链接:
+ *   输入注册邮箱 → 邮件含 8 位验证码 → 输入验证码
+ *   → verifyOtp(type="recovery") → Recovery Session → 设置新密码
+ */
+export default function ForgotPasswordPage() {
   return (
     <AuthShell
-      title="找回密码"
-      description="输入注册邮箱,我们会发送重置链接。"
+      title="重置统一登录密码"
+      description="通过邮箱验证码重置登录密码,统一适用于所有账户。"
       footer={
         <Link href="/login" className="text-brand hover:text-brand-hover">
           返回登录
         </Link>
       }
     >
-      <AuthForm
-        mode="forgot"
-        siteUrl={getSiteUrl()}
-        oauthProviders={capabilities.oauthProviders}
-        emailEnabled={capabilities.emailEnabled}
-        signupEnabled={capabilities.signupEnabled}
-      />
+      <RecoveryOtpForm />
     </AuthShell>
   );
 }

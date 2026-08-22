@@ -2,7 +2,11 @@
 
 import { useMemo, useState } from "react";
 
-import { GitHubMark, GoogleMark } from "@/components/auth/BrandMarks";
+import {
+  GitHubMark,
+  GoogleMark,
+  MicrosoftMark,
+} from "@/components/auth/BrandMarks";
 import { Button } from "@/components/primitives/Button";
 import { translateAuthError } from "@/lib/auth/errors";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -27,6 +31,7 @@ const PROVIDERS: readonly {
   mark: () => React.ReactElement;
 }[] = [
   { id: "google", label: "使用 Google 继续", mark: GoogleMark },
+  { id: "azure", label: "使用 Microsoft 继续", mark: MicrosoftMark },
   { id: "github", label: "使用 GitHub 继续", mark: GitHubMark },
 ];
 
@@ -65,7 +70,13 @@ export function OAuthButtons({
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
-      options: { redirectTo: `${origin}/auth/callback` },
+      options: {
+        redirectTo: `${origin}/auth/callback`,
+        // 官方强制要求(auth-azure 文档):Supabase Auth 需要 Azure 返回有效 email,
+        // 必须请求 email scope。运行时缺它会得到 scope=openid → Azure 无 email claim
+        // → GoTrue 无法建立用户 → 自动回登录页。google/github 默认返回 email,不受影响。
+        ...(provider === "azure" ? { scopes: "email" } : {}),
+      },
     });
 
     if (error) {
