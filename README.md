@@ -52,7 +52,7 @@ EMBEDDINGS 生产已配置)、评测集与反馈飞轮(/settings/eval)、
 结构化日志(0056 system_logs + /api/health)、Runner 长时执行(独立包,突破 300s 上限)、
 部署门禁(PR 级 preview 验证 + 分支保护 + 生产 SHA 对齐兜底)。
 
-**部署门禁(持续生效,2026-08-12 起)**:CI 全绿 ≠ 生产交付 —— main 分支保护强制
+**部署门禁(持续生效)**:CI 全绿 ≠ 生产交付 —— main 分支保护强制
 「部署闭环验证」,Vercel 构建失败 → PR 红 → 合不进去;生产 SHA 对齐
 (`/status.json` deployed_sha == origin/main)由 push 后验证兜底。
 
@@ -78,7 +78,7 @@ EMBEDDINGS 生产已配置)、评测集与反馈飞轮(/settings/eval)、
 | 7 | 全部页面接入真实数据 | ✅ 已完成并上线生产(workflow/knowledge/memory/billing/skills/eval/reports 全部真实数据,无假数据) |
 | 8 | 安全、监控、部署、备份回滚 | 🟡 部分完成并上线生产:部署门禁 + 生产 SHA 对齐、密钥加密、限流、评测集与反馈飞轮(/settings/eval)、Runner 长时执行(独立包,突破 300s)、结构化日志(0056 + /api/health)、备份回滚指南(docs/backup-restore.md)均已上线。待开发:监控告警面板、备份演练 |
 
-> 上次同步:2026-08-23,main@025b849。本表由 scripts/sync-readme.ts 从 src/lib/phase.ts 生成;
+> 上次同步:2026-08-23,main@ccf250f。本表由 scripts/sync-readme.ts 从 src/lib/phase.ts 生成;
 > 改动 `src/lib/phase.ts` 后跑 `pnpm sync:readme`。线上以 https://zhiyi-agent.com/status 为准。
 
 ## 开始开发
