@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from urllib.parse import urlparse
 
 
 def _provider_for_base_url(base_url: str) -> str:
@@ -23,8 +24,14 @@ def _provider_for_base_url(base_url: str) -> str:
     - generativelanguage.googleapis.com → gemini(Hermes 原生 provider,
       Google Generative Language API,非 OpenAI 兼容)
     - 其余 → openai-api(通用 OpenAI 兼容:Groq/OpenRouter/DeepSeek 等)
+
+    host 用 urlparse 精确比较而非子串匹配:
+    `\"generativelanguage.googleapis.com\" in url` 会把
+    `https://evilgenerativelanguage.googleapis.com` 之类伪装域名误判为
+    gemini(code scanning alert #12:py/incomplete-url-substring-sanitization)。
     """
-    if "generativelanguage.googleapis.com" in base_url:
+    host = (urlparse(base_url).hostname or "").lower()
+    if host == "generativelanguage.googleapis.com":
         return "gemini"
     return "openai-api"
 
