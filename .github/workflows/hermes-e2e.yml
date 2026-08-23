@@ -54,8 +54,12 @@ jobs:
       ZHIYI_MCP_TOKEN: ${{ secrets.ZHIYI_HERMES_MCP_TOKEN }}
       ZHIYI_OPENCLAW_MCP_TOKEN: ${{ secrets.ZHIYI_OPENCLAW_MCP_TOKEN }}
       # 主模型凭据:同时注入两个标准 key env(Hermes 按 provider 读取对应
-      # 一个 —— gemini 读 GEMINI_API_KEY,openai-api 读 OPENAI_API_KEY),
-      # 均复用 HERMES_MODEL_API_KEY secret,不新增 secret。
+      # 一个 —— gemini 读 GEMINI_API_KEY,openai-api 读 OPENAI_API_KEY,
+      # nvidia 读 NVIDIA_API_KEY),均复用 HERMES_MODEL_API_KEY secret,
+      # 不新增 secret。NVIDIA_API_KEY 是 08-05 基线契约 —— 恢复它,
+      # `--provider nvidia` 才能拿到 key(08-16 双仓合并时丢失导致
+      # primary auth failed,只能靠 fallback 兜底)。
+      NVIDIA_API_KEY: ${{ secrets.HERMES_MODEL_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.HERMES_MODEL_API_KEY }}
       HERMES_MODEL_BASE_URL: ${{ secrets.HERMES_MODEL_BASE_URL }}
       HERMES_MODEL_NAME: ${{ secrets.HERMES_MODEL_NAME }}
