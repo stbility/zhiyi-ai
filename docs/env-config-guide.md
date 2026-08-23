@@ -1,7 +1,9 @@
-# 生产环境变量配置步骤（2026-08-11）
+# 生产环境变量配置步骤(2026-08-11 编写,2026-08-23 更新:两项均已配置)
 
-解锁 2 项已有功能：**向量召回（EMBEDDINGS）** + **Enterprise 服务端 Checkout（ENT Price）**。
-全部在 Vercel 控制台操作，不需要改代码。配置后 status.json 自动更新。
+> **当前状态(2026-08-23 生产实测)**:EMBEDDINGS 与 STRIPE_PRICE_* 均已配置,
+> `https://zhiyi-agent.com/status.json` 显示 `embeddings: true`、
+> `stripe_prices_configured: 8/8`。本文档保留为**操作参考**(重配/迁移环境时使用)。
+> 配置在 Vercel 控制台操作,不需要改代码;配置后 status.json 自动更新。
 
 ---
 
@@ -22,21 +24,23 @@
 > ⚠️ 代码要求：URL 必须是 OpenAI 兼容格式，POST `{model, input}` 返回 `{data: [{embedding}]}`。
 > 服务商任选（OpenAI / DeepSeek / 本地 ollama 等），只要兼容即可。
 
-### 免费/省钱方案（2026-08-12 调研）
+### 免费/省钱方案(2026-08-12 调研,2026-08-18 已定案实施)
 
 | 方案 | 成本 | 维度 | 说明 |
 |---|---|---|---|
-| **OpenAI text-embedding-3-small**（默认） | ~$0.02/1M tokens（个人用量几乎为 0） | 1536 ✅ 直接匹配 | 零代码，推荐首选 |
-| **NVIDIA bge-m3**（`https://integrate.api.nvidia.com/v1/embeddings`，复用 `PLATFORM_NVIDIA_API_KEY`） | 免费 | **1024 ≠ 1536** | 需迁移把 `memories.embedding` 改 `vector(1024)` + 重建 HNSW 索引，找 Hermes 出 0059 迁移 |
+| **NVIDIA nemotron-3-embed-1b**(生产在用,0070 迁移已应用) | 免费 | **2048** | 生产当前模型;要求代码发送 `input_type`(passage/query 分流),embeddings.ts 已按此实现 |
+| ~~OpenAI text-embedding-3-small~~(历史默认) | ~$0.02/1M tokens | 1536 | 已替换为 nemotron,仅作历史参考 |
+| ~~NVIDIA bge-m3~~(历史候选) | 免费 | 1024 | 已弃用:需迁移 1024 维,且生产已采用 nemotron 2048 |
 
 > ⚠️ **EMBEDDINGS 变量不是金额**：`EMBEDDINGS_API_KEY` 填服务商的 API 密钥（`sk-...`），
 > 不是价格数字。费用由服务商按用量计（OpenAI embedding 极便宜），代码里无任何价格字段。
+> ⚠️ pgvector 维度硬上限 2000:2048 维不能再建向量索引(生产不建索引,召回走 seq scan + 过滤)。
 
 ### 操作步骤
 1. 打开 Vercel → 项目 `zhiyi-ai` → **Settings → Environment Variables**
 2. 添加 3 个变量（Environment 选 **Production**，可同时选 Preview/Development 方便本地测）
 3. 保存后 → **Deployments → 最新部署 → ⋯ → Redeploy**（让新 env 生效）
-4. 验证：打开 `https://zhiyi-agent.com/status.json` → `embeddings_configured: true`（之前 false）
+4. 验证：打开 `https://zhiyi-agent.com/status.json` → `embeddings: true`（之前 false）
 
 ---
 
@@ -74,7 +78,7 @@ Enterprise 定价 **月付 HK1,999 / 年付 HK19,990**,新 Payment Link
 
 | 指标 | 配置前 | 配置后 |
 |---|---|---|
-| `embeddings_configured` | false | **true** |
+| `embeddings` | false | **true** |
 | `stripe_prices_configured` | 6/8 | **8/8** |
 | 向量召回 | 不可用 | **可用** |
 | Enterprise 订阅 | 联系销售/降级 | **服务端 Checkout 全链路** |
@@ -84,7 +88,7 @@ Enterprise 定价 **月付 HK1,999 / 年付 HK19,990**,新 Payment Link
 ```bash
 # 1. status.json 两项变绿
 curl https://zhiyi-agent.com/status.json
-#   期望: embeddings_configured: true, stripe_prices_configured: 8/8
+#   期望: embeddings: true, stripe_prices_configured: 8/8
 
 # 2. Enterprise checkout 不再 503(未登录时是 401「请先登录」,不是 503)
 curl -X POST https://zhiyi-agent.com/api/billing/checkout \

@@ -45,5 +45,6 @@ CI 全绿 ≠ 生产交付,这是本仓库铁律。
 
 - 栈:Next.js 16 / Supabase / Stripe / pnpm;live: https://zhiyi-agent.com
 - 门禁:`pnpm verify`(lint → typecheck → test → build)+ CI 真实迁移重放。
-- 支付:旧 Stripe 账号已删(2026-08-10),新账号重建中;STRIPE_PRICE_* 未配
-  = checkout 如实 503 → 降级 Payment Link,不是 bug。
+- 支付:STRIPE_PRICE_* 8 个 Price ID 生产已配齐(status.json 8/8),checkout 走服务端
+  Checkout 主路径;Payment Link 8 个已对齐作降级兜底(未配时 checkout 如实 503 →
+  降级 Payment Link,不是 bug)。生产事实以 https://zhiyi-agent.com/status.json 为准。

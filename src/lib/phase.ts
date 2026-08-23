@@ -41,8 +41,9 @@ export interface PhaseStatus {
 /**
  * 各阶段的真实状态。状态页据此逐条展示,而不是笼统给一句「已交付/未交付」。
  *
- * 这份清单必须对照代码核对后再改,不能凭印象。上一次核对:2026-08-02,
- * 依据是 src/ 下实际存在的模块与生产库里跑通的链路。
+ * 这份清单必须对照代码核对后再改,不能凭印象。上一次核对:2026-08-23,
+ * 依据是 src/ 下实际存在的模块、生产 status.json 指纹(部署 SHA/环境配置)
+ * 与生产库里跑通的链路。
  */
 export const PHASE_STATUS: readonly PhaseStatus[] = [
   { id: "0", label: "仓库审计与差距报告", state: "done" },
@@ -70,14 +71,14 @@ export const PHASE_STATUS: readonly PhaseStatus[] = [
     label: "文件上传、解析、RAG、长期记忆",
     state: "partial",
     missing:
-      "文件夹上传、跨轮保留、上下文预算已完成;记忆沉淀闭环已实现(0028 memories 表 + 对话确认沉淀 + 工作流产物沉淀 + LLM Wiki 同步);长期记忆向量召回已上线(0040 pgvector + search_memories,需配置 EMBEDDINGS_API_URL/KEY 后生效,人工确认门保持);AI 记忆管理页已上线(/memory,召回开关与删除);知识库已上线(0038:pdf/docx/md/txt 解析 + 全文检索 + 智能体上下文注入 + /knowledge 管理页);向量检索待 embedding 服务接入",
+      "文件夹上传、跨轮保留、上下文预算已完成;记忆沉淀闭环已实现(0028 memories 表 + 对话确认沉淀 + 工作流产物沉淀 + LLM Wiki 同步);长期记忆向量召回已上线(0040 pgvector + search_memories,0070 已升级 NVIDIA nemotron-3-embed-1b 2048 维,embeddings.ts 已按 Nemotron 要求拆分 input_type=passage/query,EMBEDDINGS_API_URL/KEY 生产已配置);AI 记忆管理页已上线(/memory,召回开关与删除);知识库已上线(0038:pdf/docx/md/txt 解析 + 全文检索 + 智能体上下文注入 + /knowledge 管理页);向量检索链路已就绪(生产 status.json embeddings=true),向量写入端到端实绩待记忆数据佐证(需真实用户会话沉淀记忆,人工确认门保持)",
   },
   {
     id: "6",
     label: "Entitlement Service、Stripe 订阅",
     state: "partial",
     missing:
-      "权益判断(0034 get_entitlements)与用量计量(0035)已就位;五档定价(Free/49/149/499/1999)全链路生产运行:checkout/webhook/plans/billing 已上线;Payment Link 8 个已对齐(2026-08-13 定价 v2:PRO/PRO_PLUS/TEAM/ENT × 月付/年付,见 .env.example);权益矩阵已扩展(0055:concurrent_tasks/history_days/knowledge_capacity/mcp_servers 四类 feature,生产 30 行种子实证);六项营销承诺全部 gating:MCP 登记、知识库上传、并发任务数(agent+workflow 双入口,2026-08-12)、历史保留天数(会话列表过滤,2026-08-12)、工作流数量、月度智能体额度;待配 STRIPE_PRICE_* 8 个 Price ID(未配时 checkout 如实 503 降级 Payment Link)",
+      "权益判断(0034 get_entitlements)与用量计量(0035)已就位;五档定价(Free/49/149/499/1999)全链路生产运行:checkout/webhook/plans/billing 已上线;STRIPE_PRICE_* 8 个 Price ID 生产已配齐(2026-08-23 实测 status.json stripe_prices_configured=8/8,checkout 走服务端 Checkout 主路径);Payment Link 8 个已对齐(2026-08-13 定价 v2:PRO/PRO_PLUS/TEAM/ENT × 月付/年付,见 .env.example,未配时 checkout 如实 503 降级 Payment Link);权益矩阵已扩展(0055:concurrent_tasks/history_days/knowledge_capacity/mcp_servers 四类 feature,生产 30 行种子实证);六项营销承诺全部 gating:MCP 登记、知识库上传、并发任务数(agent+workflow 双入口,2026-08-12)、历史保留天数(会话列表过滤,2026-08-12)、工作流数量、月度智能体额度;真实付费订阅端到端闭环待首位真实订阅用户验证(webhook→落库→权益生效全链路代码+测试就绪)",
   },
   {
     id: "7",
