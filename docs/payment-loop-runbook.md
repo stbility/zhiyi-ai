@@ -4,6 +4,13 @@
 > 每次动支付代码前先读它 —— 这个闭环已经修过很多次,病根都是同一个模式:
 > **代码认为「配置好了」,生产实际没有;或者路由活着,却没有任何调用方。**
 
+> **⚠️ 状态更新(2026-08-23 生产实测)**:下方「〇」节为 2026-08-09 历史快照,保留作背景。
+> 当前支付事实:STRIPE_PRICE_* 8 个 Price ID 已配齐(生产 status.json
+> `stripe_prices_configured=8/8`),checkout 走服务端 Checkout 主路径;webhook 端点
+> 已配「发送所有事件」;`/api/billing/webhook` 无签名 400、`/api/billing/checkout`
+> 未登录 401 均已实证(2026-08-22 品牌迁移交付时探测)。真实付费订阅端到端闭环
+> 仍待首位真实订阅用户验证 —— 这是**唯一未证实项**,不是「未实现」。
+
 ## 〇、当前验证状态(2026-08-09 05:00 核验,只读)
 
 **一句话:代码与契约对齐,但闭环从未被端到端走通过一次。**
@@ -90,7 +97,8 @@
   绝不静默降级 free(付钱权益不升 = 断链病根)。曾用「目录自解析」(PR #37,
   price-catalog)容忍漏配 —— 被判定错误做法,随 #54 删除。
 - **前提**:Vercel 的 `STRIPE_SECRET_KEY` 必须是 **sk_live_** 且属于当前 Stripe 账号
-  (旧账号 acct_1TxmnPPw7bzqE3HK 已于 2026-08-10 删除,新账号重建中)。
+  (旧账号 acct_1TxmnPPw7bzqE3HK 已于 2026-08-10 删除;新账号已于 2026-08-23 前完成
+  Price ID 配置 —— 生产 status.json `stripe_prices_configured=8/8`)。
   sk_test_ 密钥会查空测试目录,也打断 webhook 的 customer/subscription retrieve。
 - **自诊断**:checkout 503 的 hint 里带密钥前缀(sk_live_/sk_test_/rk_live_),一眼看出模式。
 
