@@ -65,7 +65,7 @@ export class HermesACPAdapter extends EventEmitter {
     super();
     this.config = {
       bin: config.bin ?? `${process.env.HOME}/.hermes/hermes-agent/venv/bin/hermes`,
-      home: config.home ?? `${process.env.HOME}/.hermes`,
+      home: config.home ?? process.env.HERMES_HOME ?? `${process.env.HOME}/.hermes/hermes-runner`,
       ...config,
     };
   }

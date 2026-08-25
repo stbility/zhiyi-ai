@@ -52,7 +52,7 @@ export async function claimRun(
     FROM public.agent_runs
     WHERE status = ANY($1::text[])
       AND (claimed_by IS NULL OR lease_expires_at < now())
-    ORDER BY created_at ASC
+    ORDER BY started_at ASC
     LIMIT 1
     FOR UPDATE SKIP LOCKED
   `;

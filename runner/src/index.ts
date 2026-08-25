@@ -30,10 +30,19 @@ const ZHIYI_MCP_TOKEN = process.env.ZHIYI_MCP_TOKEN;
 const pool = new pg.Pool({ connectionString: RUNNER_DATABASE_URL, max: SLOTS + 2 });
 
 // 阶段 C/D:Hermes ACP Adapter + Agent execute handler
+// HERMES_HOME 隔离到 ~/.hermes/hermes-runner(与 Desktop 的 ~/.hermes 分开):
+// 共享 state.db/sessions 会导致 Desktop 收到 Runner 会话事件(2026-08-17 实证)。
+// 模型配置(config.yaml)与 MiniMax OAuth 凭据(auth.json)由启动脚本复制过去。
+const acpHome = process.env.HERMES_HOME ?? `${process.env.HOME}/.hermes/hermes-runner`;
+if (acpHome === `${process.env.HOME}/.hermes`) {
+  console.error("[runner] FATAL: HERMES_HOME cannot be Desktop's ~/.hermes — isolation would be broken");
+  process.exit(1);
+}
 const acp = new HermesACPAdapter({
   bin: process.env.HERMES_BIN,
-  home: process.env.HERMES_HOME ?? `${process.env.HOME}/.hermes`,
+  home: acpHome,
 });
+console.log(`[runner] Hermes ACP HERMES_HOME: ${acpHome}`);
 await acp.start();
 console.log("[runner] Hermes ACP connected");
 
