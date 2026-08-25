@@ -112,10 +112,12 @@ describe("入口检查必须共用,不能各写一份", () => {
 });
 
 describe("前端也要分开", () => {
-  it("端点由通道决定,不再由请求体里一个布尔字段分岔", () => {
-    expect(CHAT_PANEL).toMatch(
-      /channel === "agent" \? "\/api\/agent" : "\/api\/chat"/,
-    );
+  it("端点由通道决定:agent 走异步队列,chat 走 SSE 同步", () => {
+    // agent 通道:异步入队 /api/agent/runs(长任务脱离 300s,Runner 执行)
+    expect(CHAT_PANEL).toMatch(/channel === "agent"/);
+    expect(CHAT_PANEL).toMatch(/fetch\("\/api\/agent\/runs"/);
+    // chat 通道:保持 SSE 同步流,行为不变
+    expect(CHAT_PANEL).toMatch(/fetch\("\/api\/chat"/);
   });
 
   it("输入框上没有智能体开关了", () => {

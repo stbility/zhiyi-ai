@@ -266,6 +266,86 @@ function linkify(text: string): ReactNode[] {
   return out;
 }
 
+/**
+ * 轮询异步 run 状态(agent 通道)。
+ *
+ * POST /api/agent/runs 返回 runId 后,Vercel 侧只完成入队,
+ * 实际执行在 Runner(Hermes ACP)里 —— 没有 SSE 流可读,
+ * 只能轮询状态端点 GET /api/agent/runs/[id]。
+ *
+ * 状态流:queued → running(claim)→ steps(工具执行)
+ *       → completed / failed / interrupted(cancelled)
+ *
+ * 每 3s 查一次;拿到终态即停。中断且可续的 run 由调用方
+ * 通过 resumable 字段显示「继续运行」按钮(与同步路径同语义)。
+ */
+async function pollAsyncRun(
+  runId: string,
+  patch: (p: Partial<Turn>) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  for (;;) {
+    if (signal.aborted) return;
+    const res = await fetch(`/api/agent/runs/${runId}`, {
+      headers: { Accept: "application/json" },
+      signal,
+    });
+    if (!res.ok) {
+      const payload = (await res
+        .json()
+        .catch(() => ({ error: "任务状态查询失败" }))) as {
+        error?: string;
+      };
+      patch({ error: payload.error ?? "任务状态查询失败" });
+      return;
+    }
+    const data = (await res.json()) as {
+      status: string;
+      currentStep: number;
+      error: string | null;
+      resumable: boolean;
+      steps: {
+        index: number;
+        tool: string;
+        ok: boolean;
+        preview: string | null;
+      }[];
+    };
+
+    // 实时步骤展示:工具名 + 成败 + 结果摘要(与 SSE step 事件同构)
+    if (data.steps.length > 0) {
+      patch({
+        tools: data.steps.map((s) => ({
+          name: s.tool,
+          ok: s.ok,
+          content: s.preview ?? "",
+        })),
+      });
+    }
+
+    // 终态
+    if (
+      data.status === "completed" ||
+      data.status === "failed" ||
+      data.status === "interrupted" ||
+      data.status === "cancelled"
+    ) {
+      if (data.status === "failed") {
+        patch({ error: data.error ?? "任务执行失败" });
+      } else if (data.status === "interrupted" && data.resumable) {
+        patch({ resumable: true });
+      } else if (data.status === "interrupted" || data.status === "cancelled") {
+        patch({ error: data.error ?? "任务已中断" });
+      }
+      // completed:结果已由 Runner 写入 messages,刷新后可见
+      return;
+    }
+
+    // 进行中:等待 3s 再查
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+}
+
 function toTurn(t: InitialTurn): Turn {
   // 从库里恢复的消息,id 本身就是真实的 message id
   const turn: Turn = { id: t.id, dbId: t.id, role: t.role, content: t.content };
@@ -501,9 +581,56 @@ export function ChatPanel({
     try {
       // 通道决定端点。不再由请求体里一个布尔字段分岔 ——
       // 那种写法让「这次到底走的哪条线」只能靠读代码才知道。
-      const response = await fetch(
-        channel === "agent" ? "/api/agent" : "/api/chat",
-        {
+      //
+      // agent 通道走异步队列(/api/agent/runs → queued → Runner 执行):
+      // Vercel 只做入队登记,长任务脱离 300s 同步边界,由 Runner
+      // (Hermes ACP)执行,前端轮询状态直到终态。
+      // chat 通道保持 SSE 同步流,行为不变。
+      if (channel === "agent") {
+        const res = await fetch("/api/agent/runs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...(conversationId ? { conversationId } : {}),
+            providerId,
+            model: modelId,
+            content,
+            taskType,
+            ...(resumeRunId ? { resumeRunId } : {}),
+            ...(attachments.length > 0 ? { attachments } : {}),
+            ...(webSearch ? { webSearch: true } : {}),
+          }),
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          const payload = (await res
+            .json()
+            .catch(() => ({ error: "请求失败" }))) as {
+            error?: string;
+            message?: string;
+            upgrade_url?: string;
+          };
+          const 文案 = payload.message ?? payload.error ?? "请求失败";
+          patchAssistant({
+            error: payload.upgrade_url
+              ? `${文案}(前往 ${payload.upgrade_url} 查看套餐)`
+              : 文案,
+          });
+          return;
+        }
+
+        const { runId } = (await res.json()) as {
+          runId: string;
+          status: string;
+        };
+        // 撞上时间上限/中断后可续跑,与同步路径同一语义
+        resumeRef.current = runId;
+        await pollAsyncRun(runId, patchAssistant, controller.signal);
+        return;
+      }
+
+      const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
