@@ -439,6 +439,12 @@ export function ChatPanel({
    */
   const [webSearch, setWebSearch] = usePersistentToggle("zhiyi-web-search");
   /**
+   * 长任务模式(仅 agent 通道):开 = 异步队列(/api/agent/runs → Runner 执行),
+   * 脱离 300s 同步边界;关(默认)= 在线执行(同步 /api/agent,SSE)。
+   * 双线并存,短任务在线执行不被长任务能力替代。
+   */
+  const [longTask, setLongTask] = usePersistentToggle("zhiyi-long-task");
+  /**
    * 本轮已等待的秒数,客户端本地计时。
    *
    * 不能只靠服务端心跳:那是智能体路径才有的,而**最需要它的恰恰是普通对话**。
@@ -579,14 +585,12 @@ export function ChatPanel({
     };
 
     try {
-      // 通道决定端点。不再由请求体里一个布尔字段分岔 ——
-      // 那种写法让「这次到底走的哪条线」只能靠读代码才知道。
-      //
-      // agent 通道走异步队列(/api/agent/runs → queued → Runner 执行):
-      // Vercel 只做入队登记,长任务脱离 300s 同步边界,由 Runner
-      // (Hermes ACP)执行,前端轮询状态直到终态。
-      // chat 通道保持 SSE 同步流,行为不变。
-      if (channel === "agent") {
+      // 双线并存(用户架构锁定):
+      //   · 短任务(默认,长任务开关关):在线执行 —— agent 走同步 /api/agent(SSE),
+      //     chat 走 /api/chat,行为与 P0-2 合入前一致;
+      //   · 长任务(开关开,仅 agent 通道):异步队列 /api/agent/runs → queued →
+      //     Runner(Hermes ACP)执行,脱离 Vercel 300s,前端轮询状态直到终态。
+      if (channel === "agent" && longTask) {
         const res = await fetch("/api/agent/runs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -630,7 +634,9 @@ export function ChatPanel({
         return;
       }
 
-      const response = await fetch("/api/chat", {
+      const response = await fetch(
+        channel === "agent" ? "/api/agent" : "/api/chat",
+        {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1315,6 +1321,17 @@ export function ChatPanel({
               <Icon name="search" size={13} />
               联网
             </Tag>
+
+            {channel === "agent" && (
+              <Tag
+                active={longTask}
+                onClick={() => setLongTask((v) => !v)}
+                className="gap-1.5"
+              >
+                <Icon name="clock" size={13} />
+                长任务
+              </Tag>
+            )}
 
             <div className="flex-1" />
 

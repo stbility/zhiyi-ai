@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { logger } from "@/lib/log";
 import { errorResponse, preflightTurn, quotaExceededResponse } from "@/lib/ai/turn-preflight";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { isPlatformProviderId } from "@/lib/ai/platform-models";
 
 /**
  * 智能体长任务异步入口(阶段 G)。
@@ -75,7 +76,9 @@ export async function POST(request: NextRequest) {
     .insert({
       conversation_id: conversationId,
       organization_id: organizationId,
-      provider_id: providerId,
+      // 平台免费档 provider_id 非 UUID(platform:openai_compatible:…),
+      // agent_runs.provider_id 是 uuid FK(0027),与同步路径同语义传 null。
+      provider_id: isPlatformProviderId(providerId) ? null : providerId,
       model_id: model,
       status: "queued",
       current_step: 0,

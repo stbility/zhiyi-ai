@@ -112,12 +112,14 @@ describe("入口检查必须共用,不能各写一份", () => {
 });
 
 describe("前端也要分开", () => {
-  it("端点由通道决定:agent 走异步队列,chat 走 SSE 同步", () => {
-    // agent 通道:异步入队 /api/agent/runs(长任务脱离 300s,Runner 执行)
-    expect(CHAT_PANEL).toMatch(/channel === "agent"/);
-    expect(CHAT_PANEL).toMatch(/fetch\("\/api\/agent\/runs"/);
+  it("端点由通道+长任务开关决定:短任务在线执行,长任务异步队列", () => {
+    // 双线并存:短任务(默认)agent 走同步 /api/agent(SSE 在线执行),
+    // chat 走 /api/chat —— 长任务能力不替代短任务在线执行
+    expect(CHAT_PANEL).toMatch(/channel === "agent" \? "\/api\/agent" : "\/api\/chat"/);
+    expect(CHAT_PANEL).toMatch(/"\/api\/agent\/runs"/);
+    expect(CHAT_PANEL).toMatch(/longTask/);
     // chat 通道:保持 SSE 同步流,行为不变
-    expect(CHAT_PANEL).toMatch(/fetch\("\/api\/chat"/);
+    expect(CHAT_PANEL).toMatch(/"\/api\/chat"/);
   });
 
   it("输入框上没有智能体开关了", () => {
