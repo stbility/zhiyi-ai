@@ -18,6 +18,7 @@ import { Button } from "@/components/primitives/Button";
 import { LinkButton } from "@/components/primitives/LinkButton";
 import { IconButton } from "@/components/primitives/IconButton";
 import { Select } from "@/components/primitives/Select";
+import { pickDefaultModel } from "@/lib/ai/default-model";
 import { Tag } from "@/components/primitives/Tag";
 import { TextArea } from "@/components/primitives/TextArea";
 import {
@@ -418,7 +419,9 @@ export function ChatPanel({
     deleteConversation,
     {},
   );
-  const [selected, setSelected] = useState(models[0]?.value ?? "");
+  // 默认选中:跳过实证不稳定模型(gemma-4-31b-it 270s 无首 token),
+  // 不限制用户手动选择任何模型。
+  const [selected, setSelected] = useState(pickDefaultModel(models));
   /** 任务类型(P0-2)。缺省 "text",随请求传后端做能力匹配。 */
   const [taskType, setTaskType] = useState<"text" | "coding" | "agent" | "vision">(
     "text",
