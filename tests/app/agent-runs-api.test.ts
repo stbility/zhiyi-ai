@@ -17,6 +17,11 @@ vi.mock("@/lib/billing/turn-quota", () => ({
 vi.mock("@/lib/billing/concurrency", () => ({
   checkConcurrentTasks: vi.fn().mockResolvedValue({ blocked: false }),
 }));
+// route.ts 自 2026-08-25 起 import isPlatformProviderId(platform-models.ts 带
+// "server-only" 标记),本测试直接调用 POST,需 mock 掉该依赖避免 server-only 传递。
+vi.mock("@/lib/ai/platform-models", () => ({
+  isPlatformProviderId: vi.fn(() => false),
+}));
 vi.mock("@/lib/log", () => ({ logger: { error: vi.fn(), info: vi.fn() } }));
 
 import { POST } from "@/app/api/agent/runs/route";
