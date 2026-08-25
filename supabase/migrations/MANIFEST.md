@@ -293,3 +293,4 @@ CI 的真实重放已经覆盖它。0044 已把 0005 连同基线 0001-0027 一�
 | `0070_nemotron_2048.sql` | 0070 | Phase 5 embeddings 升级:NVIDIA Nemotron 2048 维 —— memories.embedding vector(1536→2048) + 重建 HNSW + search_memories(extensions.vector(2048)) + grant/revoke 签名同步;0040/0046 不修改,本迁移叠加覆盖 |
 | `0071_platform_models_glm_sort_order.sql` | 0071 | Phase 1 修复:glm-5.2 sort_order 落地为 40(0058 条件脱节 0 行生效的补正,幂等) |
 | `0072_restore_production_indexes.sql` | 0072 | Phase 1 修复:生产独有索引纳入仓库(ai_model_exclusions_model_id_idx / sales_leads_created_by_idx,幂等) | 
+| `0073_get_entitlements_by_user_id.sql` | 0073 | 新增 get_entitlements_by_user_id(p_user_id uuid):接受显式 user_id 参数,解决原 get_entitlements() 用 auth.uid() 导致 Runner(service_role 连接)永远返回 free 的合同漏洞;ae257bf8 实测 enterprise 权益正确返回 |
