@@ -137,8 +137,7 @@ export class Runner {
           });
           if (run) {
             await client.query("COMMIT");
-            // 释放连接(claim 已完成,执行期间不再持有事务连接)
-            client.release();
+            // 连接由 finally 统一释放(claim 成功后不在此释放,避免双重 release)
             void this.runInSlot(run);
             // 立刻下一轮 poll(可能还有任务)
             continue;

@@ -12,7 +12,7 @@
  * Usage exactly-once:step INSERT + usage UPSERT 同一事务(阶段 E)。
  */
 
-import { HermesACPAdapter, type SessionInfo } from "./hermes-acp-adapter.js";
+import { HermesACPAdapter, type PromptUpdate, type SessionInfo } from "./hermes-acp-adapter.js";
 import type { ExecuteContext } from "./runner.js";
 import { insertStepFenced, updateCheckpointFenced, finishFenced } from "./fence.js";
 import { bumpUsageInTx, currentPeriodMonth } from "./usage.js";
@@ -77,12 +77,15 @@ export async function loadSessionMapping(
 /** 构造 MCP servers 参数(传给 session/new 或 session/resume) */
 function zhiyiMcpServers(deps: AgentExecuteDeps): unknown[] {
   if (!deps.zhiyiMcp) return [];
+  // ACP 协议 HttpMcpServer:{ type:'http', name, url, headers: [{name, value}] }。
+  // 2026-08-23 修复:此前传 { transport, headers:{...} } 缺 type 且 headers 用映射对象
+  // —— discriminated union 校验报 type required + list_type,实测 422。
   return [
     {
+      type: "http",
       name: "zhiyi",
-      transport: "http",
       url: deps.zhiyiMcp.url,
-      headers: { Authorization: `Bearer ${deps.zhiyiMcp.token}` },
+      headers: [{ name: "Authorization", value: `Bearer ${deps.zhiyiMcp.token}` }],
     },
   ];
 }
@@ -160,10 +163,160 @@ export async function executeAgentRun(
       ? await deps.resolveTaskText(ctx, client)
       : await defaultTaskText(ctx, client);
 
-    // 3. prompt(长时执行,预算由 runner 主循环控制)
-    const promptResult = await deps.acp.prompt(session.acpSessionId, taskText, {
-      timeoutMs: 270_000,
-    });
+    // 2.5 usage 归属:conversation → user_id(计量必需,阶段 E 契约)
+    let runUserId: string | undefined;
+    try {
+      const userRes = await client.query(
+        `SELECT user_id FROM public.conversations WHERE id = $1`,
+        [ctx.run.conversationId],
+      );
+      runUserId = userRes.rows[0]?.user_id as string | undefined;
+    } catch (e) {
+      console.warn(
+        `[runner] run ${ctx.run.runId} 读取归属用户失败(本次不计量)`,
+      );
+    }
+
+    // 3. prompt(长时执行,预算由 runner 主循环控制)。
+    //    监听 ACP update 流:每个 tool_result 落一条 agent_steps + 推进
+    //    checkpoint + usage 计量(exactly-once,同一事务 —— 阶段 E 契约,
+    //    2026-08-23 补全:此前 imports 存在但从未调用,任务不落步骤、不计费)。
+    let stepBase = ctx.run.currentStep;
+    let writeChain: Promise<void> = Promise.resolve();
+    // 回复落库(交付闭环):收集本会话的 agent_message_chunk → prompt 后写 messages
+    let outputText = "";
+    // ToolCallStart(session_update="tool_call")→ 记 title;ToolCallProgress
+    // (session_update="tool_call_update",adapter 已归一化为 tool_call)→ 落库
+    const pendingTitles = new Map<string, string>();
+    const onUpdate = (u: PromptUpdate) => {
+      const raw = u.raw as
+        | {
+            params?: {
+              sessionId?: string;
+              update?: Record<string, unknown> & { content?: unknown };
+            };
+          }
+        | undefined;
+      // adapter 全局 emit,只处理本会话的更新
+      const rawSessionId = raw?.params?.sessionId;
+      if (rawSessionId && rawSessionId !== session?.acpSessionId) return;
+      if (u.kind === "agent_message_chunk") {
+        const upd = raw?.params?.update ?? {};
+        const contentRaw = upd.content;
+        const chunk = Array.isArray(contentRaw)
+          ? (contentRaw as { text?: string }[]).map((c) => c.text ?? "").join("")
+          : typeof contentRaw === "object" && contentRaw !== null
+            ? String((contentRaw as { text?: string }).text ?? "")
+            : String(contentRaw ?? "");
+        if (chunk) outputText += chunk;
+        return;
+      }
+      if (u.kind !== "tool_call") return;
+      const upd = raw?.params?.update ?? {};
+      const su = String(upd.sessionUpdate ?? "");
+      const callId = String(upd.toolCallId ?? "");
+      if (su === "tool_call") {
+        // ToolCallStart:先记录工具标题,等 completed 时配对
+        if (callId) {
+          pendingTitles.set(
+            callId,
+            typeof upd.title === "string" && upd.title !== ""
+              ? upd.title
+              : "tool",
+          );
+        }
+        return;
+      }
+      // ToolCallProgress(completed/failed)
+      const status = String(upd.status ?? "");
+      if (status !== "completed" && status !== "failed") return;
+      const name =
+        pendingTitles.get(callId) ??
+        (typeof upd.title === "string" && upd.title !== ""
+          ? upd.title
+          : "tool");
+      if (callId) pendingTitles.delete(callId);
+      // content 是 ContentBlock 数组(adapter 只提取了 content.text,数组时为空)
+      const contentRaw = upd.content;
+      const text = Array.isArray(contentRaw)
+        ? (contentRaw as { text?: string }[]).map((c) => c.text ?? "").join("")
+        : String(contentRaw ?? "");
+      const preview = text.slice(0, 500);
+      const idx = stepBase + 100;
+      stepBase = idx;
+      // 串行化写入(避免并发乱序);每步一个事务:step + checkpoint + usage
+      writeChain = writeChain.then(async () => {
+        const c = await deps.pool.connect();
+        try {
+          await c.query("BEGIN");
+          const stepOk = await insertStepFenced(
+            { pg: c, runId: ctx.run.runId, leaseGeneration },
+            {
+              stepIndex: idx,
+              toolCallId: null,
+              toolName: name,
+              arguments: upd.arguments ?? null,
+              resultPreview: preview,
+              resultChars: text.length,
+              previewChars: preview.length,
+              truncated: text.length > 500,
+              durationMs: null,
+              ok: status !== "failed",
+            },
+          );
+          if (stepOk) {
+            await updateCheckpointFenced(
+              { pg: c, runId: ctx.run.runId, leaseGeneration },
+              idx,
+            );
+            if (runUserId) {
+              await bumpUsageInTx(c, {
+                userId: runUserId,
+                periodMonth: currentPeriodMonth(),
+                category: "agent_turns",
+                units: 1,
+              });
+            }
+          }
+          await c.query("COMMIT");
+        } catch (e) {
+          await c.query("ROLLBACK").catch(() => {});
+          console.error(`[runner] run ${ctx.run.runId} 步骤落库失败:`, e);
+        } finally {
+          c.release();
+        }
+      });
+    };
+    deps.acp.on("update", onUpdate);
+    let promptResult: Awaited<ReturnType<HermesACPAdapter["prompt"]>>;
+    try {
+      promptResult = await deps.acp.prompt(session.acpSessionId, taskText, {
+        timeoutMs: 270_000,
+      });
+      await writeChain; // 等所有步骤写入完成,再进入 finish
+    } finally {
+      deps.acp.off("update", onUpdate);
+    }
+
+    // 3.5 回复落库(交付闭环:用户页面可见 Runner 执行的回复,
+    //     2026-08-23 补全 —— 此前 Runner 完成 run 后 messages 无 assistant 行)
+    if (outputText.trim() !== "") {
+      try {
+        await client.query(
+          `INSERT INTO public.messages
+             (conversation_id, organization_id, role, content, provider_id, model_id, created_at, run_id)
+           VALUES ($1, $2, 'assistant', $3, NULL, NULL, now(), $4)`,
+          [
+            ctx.run.conversationId,
+            ctx.run.organizationId,
+            outputText.trim(),
+            ctx.run.runId,
+          ],
+        );
+      } catch (e) {
+        console.error(`[runner] run ${ctx.run.runId} 回复落库失败:`, e);
+      }
+    }
 
     // 4. fence 检查(被接管则立即停止,不 finish)
     if (signal.isAborted()) {
