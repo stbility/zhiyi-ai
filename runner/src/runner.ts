@@ -25,6 +25,10 @@ export interface RunnerConfig {
   pollMs?: number;
   /** 并发槽位数(默认 2) */
   slots?: number;
+  /** 内部 lease 恢复扫描间隔 ms(默认 30s;0 = 禁用)。
+   *  Runner 进程内定时调 recover_expired_agent_runs RPC(用户批准的最小实现,
+   *  不依赖 Vercel Cron / 套餐升级) —— 崩溃恢复 E2E 需要它触发 lease 过期恢复。 */
+  recoveryMs?: number;
 }
 
 export interface ExecuteContext {
@@ -75,6 +79,7 @@ export class Runner {
       pollMs: deps.config.pollMs ?? 3_000,
       slots: deps.config.slots ?? 2,
       workerId: deps.config.workerId,
+      recoveryMs: deps.config.recoveryMs ?? 30_000,
     };
     this.slots = new SlotPool(this.config.slots);
   }
@@ -82,6 +87,33 @@ export class Runner {
   /** 启动主循环(不阻塞,返回后由调用方保持进程存活) */
   start(): void {
     void this.loop();
+    // 内部 lease 恢复定时器(用户批准:Runner 进程内定期调 RPC,
+    // 不依赖 Vercel Cron / 套餐升级)。0 = 禁用。
+    if (this.config.recoveryMs > 0) {
+      const t = setInterval(() => void this.runRecoveryScan(), this.config.recoveryMs);
+      this.timers.push(t);
+    }
+  }
+
+  /** 内部恢复扫描:调 recover_expired_agent_runs RPC(只标记,不执行 Agent) */
+  private async runRecoveryScan(): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      // 直接调 RPC(service role 有 EXECUTE,0068 已收口最小权限)
+      const res = await client.query(
+        `SELECT public.recover_expired_agent_runs() AS recovered`,
+      );
+      const recovered = res.rows[0]?.recovered;
+      if (recovered && (recovered.interrupted || recovered.failed)) {
+        console.log(
+          `[runner] recovery scan: ${JSON.stringify(recovered)}`,
+        );
+      }
+    } catch (err) {
+      console.error(`[runner] recovery scan error:`, err);
+    } finally {
+      client.release();
+    }
   }
 
   /** 优雅关闭:停止 poll → 等待执行中的 run 到 step 边界 */
