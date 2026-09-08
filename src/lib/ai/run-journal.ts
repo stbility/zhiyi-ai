@@ -55,6 +55,12 @@ export async function openRunJournal(
     modelId: string;
     /** 任务类型(P0-3),进 journal 可追踪上下文。缺省 "text" */
     taskType?: "text" | "coding" | "agent" | "vision" | "image" | "video";
+    /**
+     * Workflow Run 持久 Lineage:记录这个 Agent Run 属于哪个 Workflow Run。
+     * 值来自 Workflow 步骤执行器(workflow_run.id)经 /api/agent 请求下传;
+     * 非 Workflow 场景不传,缺省 null,行为与之前完全一致。
+     */
+    workflowRunId?: string | null;
   },
 ): Promise<RunJournal | null> {
   const { data, error } = await supabase
@@ -66,6 +72,8 @@ export async function openRunJournal(
       provider_id: input.providerId,
       model_id: input.modelId,
       task_type: input.taskType ?? "text",
+      // 有 Workflow 归属才写;缺省 null —— 非 Workflow 场景行为与之前一致
+      workflow_run_id: input.workflowRunId ?? null,
       status: "running",
     })
     .select("id")

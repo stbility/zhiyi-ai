@@ -34,6 +34,25 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
+  // Workflow ↔ Agent Run 持久 Lineage:Workflow 步骤执行器会在请求体里带
+  // workflowRunId(= 当前 workflow_run.id)。preflightTurn 会消费请求体,
+  // 所以先 clone 只读一次,不影响传给 preflight 的原始请求、认证与配额逻辑。
+  let workflowRunId: string | undefined;
+  try {
+    const bodyJson = JSON.parse(await request.clone().text()) as {
+      workflowRunId?: unknown;
+    };
+    if (
+      typeof bodyJson.workflowRunId === "string" &&
+      bodyJson.workflowRunId !== ""
+    ) {
+      workflowRunId = bodyJson.workflowRunId;
+    }
+  } catch {
+    // body 解析失败保持 undefined —— 由下方 preflight 的 zod 校验统一报错,
+    // 这里不改变任何现有错误语义
+  }
+
   // 限流用 agent 这个主体单独计数。
   //
   // 智能体一轮就是十几次上游调用,和对话共用一个计数器的话,
@@ -156,5 +175,7 @@ export async function POST(request: NextRequest) {
     history,
     signal: request.signal,
     ...(resumeRunId ? { resumeRunId } : {}),
+    // Workflow ↔ Agent Run 持久 Lineage:可选下传,非 Workflow 请求不携带
+    ...(workflowRunId ? { workflowRunId } : {}),
   });
 }

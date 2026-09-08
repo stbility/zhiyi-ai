@@ -169,7 +169,13 @@ export async function executeWorkflowSteps(
           // 让 /api/agent 跳过并发检查,避免多步工作流自锁。
           "x-zhiyi-worker": "1",
         },
-        body: JSON.stringify({ input: effectivePrompt }),
+        body: JSON.stringify({
+          input: effectivePrompt,
+          // Workflow ↔ Agent Run 持久 Lineage:把**当前正在执行的** workflow_run.id
+          // 带给 /api/agent → runAgentTurn → openRunJournal,写进
+          // agent_runs.workflow_run_id。不用 workflow_id / template / 新 run / 随机值。
+          workflowRunId: runId,
+        }),
         signal: AbortSignal.timeout(45_000),
       });
       if (!res.ok) {

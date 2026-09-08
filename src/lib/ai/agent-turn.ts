@@ -170,6 +170,7 @@ export async function runAgentTurn({
   signal,
   budgetMs,
   resumeRunId,
+  workflowRunId,
 }: {
   supabase: SupabaseClient;
   userId: string;
@@ -192,6 +193,12 @@ export async function runAgentTurn({
    * 「之前已完成的步骤」摘要 —— 模型从断点接着干,而不是从头再来。
    */
   resumeRunId?: string | undefined;
+  /**
+   * Workflow Run 持久 Lineage(可选):/api/agent 收到 workflowRunId
+   * (= 当前 workflow_run.id)时原样透传,让 openRunJournal 把这个
+   * 新 Agent Run 记到所属的 Workflow Run 下。非 Workflow 场景不传。
+   */
+  workflowRunId?: string | null;
 }): Promise<Response> {
   // ── P1 fallback 辅助(P1 Runtime Fallback)───────────────────────────────
   // 候选来源:组织内全部 enabled 的 ai_models(排除 Primary 本身由
@@ -363,6 +370,9 @@ export async function runAgentTurn({
           : selected.providerId,
         modelId: selected.modelId,
         taskType,
+        // 透传 workflowRunId:Workflow 场景每个新 Agent Run 都记所属 Workflow Run
+        // exactOptionalPropertyTypes:undefined 时不传该属性,null 时照传
+        ...(workflowRunId !== undefined ? { workflowRunId } : {}),
       });
 
       // 把 runId 推给前端。前端拿到它,才知道撞上限后该带哪个 run 续跑。
