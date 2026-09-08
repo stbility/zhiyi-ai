@@ -292,4 +292,6 @@ CI 的真实重放已经覆盖它。0044 已把 0005 连同基线 0001-0027 一�
 | `0069_platform_free_gpt_oss_120b.sql` | 0069 | 平台免费档补注册 openai/gpt-oss-120b:NVIDIA 目录存在但 platform_models 未注册,用户无法在平台免费档下拉列表中选择该模型;凭证来源 PLATFORM_NVIDIA_API_KEY,kind=openai_compatible,sort_order=35 |
 | `0070_nemotron_2048.sql` | 0070 | Phase 5 embeddings 升级:NVIDIA Nemotron 2048 维 —— memories.embedding vector(1536→2048) + 重建 HNSW + search_memories(extensions.vector(2048)) + grant/revoke 签名同步;0040/0046 不修改,本迁移叠加覆盖 |
 | `0071_platform_models_glm_sort_order.sql` | 0071 | Phase 1 修复:glm-5.2 sort_order 落地为 40(0058 条件脱节 0 行生效的补正,幂等) |
-| `0072_restore_production_indexes.sql` | 0072 | Phase 1 修复:生产独有索引纳入仓库(ai_model_exclusions_model_id_idx / sales_leads_created_by_idx,幂等) | 
+| `0072_restore_production_indexes.sql` | 0072 | Phase 1 修复:生产独有索引纳入仓库(ai_model_exclusions_model_id_idx / sales_leads_created_by_idx,幂等) |
+| `0073_get_entitlements_by_user_id.sql` | 0073 | 新增 get_entitlements_by_user_id(p_user_id uuid):接受显式 user_id 参数,解决原 get_entitlements() 用 auth.uid() 导致 Runner(service_role 连接)永远返回 free 的合同漏洞;ae257bf8 实测 enterprise 权益正确返回 |
+| `0074_agent_runs_workflow_run_id.sql` | 0074 | Workflow ↔ Agent Run 持久 Lineage:agent_runs 加 workflow_run_id(uuid 可空,FK → workflow_runs(id) ON DELETE SET NULL)+ 索引;Workflow 步骤执行时随 /api/agent 请求下传当前 workflow_run.id,经 runAgentTurn → openRunJournal 写入,让每个新 Agent Run 记录所属 Workflow Run;纯新增列,不改执行逻辑 |
