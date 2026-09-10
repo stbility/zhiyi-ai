@@ -109,6 +109,27 @@ export async function executeWorkflowSteps(
       .update({ status, updated_at: new Date().toISOString() })
       .eq("id", workflowId);
 
+  const { loadModels } = await import("@/lib/db/conversations");
+  const models = await loadModels(ctx.organizationId);
+  const defaultModel = models?.[0];
+
+  if (!defaultModel) {
+    const errorMessage = "当前组织没有可用模型,请先在「模型服务」中添加。";
+
+    await setRun("FAILED", {
+      finished_at: new Date().toISOString(),
+      error: errorMessage,
+      output: { steps: stepResults },
+    });
+
+    await setWorkflow("FAILED");
+
+    return { error: `工作流执行失败:${errorMessage}` };
+  }
+
+  const providerId = defaultModel.providerId;
+  const model = defaultModel.modelId;
+
   for (let i = startIndex; i < definition.steps.length; i++) {
     const step = definition.steps[i]!; // parseDefinition 已保证步骤合法且至少 1 个
 
@@ -170,7 +191,9 @@ export async function executeWorkflowSteps(
           "x-zhiyi-worker": "1",
         },
         body: JSON.stringify({
-          input: effectivePrompt,
+          content: effectivePrompt,
+          providerId,
+          model,
           // Workflow ↔ Agent Run 持久 Lineage:把**当前正在执行的** workflow_run.id
           // 带给 /api/agent → runAgentTurn → openRunJournal,写进
           // agent_runs.workflow_run_id。不用 workflow_id / template / 新 run / 随机值。
